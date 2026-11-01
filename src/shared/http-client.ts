@@ -10,6 +10,7 @@ export class ClientError extends Error {
   }
 }
 export type FetchPort = typeof fetch;
+const browserFetch: FetchPort = (input, init) => fetch(input, init);
 type RequestOptions = {method?: string; body?: unknown; signal?: AbortSignal; idempotencyKey?: string};
 const updateNames: UpdateEvent['event'][] = ['snapshot.changed', 'snapshot.reset', 'privacy.invalidated', 'source.status', 'publication.synced', 'playback.prepare', 'playback.start', 'playback.cancel'];
 export type StreamCallbacks = {onUpdate: (event: UpdateEvent) => void; onHeartbeat?: () => void; onDisconnect?: () => void};
@@ -58,7 +59,7 @@ export function subscribeUpdates(url: string, callbacks: StreamCallbacks, fetche
 export class HttpClient {
   private csrfValue = '';
   private csrfFlight?: Promise<string>;
-  constructor(readonly base = '/api/owner', readonly fetcher: FetchPort = fetch) {}
+  constructor(readonly base = '/api/owner', readonly fetcher: FetchPort = browserFetch) {}
   get csrfToken() {return this.csrfValue;}
   setCsrfToken(value: string) {this.csrfValue = value;}
   async initialize(): Promise<string> {
@@ -98,7 +99,7 @@ export class OwnerHttpClient extends HttpClient implements RecapClient {
 }
 
 export class PublicHttpClient {
-  constructor(readonly base = '/api/public', readonly fetcher: FetchPort = fetch) {}
+  constructor(readonly base = '/api/public', readonly fetcher: FetchPort = browserFetch) {}
   async getPublicSnapshot(login: string, options: {episodeId?: string; untilMs?: number; signal?: AbortSignal} = {}) {
     const path = options.episodeId ? `sessions/${encodeURIComponent(options.episodeId)}` : `channels/${encodeURIComponent(login)}`;
     const query = options.untilMs === undefined ? '' : `?untilMs=${Math.max(0, Math.round(options.untilMs))}`;
@@ -110,7 +111,7 @@ export class PublicHttpClient {
 
 export type OverlayHttpState = {sessionId: string | null; privacyEpoch: number; revision: number; serverNow: string; active: PlaybackRef | null; queued: PlaybackRef[]; channel?: string; title?: string; soundEnabled?: boolean; volume?: number};
 export class OverlayHttpClient extends HttpClient {
-  constructor(fetcher: FetchPort = fetch) {super('/api/overlay', fetcher);}
+  constructor(fetcher: FetchPort = browserFetch) {super('/api/overlay', fetcher);}
   async connect(capability?: string) {
     if (capability) {
       const response = await this.fetcher('/api/overlay/session', {method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({capability})});

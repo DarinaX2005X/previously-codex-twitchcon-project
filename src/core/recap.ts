@@ -83,7 +83,7 @@ function chapterCaption(chapter: PublicChapter, limit: number): string {
   // Keeping a whole title can intentionally cause text_too_long; silently slicing would change meaning.
   if (title) return title;
   if (summary.length <= 300) return summary;
-  throw new Error('recap_caption_unrepresentable');
+  return '';
 }
 
 function chapterBeat(chapter: PublicChapter, kind: BeatKind, limit: number): SelectedBeat {
@@ -116,7 +116,7 @@ function chooseStory(snapshot: PublicSnapshot, options: RecapCompileOptions, lim
     const replacement = !short(original, limit) && equivalentChapter && short(equivalentChapter.title, limit)
       && !selected.some(old => old.text === equivalentChapter.title.trim()) ? equivalentChapter : null;
     return {
-      kind, text: replacement?.title.trim() ?? original,
+      kind: replacement ? 'context' : kind, text: replacement?.title.trim() ?? original,
       refs: uniqueRefs([...currentRefs, ...(replacement ? [chapterRef(replacement)] : [])]),
       sourceRange: currentChapter ? { startMs: currentChapter.startMs, endMs: currentChapter.endMs }
         : { startMs: current.sourceTimeMs, endMs: current.maxDependencyEndMs },
@@ -126,7 +126,7 @@ function chooseStory(snapshot: PublicSnapshot, options: RecapCompileOptions, lim
     };
   };
   const pinned = chapters.find(chapter => chapter.pinned && short(chapterCaption(chapter, limit), limit));
-  if (pinned) add(chapterBeat(pinned, 'attempt', limit));
+  if (pinned) add(chapterBeat(pinned, 'context', limit));
   else {
     const goal = currentBeat('attempt', current?.goal ?? null);
     if (goal) add(goal);
@@ -136,7 +136,7 @@ function chooseStory(snapshot: PublicSnapshot, options: RecapCompileOptions, lim
   if (now) add(now);
   for (const chapter of chapters) {
     if (selected.length >= 2) break;
-    add(chapterBeat(chapter, selected.some(beat => beat.kind === 'attempt') ? 'change' : 'attempt', limit));
+    add(chapterBeat(chapter, 'context', limit));
   }
   if (options.durationMs !== 10000) {
     const relevant = snapshot.lore.filter(lore => lore.originKind !== 'unknown' && lore.originMs !== null
@@ -148,16 +148,15 @@ function chooseStory(snapshot: PublicSnapshot, options: RecapCompileOptions, lim
         - Number(!!a.momentId && selected.some(beat => beat.momentIds.includes(a.momentId!)))
         || (b.originMs ?? 0) - (a.originMs ?? 0) || a.id.localeCompare(b.id));
     const lore = relevant[0];
-    if (lore) {
+    if (lore && lore.explanation.trim().length <= 300) {
       const combined = `${lore.term}: ${lore.explanation}`;
-      const text = short(combined, limit) ? combined : short(lore.explanation, limit) ? lore.explanation
-        : lore.term.trim() || lore.explanation;
+      const text = short(combined, limit) ? combined : lore.explanation.trim();
       add({ kind: 'origin', text, refs: options.loreRefs![lore.id]!,
         sourceRange: { startMs: lore.originMs!, endMs: lore.originMs! },
         sourceIds: options.loreRefs![lore.id]!.map(ref => ref.id), momentIds: lore.momentId ? [lore.momentId] : [], lore });
     }
   }
-  const order: Record<BeatKind, number> = { attempt: 0, change: 1, origin: 2, now: 3 };
+  const order: Record<BeatKind, number> = { context: 0, attempt: 1, change: 2, origin: 3, now: 4 };
   return selected.sort((a, b) => order[a.kind] - order[b.kind]).slice(0, 4);
 }
 
@@ -175,11 +174,11 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
         && media.captureEndMs <= moment.maxDependencyEndMs)));
   let selected = options.welcomeOnly ? [] : chooseStory(snapshot, options,
     visual.some(media => !media.previousSession) ? CAPTION_WITH_VIDEO : CAPTION_WITHOUT_VIDEO);
-  const welcome = !!options.welcomeOnly || selected.length < 2;
+  const welcome = !!options.welcomeOnly || selected.length === 0;
   if (welcome) {
     const fields = [snapshot.session.title.trim(), snapshot.session.category.trim()].filter(Boolean);
     const welcomeText = fields.find(field => short(field, CAPTION_WITHOUT_VIDEO)) ?? fields[0]
-      ?? (snapshot.language === 'ru' ? 'История эфира только начинается.' : 'The stream story is just getting started.');
+      ?? (snapshot.language === 'ru' ? 'Проверенный контекст эфира пока недоступен.' : 'Reviewed stream context is not available yet.');
     selected = [{ kind: 'now', text: welcomeText, refs: [], sourceRange: {
       startMs: snapshot.session.metadataMaxDependencyEndMs, endMs: snapshot.session.metadataMaxDependencyEndMs,
     }, sourceIds: [], momentIds: [] }];
@@ -198,7 +197,8 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
     id: `recap:${trigger.id}`, sessionId: snapshot.session.id, revision: snapshot.revision, privacyEpoch: snapshot.privacyEpoch,
     language: snapshot.language, variant: welcome ? 'welcome' : permitted.length ? 'full' : 'compact', durationMs: total,
     dependencyRefs: refs, layout,
-    arrivals: trigger.reason === 'raid' ? [{ triggerId: trigger.id, fromLogin: (trigger.fromLogin ?? '').slice(0, 25), viewers: Math.max(0, trigger.viewers ?? 0) }] : [],
+    arrivals: trigger.reason === 'raid' && trigger.fromLogin?.trim() && Number.isInteger(trigger.viewers) && trigger.viewers! >= 0
+      ? [{ triggerId: trigger.id, fromLogin: trigger.fromLogin.trim().slice(0, 25), viewers: trigger.viewers! }] : [],
     overflowArrivals: { channels: 0, viewers: 0 },
     beats: selected.map((beat, index) => ({
       id: `beat:${trigger.id}:${index}`, kind: beat.kind, text: beat.text,

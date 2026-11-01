@@ -222,7 +222,7 @@ export const RecapPlanSchema = z.object({
   dependencyRefs: z.array(VersionRefSchema).max(100), layout: OverlayLayoutSchema,
   arrivals: z.array(z.object({ triggerId: IdSchema, fromLogin: z.string().max(25), viewers: z.number().int().min(0) }).strict()).max(5),
   overflowArrivals: z.object({ channels: z.number().int().min(0), viewers: z.number().int().min(0) }).strict(),
-  beats: z.array(z.object({ id: IdSchema, kind: z.enum(['attempt', 'change', 'origin', 'now']), text: z.string().max(300), atMs: OffsetSchema, untilMs: OffsetSchema, sourceRange: TimeRangeSchema, sourceIds: z.array(IdSchema).max(20), mediaId: IdSchema.nullable() }).strict()).max(4),
+  beats: z.array(z.object({ id: IdSchema, kind: z.enum(['context', 'attempt', 'change', 'origin', 'now']), text: z.string().max(300), atMs: OffsetSchema, untilMs: OffsetSchema, sourceRange: TimeRangeSchema, sourceIds: z.array(IdSchema).max(20), mediaId: IdSchema.nullable() }).strict()).max(4),
   media: z.array(z.object({ id: IdSchema, kind: z.enum(['video', 'image']), inMs: OffsetSchema, outMs: OffsetSchema, captureStartMs: OffsetSchema, captureEndMs: OffsetSchema, previousSession: z.boolean() }).strict()).max(4),
   audio: z.object({ id: IdSchema, startMs: OffsetSchema, durationMs: OffsetSchema }).strict().nullable(),
   soundEvents: z.array(z.object({ id: IdSchema, kind: z.string().max(40), atMs: OffsetSchema, gain: z.number().min(0).max(1) }).strict()).max(32),

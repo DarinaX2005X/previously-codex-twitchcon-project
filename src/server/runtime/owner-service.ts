@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { canDispatch, compileRecap } from '../../core/recap.js';
+import { canDispatch, compileRecap, recapLineage } from '../../core/recap.js';
 import type { DomainEvent, DomainState } from '../../core/types.js';
 import type { Channel, Chapter, Clock, EventEnvelope, InvalidationReceipt, Lore, Moment, OwnerSnapshot, PlaybackRef, RecapPlan, Safety, Scope, Settings, Source } from '../../shared/contracts/index.js';
 import { safetyAllowsPublication, SettingsSchema } from '../../shared/contracts/index.js';
@@ -214,7 +214,7 @@ export class RuntimeOwnerService implements OwnerService {
   }
   previewRecap(principal: Principal,sessionId: string): RecapPlan|null {
     this.authorize(principal);const state=this.state(sessionId);if(!state.published)return null;
-    return compileRecap(state.published,state.settings.layout,{id:'owner-preview',sessionId,reason:'manual',occurredAt:this.engine.clock.iso()},{media:state.media.filter(media=>canDispatch(state,{sessionId,privacyEpoch:state.session.privacyEpoch,dependencyRefs:media.refs})),durationMs:state.settings.recapDurationMs,generatedAt:this.engine.clock.iso()});
+    return compileRecap(state.published,state.settings.layout,{id:'owner-preview',sessionId,reason:'manual',occurredAt:this.engine.clock.iso()},{...recapLineage(state),media:state.media.filter(media=>canDispatch(state,{sessionId,privacyEpoch:state.session.privacyEpoch,dependencyRefs:media.refs})),durationMs:state.settings.recapDurationMs,generatedAt:this.engine.clock.iso(),narrationEnabled:state.settings.narrationEnabled});
   }
   triggerRecap(context: OwnerMutation,input: {sessionId: string;reason: 'manual'|'hotkey'}): Promise<PlaybackRef> {
     return this.mutate(context,'recap.trigger',input,async()=>{this.state(input.sessionId);const triggerId=`owner:${hash(context.idempotencyKey).slice(0,32)}`;const state=await this.engine.dispatch(input.sessionId,{type:'recap.trigger',trigger:{id:triggerId,...input,occurredAt:this.engine.clock.iso()}},this.options(context,{operation:'recap.trigger',...input}));const playback=state.playbacks.find(p=>p.id===`playback:${triggerId}`)??state.playbacks.find(p=>p.status==='queued');if(!playback)throw new ApiError(409,'recap_unavailable','A recap could not be prepared.');return {kind:'playback',sessionId:input.sessionId,id:playback.id};});

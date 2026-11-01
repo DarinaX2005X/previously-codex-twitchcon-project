@@ -73,6 +73,15 @@ describe('public reading boundaries', () => {
 });
 
 describe('story and player lease state', () => {
+  it('withdraws live story before focus revalidation replaces its lease timers', async () => {
+    timing(); const value = snapshot(); value.liveLeaseUntil = new Date(NOW + 1000).toISOString(); let calls = 0;
+    const view = reader({ getPublicSnapshot: async () => { if (++calls === 1) return value; throw new Error('Network offline'); } }); await tick();
+    expect(view.latest().snapshot).not.toBeNull();
+    view.controller.revalidate();
+    expect(view.latest().snapshot).toBeNull();
+    await vi.advanceTimersByTimeAsync(6200);
+    expect(view.latest()).toMatchObject({ status: 'unavailable', snapshot: null });
+  });
   it('removes the entire live snapshot when the server lease expires before the next poll', async () => {
     timing(); const value = snapshot(); value.liveLeaseUntil = new Date(NOW + 1500).toISOString();
     const view = reader({ getPublicSnapshot: async () => value }); await tick();

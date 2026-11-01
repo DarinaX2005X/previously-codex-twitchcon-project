@@ -1,0 +1,59 @@
+{
+  "scope": "Synthetic reducer plus SQLite raw ingress; not StoryEngine throughput, actual capture, providers, cloud or a wall-clock eight-hour run.",
+  "durationSeconds": 60,
+  "hardware": {
+    "platform": "win32",
+    "release": "10.0.19045",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-1260P",
+    "logicalCpus": 16,
+    "totalMemory": 34071896064,
+    "node": "v22.13.0"
+  },
+  "elapsedSeconds": 12.0823927,
+  "messages": 1200,
+  "commands": 70,
+  "deletes": 0,
+  "providerFails": 0,
+  "limits": {
+    "maxSources": 500,
+    "maxWindows": 5,
+    "maxActors": 1,
+    "maxPhrases": 0,
+    "maxCandidates": 0,
+    "maxPending": 1,
+    "maxPacket": 0
+  },
+  "singleActorFalseMoments": 0,
+  "pagination": {
+    "rows": 1201,
+    "pages": 3,
+    "milliseconds": 19.69419999999991,
+    "firstSourceRetained": true
+  },
+  "samples": [
+    {
+      "virtualSecond": 0,
+      "processedMessages": 20,
+      "elapsedSeconds": 0.29657290000000014,
+      "heapUsed": 12544464,
+      "rss": 90226688,
+      "diskBytes": 344064,
+      "nodes": 0,
+      "tombstones": 0,
+      "chapters": 0,
+      "packetBytes": 1125
+    },
+    {
+      "virtualSecond": 60,
+      "processedMessages": 1200,
+      "elapsedSeconds": 12.0619156,
+      "heapUsed": 13097032,
+      "rss": 110305280,
+      "diskBytes": 1712128,
+      "nodes": 2,
+      "tombstones": 0,
+      "chapters": 0,
+      "packetBytes": 350
+    }
+  ]
+}

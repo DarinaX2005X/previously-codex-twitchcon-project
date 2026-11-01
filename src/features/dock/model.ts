@@ -22,6 +22,12 @@ export function forgetWindow(snapshot: OwnerSnapshot, elapsedMs = 0) {
   const toMs = Math.min(172_800_000, Math.max(0, Date.parse(snapshot.serverNow) + elapsedMs - Date.parse(snapshot.session.startedAt)));
   return { kind: 'interval' as const, sessionId: snapshot.session.id, fromMs: Math.max(0, toMs - 120_000), toMs };
 }
+export type DockClockMode = 'server' | 'snapshot';
+/** A replay owns its virtual clock; browser wall time must never advance it. */
+export function dockClock(serverNow: string, observedAtMs: number, wallNowMs: number, mode: DockClockMode = 'server') {
+  const elapsed = mode === 'snapshot' ? 0 : Math.max(0, wallNowMs - observedAtMs);
+  return { elapsed, now: Date.parse(serverNow) + elapsed };
+}
 export function privacyAcknowledged(receipt: InvalidationReceipt, snapshot: OwnerSnapshot | null): boolean {
   return receipt.publicSync === 'synced' || Boolean(snapshot?.session && snapshot.session.privacyEpoch >= receipt.privacyEpoch && !snapshot.sync.pendingPrivacy && snapshot.sync.state === 'synced');
 }

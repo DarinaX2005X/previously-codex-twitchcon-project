@@ -27,7 +27,7 @@ export function Timecode({ milliseconds, onSeek, label }: TimecodeProps) {
 
 export interface LanguageControlProps { value: RecapLanguage; onChange: (value: RecapLanguage) => void; disabled?: boolean; label?: string; showHint?: boolean; }
 export function LanguageControl({ value, onChange, disabled, label = 'Recap language', showHint = true }: LanguageControlProps) {
-  return <div className="pv-language"><span>{label}</span><SegmentedControl label={label} value={value} onChange={next => { if (next === 'en' || next === 'ru') onChange(next); }} disabled={disabled} options={[{ value: 'en', label: 'English' }, { value: 'ru', label: 'Русский' }]} />{showHint && <p className="pv-secondary">Speech detects automatically.</p>}</div>;
+  return <div className="pv-language"><span>{label}</span><SegmentedControl label={label} value={value} onChange={next => { if (next === 'en' || next === 'ru') onChange(next); }} disabled={disabled} options={[{ value: 'en', label: 'English' }, { value: 'ru', label: 'Русский' }]} />{showHint && <p className="pv-secondary">Your speech language is detected automatically.</p>}</div>;
 }
 
 export interface ChapterRowProps { title: string; children: ReactNode; atMs?: number; onSeek?: (milliseconds: number) => void; state?: ReactNode; actions?: ReactNode; sources?: ReactNode; selected?: boolean; className?: string; }

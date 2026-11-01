@@ -2,8 +2,18 @@ import type {RecapClient,OwnerSnapshot,UpdateEvent,Chapter,Moment,InvalidationRe
 import type {CaptureBundle} from './contracts.js';
 export type ReplayView={snapshot:OwnerSnapshot;transport:{atMs:number;durationMs:number;playing:boolean;speed:1|2|4;error:string|null;correction:{title:string;summary:string};milestones:CaptureBundle['milestones']}};
 export class ReplayClient implements RecapClient {
-  private serial=0;private eventSerial=0;private pending=new Map<number,{resolve:(v:unknown)=>void;reject:(e:Error)=>void}>();private listeners=new Set<(event:UpdateEvent)=>void>();private views=new Set<(view:ReplayView)=>void>();view:ReplayView|null=null;
-  constructor(private worker:Worker){worker.onmessage=e=>{const data=e.data;if(data.view){this.view=data.view;for(const listener of this.views)listener(data.view);for(const listener of this.listeners)listener({id:++this.eventSerial,event:'snapshot.changed',data:{sessionId:data.view.snapshot.session?.id??null,revision:data.view.snapshot.revision}});}if(data.id){const pending=this.pending.get(data.id);this.pending.delete(data.id);if(data.error)pending?.reject(Object.assign(new Error(data.error.message),data.error));else pending?.resolve(data.result);}};worker.onerror=()=>this.dispose();}
+  private serial=0;private eventSerial=0;private notifiedSession:string|null=null;private notifiedPrivacy=0;private pending=new Map<number,{resolve:(v:unknown)=>void;reject:(e:Error)=>void}>();private listeners=new Set<(event:UpdateEvent)=>void>();private views=new Set<(view:ReplayView)=>void>();view:ReplayView|null=null;
+  constructor(private worker:Worker,onFailure?:()=>void){worker.onmessage=e=>{
+    const data=e.data;
+    if(data.view){this.view=data.view;for(const listener of this.views)listener(data.view);
+      if(data.kind==='change'){
+        const session=data.view.snapshot.session?.id??null,privacy=data.view.snapshot.session?.privacyEpoch??0;
+        const event:UpdateEvent={id:++this.eventSerial,event:this.notifiedSession&&this.notifiedSession!==session?'snapshot.reset':privacy>this.notifiedPrivacy?'privacy.invalidated':'snapshot.changed',data:{sessionId:session,revision:data.view.snapshot.revision}};
+        this.notifiedSession=session;this.notifiedPrivacy=privacy;for(const listener of this.listeners)listener(event);
+      }
+    }
+    if(data.id){const pending=this.pending.get(data.id);this.pending.delete(data.id);if(data.error)pending?.reject(Object.assign(new Error(data.error.message),data.error));else pending?.resolve(data.result);}
+  };worker.onerror=worker.onmessageerror=()=>{this.dispose();onFailure?.();};}
   private call<T>(method:string,...args:unknown[]):Promise<T>{const id=++this.serial;return new Promise((resolve,reject)=>{this.pending.set(id,{resolve:resolve as (v:unknown)=>void,reject});this.worker.postMessage({id,method,args});});}
   async initialize(bundle:CaptureBundle){await this.call('init',bundle);return this;}
   observe(listener:(view:ReplayView)=>void){this.views.add(listener);if(this.view)listener(this.view);return()=>{this.views.delete(listener);};}

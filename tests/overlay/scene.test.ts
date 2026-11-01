@@ -22,7 +22,7 @@ describe('broadcast footprint and deterministic scene',()=>{
   });
   it('retains a semantic join with outgoing attempt and incoming change',()=>{
     const plan=planFixture(),layout=resolveSceneLayout(plan.layout)!;const join=renderAt(3500,plan,layout);
-    expect(join.caption?.kind).toBe('attempt');expect(join.caption?.outgoing).toBeGreaterThan(0);expect(join.nextCaption?.kind).toBe('change');expect(join.nextCaption?.reveal).toBeGreaterThan(0);
+    expect(join.retainedCaption?.kind).toBe('attempt');expect(join.retainedPlane?.scale).toBeLessThan(1);expect(join.caption?.kind).toBe('change');expect(join.caption?.reveal).toBeGreaterThan(0);expect(join.aperture.x).toBeGreaterThan(join.retainedPlane!.x+100);
   });
   it('clears completely at exact end and excludes negative scheduled time',()=>{
     const plan=planFixture(),layout=resolveSceneLayout(plan.layout)!;expect(renderAt(-1,plan,layout).visible).toBe(false);expect(renderAt(12000,plan,layout).visible).toBe(false);expect(renderAt(11999,plan,layout).visible).toBe(true);

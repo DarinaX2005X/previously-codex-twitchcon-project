@@ -26,7 +26,7 @@ export function SourceSheet({ context, owner, onClose, onForget }: { context: So
   }
   useEffect(() => { void load(); return () => { ++generation.current; }; }, []);
   return <Sheet open onOpenChange={open => { if (!open) onClose(); }} title="Chapter sources" description={context.title} className="dock-paper" footer={<QuietButton onClick={onClose}>Close sources</QuietButton>}>
-    <p className="pv-secondary">Sources in this chapter’s time range. Deleting a chapter keeps its sources; Forget removes the source interval and the stories derived from it.</p>
+    <p className="pv-secondary">Deleting a chapter keeps these sources. Forget removes an interval and anything derived from it.</p>
     {error && <InlineNotice tone="danger" action={<QuietButton onClick={() => void load(cursor ?? undefined)}>Retry sources</QuietButton>}>{error}</InlineNotice>}
     {!loading && !items.length && !error && <p>No available sources in this interval.</p>}
     {items.map(item => <article key={item.id} className="dock-source"><div><Timecode milliseconds={item.startMs} /><span>{item.kind === 'speech' ? 'Speech' : item.kind === 'chat' ? 'Chat' : 'Stream context'}</span></div>{item.text ? <blockquote>{item.text}</blockquote> : <p>{item.moderation === 'pending' ? 'Source text is waiting for its safety check.' : 'Source text is unavailable.'}</p>}<QuietButton tone="danger" onClick={() => onForget({ kind: 'interval', sessionId: context.sessionId, fromMs: item.startMs, toMs: item.endMs })}>Forget this source interval</QuietButton></article>)}

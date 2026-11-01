@@ -9,6 +9,23 @@ const input:MediaInput={id:'asset',url:'https://clips.example/authorized',kind:'
 const temp=()=>mkdtempSync(join(process.cwd(),'tests/audio/media-'));
 const bytes=encodeWav(new Float32Array(8000).fill(0.1),8000);
 describe('private media lifecycle',()=>{
+ it('stores generated PCM privately without fetch and reloads its exact authorization binding',async()=>{
+   const dir=temp();let permitted=true;const fetcher=vi.fn();const {url:_url,...descriptor}=input;
+   try{const options={directory:dir,allowedHosts:[],visible:()=>permitted,fetch:fetcher};const cache=new PrivateMediaCache(options);
+     const record=await cache.storeAudio({...descriptor,kind:'audio'},bytes);expect(record).toMatchObject({id:'asset',durationMs:1000,mimeType:'audio/wav',sessionId:'s',privacyEpoch:0});expect(fetcher).not.toHaveBeenCalled();
+     const restarted=new PrivateMediaCache(options);expect((await restarted.get('asset')).record).toMatchObject({dependencyRefs:[],sessionId:'s'});
+     permitted=false;await expect(restarted.get('asset')).rejects.toMatchObject({code:'revoked'});await restarted.revoke('asset');
+     expect(readdirSync(dir).filter(file=>file.endsWith('.media')||file.endsWith('.part'))).toEqual([]);
+   }finally{rmSync(dir,{recursive:true,force:true});}
+ });
+ it('rejects malformed generated audio and a privacy change during decode before caching',async()=>{
+   const dir=temp();let permitted=true;const {url:_url,...descriptor}=input;
+   try{const cache=new PrivateMediaCache({directory:dir,allowedHosts:[],visible:()=>permitted,probe:async()=>{permitted=false;return {durationMs:1000,mimeType:'audio/wav'};}});
+     await expect(cache.storeAudio({...descriptor,kind:'audio'},bytes.subarray(0,100))).rejects.toMatchObject({code:'invalid'});
+     await expect(cache.storeAudio({...descriptor,kind:'audio'},bytes)).rejects.toMatchObject({code:'revoked'});
+     expect(readdirSync(dir).filter(file=>file.endsWith('.media')||file.endsWith('.part'))).toEqual([]);
+   }finally{rmSync(dir,{recursive:true,force:true});}
+ });
  it('validates actual standalone WAV decoding with installed FFmpeg',async()=>{const dir=temp();try{const file=join(dir,'recording.wav');writeFileSync(file,bytes);const probe=await createFFmpegProbe()(file,'audio');expect(probe).toEqual({durationMs:1000,mimeType:'audio/wav'});writeFileSync(file,bytes.subarray(0,500));await expect(createFFmpegProbe()(file,'audio')).rejects.toThrow();}finally{rmSync(dir,{recursive:true,force:true});}});
  it('rejects playlists before FFmpeg can follow embedded network URLs',async()=>{const dir=temp();try{const file=join(dir,'playlist.media');writeFileSync(file,'#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10,\nhttps://example.invalid/private-segment.ts\n#EXT-X-ENDLIST\n');await expect(createFFmpegProbe()(file,'video')).rejects.toThrow();}finally{rmSync(dir,{recursive:true,force:true});}});
  it('rejects unauthorized redirect and expired/partial downloads without ready files',async()=>{const dir=temp();try{const fetcher=vi.fn().mockResolvedValue(new Response(null,{status:302,headers:{Location:'https://evil.example/file'}}));const cache=new PrivateMediaCache({directory:dir,allowedHosts:['clips.example'],visible:()=>true,fetch:fetcher});await expect(cache.prepare(input)).rejects.toMatchObject({code:'invalid'});expect(fetcher).toHaveBeenCalledOnce();fetcher.mockResolvedValue(new Response(null,{status:403}));await expect(cache.prepare(input)).rejects.toMatchObject({code:'unavailable'});fetcher.mockResolvedValue(new Response(new Uint8Array(bytes),{status:200,headers:{'Content-Length':String(bytes.length+10)}}));await expect(cache.prepare(input)).rejects.toMatchObject({code:'invalid'});expect(readdirSync(dir).filter(file=>file.endsWith('.part'))).toHaveLength(0);}finally{rmSync(dir,{recursive:true,force:true});}});

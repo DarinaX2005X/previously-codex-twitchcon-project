@@ -1,4 +1,4 @@
-import { createDomainState, reduceDomain, stateHash, compileRecap, type DomainState, type DomainEvent, type DomainEffect } from '../core/index.js';
+import { createDomainState, reduceDomain, stateHash, compileRecap, recapLineage, type DomainState, type DomainEvent, type DomainEffect } from '../core/index.js';
 import type { Chapter, Clock, OwnerSnapshot, Source, Settings, PrivacyTarget, ReplayControl } from '../shared/contracts/index.js';
 import { validateBundle, storyInput, type CaptureBundle, type StoryOutcome, type WordingOutcome } from './contracts.js';
 import { LogicalIds, RecordedProviders, FixtureMissing } from './providers.js';
@@ -12,7 +12,7 @@ export class ReplayDriver {
   readonly clock:Clock;
   constructor(bundle:CaptureBundle,readonly runId:string){
     this.bundle=validateBundle(bundle);this.epoch=Date.parse(bundle.initial.session.startedAt);
-    const identities=[bundle.initial.session.id,...bundle.events.flatMap(e=>e.event.type==='source'?[e.event.source.id,...e.event.source.actorId?[e.event.source.actorId]:[]]:[])];
+    const identities=[bundle.initial.session.id,...bundle.media.map(m=>m.id),...bundle.events.flatMap(e=>e.event.type==='source'?[e.event.source.id,...e.event.source.actorId?[e.event.source.actorId]:[]]:[])];
     this.ids=new LogicalIds(runId,identities);this.providers=new RecordedProviders(bundle.providers);
     const initial=this.ids.map(bundle.initial,'runtime');initial.session.runId=runId;
     this.state=createDomainState(initial);this.clock={now:()=>this.epoch+this.atMs,iso:()=>new Date(this.epoch+this.atMs).toISOString()};
@@ -41,7 +41,15 @@ export class ReplayDriver {
   /** Every seek executes the complete prefix, including hold and scheduler ticks. */
   advanceTo(target:number){
     if(this.revoked)return;
-    target=Math.min(this.durationMs,Math.max(this.atMs,target));
+    const playbackEnd=Math.max(0,...this.state.playbacks.filter(p=>p.plan&&['queued','preparing','playing'].includes(p.status)).map(p=>{
+      const timing=this.state.playbackTiming[p.id];
+      const start=p.startAt?Date.parse(p.startAt)-this.epoch:timing?.prepareAtMs!==null&&timing?.prepareAtMs!==undefined?timing.prepareAtMs-this.epoch+1500:this.atMs+1500;
+      return start+(p.plan?.durationMs??0);
+    }));
+    // Sources stop at the recording boundary; a manual scene can finish on the same clock.
+    const horizon=Math.max(this.durationMs,this.atMs,playbackEnd);
+    // Contract offsets are integer milliseconds; performance.now() supplies fractions.
+    target=Math.floor(Math.min(horizon,Math.max(this.atMs,target)));
     for(let guard=0;guard<400000;guard++){
       this.queue.sort((a,b)=>a.atMs-b.atMs);
       const input=this.bundle.events[this.eventIndex],next=Math.min(input?.atMs??Infinity,this.queue[0]?.atMs??Infinity,this.nextTick);
@@ -50,14 +58,16 @@ export class ReplayDriver {
       else if(this.queue[0]?.atMs===next)this.send(this.queue.shift()!.event);
       else {this.nextTick+=100;this.send({type:'tick'});}
     }
-    this.atMs=target;if(target>=this.durationMs)this.playing=false;
+    this.atMs=target;if(target>=this.durationMs&&!this.state.playbacks.some(p=>['queued','preparing','playing'].includes(p.status)))this.playing=false;
   }
   control(control:ReplayControl){if(control.speed)this.speed=control.speed;if(control.action==='play')this.playing=true;if(control.action==='pause')this.playing=false;if(control.action==='seek'){const m=this.milestones.find(x=>x.id===control.milestone);if(m)this.advanceTo(m.atMs);}}
   chapter(id:string,revision:number){const c=this.state.chapters.find(x=>x.id===id);if(!c||c.revision!==revision)throw Object.assign(new Error('The chapter changed. Compare the current version.'),{code:'revision_conflict',status:409});return c;}
   editChapter(id:string,patch:{title:string;summary:string;baseRevision:number}):Chapter {
-    this.chapter(id,patch.baseRevision);const source:Source={channelId:this.state.session.channelId,runId:this.runId,sessionId:this.state.session.id,id:`${this.runId}~owner-${++this.serial}`,revision:1,kind:'owner_statement',startMs:this.atMs,endMs:this.atMs,actorId:null,languageCodes:[this.state.settings.recapLanguage],timePrecision:'event',text:patch.summary,status:'active',externalMessageId:null,moderation:'pending'};
+    if(!patch.title.trim()||!patch.summary.trim()||patch.title.length>120||patch.summary.length>700)throw new Error('The correction needs a title and summary within the chapter limits.');
+    const before=this.chapter(id,patch.baseRevision);const source:Source={channelId:this.state.session.channelId,runId:this.runId,sessionId:this.state.session.id,id:`${this.runId}~owner-${++this.serial}`,revision:1,kind:'owner_statement',startMs:this.atMs,endMs:this.atMs,actorId:null,languageCodes:[this.state.settings.recapLanguage],timePrecision:'event',text:patch.summary,status:'active',externalMessageId:null,moderation:'pending'};
     const pending={moderation:'pending',pii:'pending',checkedAt:null,reason:null} as const;
     this.send({type:'owner.edit',entityId:id,baseRevision:patch.baseRevision,source,title:patch.title,summary:patch.summary,safety:pending});
+    if((this.state.ownerRevisions[id]??0)<=before.ownerEditRevision)throw new Error('This chapter can no longer be edited. Restart the recording to restore the original.');
     try{const record=this.providers.lookup('owner_review',{title:patch.title,summary:patch.summary});if(record.error)throw new FixtureMissing();const out=record.output as WordingOutcome;const c=this.state.chapters.find(x=>x.id===id)!;
       this.send({type:'owner.review',entityId:id,ownerRevision:c.ownerEditRevision,sourceId:source.id,sourceRevision:1,privacyEpoch:this.state.session.privacyEpoch,language:'en',...out});
       if(this.state.settings.recapLanguage==='ru'){const translated=this.providers.lookup('translation',{title:out.title,summary:out.summary,language:'ru'}).output as WordingOutcome;const updated=this.state.chapters.find(x=>x.id===id)!;this.send({type:'presentation',entityId:id,baseRevision:updated.revision,ownerRevision:updated.ownerEditRevision,language:'ru',inputRefs:updated.dependencyRefs,...translated});}this.error=null;
@@ -77,9 +87,9 @@ export class ReplayDriver {
     const {baseRevision,...values}=patch;
     this.send({type:'settings',settings:{...this.state.settings,...values,revision:this.state.settings.revision+1},baseRevision});this.flush();return this.state.settings;
   }
-  privacy(target:PrivacyTarget){this.send({type:'privacy',target,reason:'Replay privacy action'});this.queue=this.queue.filter(q=>q.event.type==='playback');this.flush();return this.state.lastReceipt!;}
+  privacy(target:PrivacyTarget){if(target.sessionId!==this.state.session.id)throw new Error('wrong_session');this.send({type:'privacy',target,reason:'Replay privacy action'});this.queue=this.queue.filter(q=>q.event.type==='playback');this.flush();return this.state.lastReceipt!;}
   flush(){this.advanceTo(this.atMs);}
-  preview(){return this.state.published?compileRecap(this.state.published,this.state.settings.layout,{id:`preview-${this.serial++}`,sessionId:this.state.session.id,reason:'manual',occurredAt:this.clock.iso()},{media:this.state.media,durationMs:this.state.settings.recapDurationMs,generatedAt:this.clock.iso()}):null;}
+  preview(){return this.state.published?compileRecap(this.state.published,this.state.settings.layout,{id:`preview-${this.serial++}`,sessionId:this.state.session.id,reason:'manual',occurredAt:this.clock.iso()},{media:this.state.media,durationMs:this.state.settings.recapDurationMs,generatedAt:this.clock.iso(),...recapLineage(this.state)}):null;}
   snapshot():OwnerSnapshot {
     const s=this.state,offline={state:'paused' as const,lastObservedAt:null,message:'Recorded source',action:null};
     return {channel:s.channel,session:s.session,settings:s.settings,status:{mic:offline,chat:offline,transcription:offline,story:{...offline,state:this.error?'delayed':'ready',message:this.error==='fixture_missing'?'This recording has no safety check for this edit':this.error},moderation:offline,cloud:{...offline,message:'Demo changes stay in this tab'},overlay:{...offline,state:'ready'}},published:s.published,drafts:s.chapters.filter(c=>c.publicationState==='draft'),held:s.chapters.filter(c=>c.publicationState==='held'),lore:s.lore,moments:s.moments,playback:s.playbacks,sync:{state:'unconfigured',revision:s.revision,acknowledgedRevision:null,lastSyncedAt:null,pendingPrivacy:false},revision:s.revision,serverNow:this.clock.iso(),budget:{limitUsd:0,committedUsd:0,reservedUsd:0,paidCallsEnabled:false}};

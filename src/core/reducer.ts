@@ -4,7 +4,7 @@ import { DOMAIN_LIMITS, type DomainState, type DomainEvent, type DomainEffect, t
 import { buildEvidencePacket, packetRefs, validateStoryPatch, canonical, stateHash, uniqueRefs, refOf, isRefActive, sourceAllowed, sourceTombstoned, dependencyRange, leafRefs, blockedPhrase, normalizeTerm, evidencePacketBytes, EVIDENCE_PACKET_BYTE_CAP, overlaps } from './evidence.js';
 import { invalidateDomain } from './privacy.js';
 import { advanceWindows, observeChat, observePhrase, saveMoment } from './moments.js';
-import { compileRecap, canDispatch } from './recap.js';
+import { compileRecap, canDispatch, recapLineage } from './recap.js';
 import { reconcilePrivacyEpoch } from './epoch.js';
 import { publishedLore, loreLanguageReady, recordLorePresentation, retireLorePresentations } from './lore-presentations.js';
 
@@ -93,7 +93,7 @@ function requestGeneration(s:DomainState,effects:DomainEffect[],clock:Clock){
   const request={ticket,entityId,reason,packet,requestedAtMs:clock.now(),sourceRevision:s.sourceRevision} as const;
   s.pendingGeneration=request;s.lastCurrentAtMs=clock.now();if(reason!=='current')s.lastChapterAtMs=clock.now();effects.push({type:'generation.request',request:structuredClone(request)});
 }
-function acceptSource(s:DomainState,source:Source,effects:DomainEffect[],clock:Clock,captureEpoch?:number):boolean {
+function acceptSource(s:DomainState,source:Source,effects:DomainEffect[],clock:Clock,captureEpoch?:number,scheduleStory=true):boolean {
   if(!SourceSchema.safeParse(source).success||source.sessionId!==s.session.id||source.channelId!==s.session.channelId||source.runId!==s.session.runId||source.endMs<source.startMs)return false;
   if((source.kind==='chat'||source.kind==='speech')&&(s.settings.listeningPaused||captureEpoch!==undefined&&captureEpoch!==s.captureEpoch))return false;
   if(source.kind!=='owner_statement'&&s.session.status==='finalized')return false;
@@ -109,7 +109,7 @@ function acceptSource(s:DomainState,source:Source,effects:DomainEffect[],clock:C
     effects.splice(0,effects.length,...effects.filter(e=>e.type!=='source.persist'||e.source.id!==old.id));
     publish(s,effects,clock,true);
   }
-  s.sources=s.sources.filter(x=>x.id!==source.id);s.sources.push(structuredClone(source));s.sourceRevision++;
+  s.sources=s.sources.filter(x=>x.id!==source.id);s.sources.push(structuredClone(source));if(scheduleStory)s.sourceRevision++;
   effects.push({type:'source.persist',source:structuredClone(source)});return true;
 }
 function commitStory(s:DomainState,event:Extract<DomainEvent,{type:'generation.result'}>,effects:DomainEffect[],clock:Clock){
@@ -121,9 +121,13 @@ function commitStory(s:DomainState,event:Extract<DomainEvent,{type:'generation.r
   const refs=event.ticket.inputRefs,range=dependencyRange(s,refs),entityId=request.entityId,previous=s.chapters.find(c=>c.id===entityId),revision=(previous?.revision??0)+1;
   const claimId=(id:string)=>`claim:${stateHash(event.ticket.jobId)}:${id.slice(0,80)}`;
   const candidateId=`candidate:${event.ticket.jobId}:${event.ticket.recapLanguage}`;
-  const role=(name:string)=>event.patch.claims.find(c=>c.role===name)?.text.slice(0,300)??null;
-  const current:CurrentState={goal:role('goal')??s.current?.goal??null,change:role('change'),now:role('state')??role('attempt')??role('outcome'),sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs};
-  const chapter:Chapter={id:entityId,sessionId:s.session.id,revision,title:(event.patch.title??'Stream update').slice(0,120),summary:event.patch.claims.map(c=>c.text).join(' ').slice(0,700),startMs:previous?.startMs??range.startMs,endMs:range.endMs,mood:'neutral',claimIds:event.patch.claims.map(c=>claimId(c.id)),momentIds:s.moments.filter(m=>m.startMs>=range.startMs&&m.endMs<=range.endMs).slice(-12).map(m=>m.id),pinned:previous?.pinned??false,edited:false,sourceLabels:leafRefs(s,refs).slice(-12).map(r=>{const source=s.sources.find(x=>x.id===r.id)??(s.nodes[r.id]?.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata;return {id:r.id,type:source?.kind??'speech',atMs:source?.startMs??0,label:source?.kind==='chat'?'Chat report':'Spoken context'};}),maxDependencyEndMs:range.endMs,ownerEditRevision:s.ownerRevisions[entityId]??0,publicationState:'draft',eligibleAt:event.ticket.eligibleAt,safety:event.safety,dependencyRefs:refs};
+  const role=(name:string)=>event.patch.claims.find(c=>c.role===name&&c.text.length<=300)?.text??null;
+  // Keep each approved claim whole: clipping a sentence can remove its qualification or negation.
+  const summary=event.patch.claims.reduce((text,claim)=>{
+    const next=text?`${text} ${claim.text}`:claim.text;return next.length<=700?next:text;
+  },'');
+  const current:CurrentState={goal:role('goal'),change:role('change'),now:role('state')??role('attempt')??role('outcome'),sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs};
+  const chapter:Chapter={id:entityId,sessionId:s.session.id,revision,title:event.patch.title??'',summary,startMs:previous?.startMs??range.startMs,endMs:range.endMs,mood:'',claimIds:event.patch.claims.map(c=>claimId(c.id)),momentIds:s.moments.filter(m=>m.startMs>=range.startMs&&m.endMs<=range.endMs).slice(-12).map(m=>m.id),pinned:previous?.pinned??false,edited:false,sourceLabels:leafRefs(s,refs).slice(-12).flatMap(r=>{const source=s.sources.find(x=>x.id===r.id)??(s.nodes[r.id]?.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata;if(!source)return [];const labels:Record<Source['kind'],string>={chat:'Chat report',speech:'Spoken context',owner_statement:'Owner statement',channel_metadata:'Channel information',stream_event:'Stream event'};return [{id:r.id,type:source.kind,atMs:source.startMs,label:labels[source.kind]}];}),maxDependencyEndMs:range.endMs,ownerEditRevision:s.ownerRevisions[entityId]??0,publicationState:'draft',eligibleAt:event.ticket.eligibleAt,safety:event.safety,dependencyRefs:refs};
   const candidate:StoryCandidate={id:candidateId,entityId,revision,ownerRevision:chapter.ownerEditRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:refs,eligibleAtMs:Date.parse(event.ticket.eligibleAt),chapter,current,safety:event.safety,language:event.ticket.recapLanguage,status:'pending'};
   if(!addCandidate(s,effects,candidate))return;
   for(const proposed of event.patch.claims){
@@ -219,14 +223,14 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
     case 'owner.pin':{const c=s.chapters.find(c=>c.id===event.entityId);if(c&&c.revision===event.baseRevision){c.pinned=event.pinned;c.revision++;const node=s.nodes[c.id];if(node)upsertNode(s,effects,{...node,revision:c.revision,body:c});if(s.pendingGeneration?.entityId===c.id){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}const p=s.published?.chapters.find(p=>p.id===c.id);if(p)p.pinned=event.pinned;publish(s,effects,clock);}break;}
     case 'owner.edit':{
       const old=s.chapters.find(c=>c.id===event.entityId);if(!old||old.revision!==event.baseRevision||event.source.kind!=='owner_statement'||s.suppressedIds.includes(old.id))break;
-      const oldRefs=old.dependencyRefs;if(!acceptSource(s,event.source,effects,clock))break;
+      const oldRefs=old.dependencyRefs;if(!acceptSource(s,event.source,effects,clock,undefined,false))break;
       const ownerRevision=(s.ownerRevisions[old.id]??0)+1;s.ownerRevisions[old.id]=ownerRevision;if(!s.ownerLocks.includes(old.id))s.ownerLocks.push(old.id);
       s.candidates=s.candidates.filter(c=>c.entityId!==old.id);for(const n of Object.values(s.nodes))if(n.kind==='presentation'&&(n.body as StoryCandidate)?.entityId===old.id){n.active=false;n.body=null;n.revision++;effects.push({type:'entity.upsert',node:structuredClone(n)});}
       if(s.pendingGeneration?.entityId===old.id){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}
       if(s.published)s.published.chapters=s.published.chapters.filter(c=>c.id!==old.id);s.current=null;
       const refs=uniqueRefs([...oldRefs,refOf(event.source)]),range=dependencyRange(s,refs),chapter:Chapter={...old,revision:old.revision+1,ownerEditRevision:ownerRevision,title:event.title.slice(0,120),summary:event.summary.slice(0,700),pinned:event.pinned??old.pinned,edited:true,publicationState:safetyAllowsPublication(event.safety)?'draft':'held',safety:event.safety,eligibleAt:clock.iso(),dependencyRefs:refs,maxDependencyEndMs:range.endMs};
       s.chapters=s.chapters.map(c=>c.id===old.id?chapter:c);upsertNode(s,effects,{id:old.id,revision:chapter.revision,kind:'chapter',supports:refs,exposedTo:refs,startMs:old.startMs,endMs:range.endMs,active:true,body:chapter});
-      addCandidate(s,effects,{id:`owner:${old.id}:${ownerRevision}`,entityId:old.id,revision:chapter.revision,ownerRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:refs,eligibleAtMs:clock.now(),chapter,current:{goal:null,change:null,now:chapter.summary.slice(0,300),sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs},safety:event.safety,language:event.language??ownerLanguage(event.source,s.settings.recapLanguage),status:'pending'});
+      addCandidate(s,effects,{id:`owner:${old.id}:${ownerRevision}`,entityId:old.id,revision:chapter.revision,ownerRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:refs,eligibleAtMs:clock.now(),chapter,current:{goal:null,change:null,now:chapter.summary.length<=300?chapter.summary:null,sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs},safety:event.safety,language:event.language??ownerLanguage(event.source,s.settings.recapLanguage),status:'pending'});
       if(!safetyAllowsPublication(event.safety))effects.push({type:'owner.review.request',kind:'chapter',entityId:old.id,entityRevision:chapter.revision,ownerRevision,sourceId:event.source.id,sourceRevision:event.source.revision,privacyEpoch:s.session.privacyEpoch,dependencyRefs:refs});
       for(const p of s.playbacks){p.status='cancelled';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}publish(s,effects,clock,true);break;
     }
@@ -240,14 +244,14 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       for(const candidate of s.candidates.filter(c=>c.entityId===old.id)){const n=s.nodes[candidate.id];if(n)upsertNode(s,effects,{...n,revision:n.revision+1,active:false,body:null});}
       s.candidates=s.candidates.filter(c=>c.entityId!==old.id);s.chapters=s.chapters.map(c=>c.id===old.id?chapter:c);
       upsertNode(s,effects,{id:old.id,revision:chapter.revision,kind:'chapter',supports:refs,exposedTo:refs,startMs:chapter.startMs,endMs:range.endMs,active:true,body:chapter});
-      addCandidate(s,effects,{id:`owner:${old.id}:${event.ownerRevision}:review:${chapter.revision}`,entityId:old.id,revision:chapter.revision,ownerRevision:event.ownerRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:refs,eligibleAtMs:clock.now(),chapter,current:event.current?{...event.current,sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs}:{goal:null,change:null,now:chapter.summary.slice(0,300),sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs},safety:event.safety,language:event.language??ownerLanguage(source,s.settings.recapLanguage),status:'pending'});break;
+      addCandidate(s,effects,{id:`owner:${old.id}:${event.ownerRevision}:review:${chapter.revision}`,entityId:old.id,revision:chapter.revision,ownerRevision:event.ownerRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:refs,eligibleAtMs:clock.now(),chapter,current:event.current?{...event.current,sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs}:{goal:null,change:null,now:chapter.summary.length<=300?chapter.summary:null,sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs},safety:event.safety,language:event.language??ownerLanguage(source,s.settings.recapLanguage),status:'pending'});break;
     }
     case 'candidate.safety':{const c=s.candidates.find(c=>c.id===event.candidateId);if(c&&c.privacyEpoch===s.session.privacyEpoch&&c.inputRefs.every(r=>isRefActive(s,r))){c.safety=event.safety;c.chapter.safety=event.safety;effects.push({type:'candidate.save',candidate:structuredClone(c)});}break;}
     case 'presentation':{
       const c=s.chapters.find(x=>x.id===event.entityId);if(!c||c.revision!==event.baseRevision||c.ownerEditRevision!==event.ownerRevision||!event.inputRefs.every(r=>isRefActive(s,r)))break;
       const existing=s.candidates.find(x=>x.entityId===c.id&&x.revision===c.revision);
       const range=dependencyRange(s,uniqueRefs([...c.dependencyRefs,...event.inputRefs]));
-      addCandidate(s,effects,{id:`presentation:${c.id}:${c.revision}:${event.language}`,entityId:c.id,revision:c.revision,ownerRevision:c.ownerEditRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:uniqueRefs([...c.dependencyRefs,...event.inputRefs]),eligibleAtMs:existing?.eligibleAtMs??Date.parse(c.eligibleAt),chapter:{...c,title:event.title.slice(0,120),summary:event.summary.slice(0,700),safety:event.safety},current:event.current?{...event.current,sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs}:{goal:null,change:null,now:event.summary.slice(0,300),sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs},safety:event.safety,language:event.language,status:'pending'});break;
+      addCandidate(s,effects,{id:`presentation:${c.id}:${c.revision}:${event.language}`,entityId:c.id,revision:c.revision,ownerRevision:event.ownerRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:uniqueRefs([...c.dependencyRefs,...event.inputRefs]),eligibleAtMs:existing?.eligibleAtMs??Date.parse(c.eligibleAt),chapter:{...c,title:event.title.slice(0,120),summary:event.summary.slice(0,700),safety:event.safety},current:event.current?{...event.current,sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs}:{goal:null,change:null,now:event.summary.length<=300?event.summary:null,sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs},safety:event.safety,language:event.language,status:'pending'});break;
     }
     case 'language':{
       // Whole projection switch requires every currently published chapter's checked revision.
@@ -266,7 +270,7 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       retireLorePresentations(s,lore.id,effects);s.lore=[...s.lore.filter(l=>l.id!==lore.id),lore].slice(-50);upsertNode(s,effects,{id:lore.id,revision:lore.revision,kind:'lore',supports:event.originRefs,exposedTo:refs,startMs:lore.firstSeenMs,endMs:range.endMs,active:true,body:lore});recordLorePresentation(s,lore,{language:event.language??s.settings.recapLanguage,term:lore.term,explanation:lore.explanation,safety:lore.safety},effects,clock);break;
     }
     case 'lore.confirm':{
-      const lore=s.lore.find(l=>l.id===event.id);if(!lore||lore.revision!==event.baseRevision||blockedPhrase(s,lore.term,lore.aliases)||event.source.kind!=='owner_statement'||!acceptSource(s,event.source,effects,clock))break;
+      const lore=s.lore.find(l=>l.id===event.id);if(!lore||lore.revision!==event.baseRevision||blockedPhrase(s,lore.term,lore.aliases)||event.source.kind!=='owner_statement'||!acceptSource(s,event.source,effects,clock,undefined,false))break;
       retireLorePresentations(s,lore.id,effects);
       lore.revision++;lore.explanation=event.explanation.slice(0,700);lore.originKind='owner_confirmed';lore.originMs=event.source.startMs;lore.status=safetyAllowsPublication(event.safety)?'confirmed':'held';lore.safety=event.safety;lore.dependencyRefs=uniqueRefs([...lore.dependencyRefs,refOf(event.source)]);lore.maxDependencyEndMs=Math.max(lore.maxDependencyEndMs,event.source.endMs);
       if(!safetyAllowsPublication(event.safety))effects.push({type:'owner.review.request',kind:'lore',entityId:lore.id,entityRevision:lore.revision,sourceId:event.source.id,sourceRevision:event.source.revision,privacyEpoch:s.session.privacyEpoch,dependencyRefs:lore.dependencyRefs});
@@ -274,7 +278,7 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
     }
     case 'lore.edit':{
       const lore=s.lore.find(l=>l.id===event.id),term=normalizeTerm(event.term??lore?.term??''),aliases=(event.aliases??lore?.aliases??[]).map(normalizeTerm).slice(0,16);
-      if(!lore||lore.revision!==event.baseRevision||s.suppressedIds.includes(lore.id)||blockedPhrase(s,lore.term,lore.aliases)||blockedPhrase(s,term,aliases)||event.source.kind!=='owner_statement'||!acceptSource(s,event.source,effects,clock))break;
+      if(!lore||lore.revision!==event.baseRevision||s.suppressedIds.includes(lore.id)||blockedPhrase(s,lore.term,lore.aliases)||blockedPhrase(s,term,aliases)||event.source.kind!=='owner_statement'||!acceptSource(s,event.source,effects,clock,undefined,false))break;
       retireLorePresentations(s,lore.id,effects);
       lore.revision++;lore.term=term;lore.aliases=aliases;lore.explanation=event.explanation.slice(0,700);lore.status='held';lore.safety={...safeDefault};lore.dependencyRefs=uniqueRefs([...lore.dependencyRefs,refOf(event.source)]);lore.maxDependencyEndMs=Math.max(lore.maxDependencyEndMs,event.source.endMs);if(event.originMs!==undefined)lore.originMs=event.originMs;
       effects.push({type:'owner.review.request',kind:'lore',entityId:lore.id,entityRevision:lore.revision,sourceId:event.source.id,sourceRevision:event.source.revision,privacyEpoch:s.session.privacyEpoch,dependencyRefs:lore.dependencyRefs});
@@ -307,9 +311,9 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       if(event.trigger.sessionId!==s.session.id||s.seenTriggers.includes(event.trigger.id))break;s.seenTriggers=[...s.seenTriggers,event.trigger.id].slice(-1000);
       if(!s.published)publish(s,effects,clock);
       const active=s.playbacks.find(p=>['preparing','playing'].includes(p.status)),queued=s.playbacks.find(p=>p.status==='queued');
-      if(queued?.plan){if(event.trigger.reason==='raid'){if(queued.plan.arrivals.length<5)queued.plan.arrivals.push({triggerId:event.trigger.id,fromLogin:(event.trigger.fromLogin??'').slice(0,25),viewers:event.trigger.viewers??0});else {queued.plan.overflowArrivals.channels++;queued.plan.overflowArrivals.viewers+=event.trigger.viewers??0;}}break;}
+      if(queued?.plan){if(event.trigger.reason==='raid'&&event.trigger.fromLogin?.trim()&&Number.isInteger(event.trigger.viewers)&&event.trigger.viewers!>=0){if(queued.plan.arrivals.length<5)queued.plan.arrivals.push({triggerId:event.trigger.id,fromLogin:event.trigger.fromLogin.trim().slice(0,25),viewers:event.trigger.viewers!});else {queued.plan.overflowArrivals.channels++;queued.plan.overflowArrivals.viewers+=event.trigger.viewers!;}}break;}
       const unchanged=s.lastRecapRevision===s.published!.revision;
-      const plan=compileRecap(s.published!,s.settings.layout,event.trigger,{media:s.media.filter(m=>m.refs.every(r=>isRefActive(s,r))),durationMs:s.settings.recapDurationMs,welcomeOnly:!!active||unchanged,generatedAt:clock.iso()});
+      const plan=compileRecap(s.published!,s.settings.layout,event.trigger,{...recapLineage(s),media:s.media.filter(m=>m.refs.every(r=>isRefActive(s,r))),durationMs:s.settings.recapDurationMs,welcomeOnly:!!active||unchanged,generatedAt:clock.iso(),narrationEnabled:s.settings.narrationEnabled});
       plan.dependencyRefs=plan.dependencyRefs.map(ref=>{const candidate=s.candidates.find(c=>c.entityId===ref.id&&c.revision===ref.revision&&c.language===s.settings.recapLanguage&&c.status==='published');return candidate?{id:candidate.id,revision:1}:ref;});
       const playback={id:`playback:${event.trigger.id}`,status:active?'queued' as const:'preparing' as const,plan,startAt:null};s.playbacks.push(playback);s.lastRecapRevision=s.published!.revision;
       s.playbackTiming[playback.id]={prepareAtMs:active?null:clock.now(),startAtMs:null};

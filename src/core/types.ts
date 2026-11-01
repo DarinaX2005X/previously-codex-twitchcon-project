@@ -10,7 +10,7 @@ export type LorePresentation = { kind:'lore'; id:string; entityId:string; entity
 export type GenerationRequest = { ticket: GenerationTicket; entityId: string; reason: 'current'|'chapter'|'metadata'|'topic'|'final'; packet: EvidencePacket; requestedAtMs: number; sourceRevision: number };
 export type ReactionWindow = { startMs: number; actors: Record<string, number>; count: number; emotes: number; laughter: number; clipIt: number; refs: VersionRef[] };
 export type PhraseObservation = { term: string; aliases: string[]; firstMs: number; lastMs: number; actors: string[]; refs: VersionRef[] };
-export type DomainMedia = { id: string; revision: number; momentId: string|null; refs: VersionRef[]; captureStartMs: number; captureEndMs: number; durationMs: number; state: 'pending'|'ready'|'unavailable'|'revoked'; kind: 'video'|'image'|'audio'; previousSession: boolean; ownerApproved: boolean; clipId?: string; manageUrl?: string; clip?:{id:string;url:string;embedUrl:string} };
+export type DomainMedia = { id: string; revision: number; momentId: string|null; refs: VersionRef[]; captureStartMs: number; captureEndMs: number; durationMs: number; state: 'pending'|'ready'|'unavailable'|'revoked'; kind: 'video'|'image'|'audio'; previousSession: boolean; ownerApproved: boolean; clipId?: string; manageUrl?: string; clip?:{id:string;url:string;embedUrl:string}; narration?:{language:RecapLanguage;script:string} };
 export type DomainState = {
   version: 1; revision: number; channel: Channel; session: Session; settings: Settings;
   metadataReviewed: boolean;

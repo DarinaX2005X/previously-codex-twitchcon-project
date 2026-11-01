@@ -5,12 +5,29 @@ import type { EvidencePacket } from '../../src/shared/contracts/index.js';
 const packet:EvidencePacket={sessionId:'s',recapLanguage:'en',sources:[{channelId:'c',runId:'live',sessionId:'s',id:'speech',revision:3,kind:'speech',startMs:1000,endMs:2000,actorId:null,text:'We call this BRICK because I accidentally named the broken save file brick.',languageCodes:['en'],timePrecision:'chunk',status:'active',externalMessageId:null,moderation:'allowed'}],memory:[],chapters:[],lore:[],constraints:[]};
 const phrases:LorePhrase[]=[{id:'lore-brick',term:'BRICK'}];
 const proposal={id:'lore-brick',term:'BRICK',explanation:'The speaker calls it BRICK after naming the broken save file brick.',originRefs:[{id:'speech',revision:3}]};
-const accepted={explicitOrigin:true,unambiguous:true,notInstructions:true,faithful:true,issues:[]};
+const accepted={channelSpecific:true,explicitOrigin:true,unambiguous:true,notInstructions:true,faithful:true,issues:[]};
 const response=(value:unknown)=>new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(value)}]}]}));
 const safety=()=>new SafetyService({classify:async()=>({decision:'allow',spans:[]})},{moderate:async()=> 'allowed'});
 function setup(values:unknown[]){const fetcher=vi.fn(async(_url:RequestInfo|URL,_init?:RequestInit)=>response(values.shift())),reserve=vi.fn(()=>true);const provider=new OpenAIStoryProvider(new ProviderTransport({apiKey:'authored',runId:'live',externalCallsEnabled:true,budget:{status:()=>({enabled:true}),reserve,settle:()=>{}},fetch:fetcher}));return {provider,fetcher,reserve};}
 
 describe('authored automatic lore origin verification',()=>{
+ it('allows no lore with zero calls and accepts an empty model proposal without filling it',async()=>{
+   const empty=setup([]);expect((await empty.provider.proposeLore(packet,[],safety())).value).toEqual({candidates:[],heldIds:[]});expect(empty.fetcher).not.toHaveBeenCalled();
+   const held=setup([{candidates:[],heldIds:['lore-brick']}]);expect((await held.provider.proposeLore(packet,phrases,safety())).value).toEqual({candidates:[],heldIds:['lore-brick']});expect(held.fetcher).toHaveBeenCalledOnce();
+ });
+ it('holds an ordinary repeated cooking term even when its general meaning and origin are explained',async()=>{
+   const p=structuredClone(packet);p.sources[0].text='Dough is flour mixed with water. I say dough because that is what this mixture is called.';
+   const ordinary={id:'dough',term:'dough',explanation:'Dough means flour mixed with water.',originRefs:[{id:'speech',revision:3}]};
+   const {provider,fetcher}=setup([{candidates:[ordinary],heldIds:[]},{...accepted,channelSpecific:false}]);
+   expect((await provider.proposeLore(p,[{id:'dough',term:'dough'}],safety())).value).toEqual({candidates:[],heldIds:['dough']});expect(fetcher).toHaveBeenCalledTimes(2);
+ });
+ it.each([
+   {term:'moon toast',text:'On this channel we call burned toast moon toast because it looked like a crater during our first breakfast stream.'},
+   {term:'blue hour',text:'Our chat calls my blue paint spill blue hour because last week it took an hour to clean the desk.'},
+ ])('accepts explicit non-coding channel lore: $term',async row=>{
+   const p=structuredClone(packet);p.sources[0].text=row.text;const proposal={id:'local-term',term:row.term,explanation:row.text,originRefs:[{id:'speech',revision:3}]};
+   const {provider}=setup([{candidates:[proposal],heldIds:[]},accepted]);expect((await provider.proposeLore(p,[{id:'local-term',term:row.term}],safety())).value.candidates[0]).toMatchObject(proposal);
+ });
  it('returns safe explicit spoken origin with exact versions and independent semantic review',async()=>{const {provider,fetcher,reserve}=setup([{candidates:[proposal],heldIds:[]},accepted]);const result=await provider.proposeLore(packet,phrases,safety());expect(result.value.heldIds).toEqual([]);expect(result.value.candidates[0]).toMatchObject({id:'lore-brick',originRefs:[{id:'speech',revision:3}],safety:{moderation:'allowed',pii:'allowed'},grounding:{acceptedClaimIds:['lore-brick'],issues:[]}});expect(fetcher).toHaveBeenCalledTimes(2);expect(reserve).toHaveBeenCalledTimes(2);});
  it('holds missing, stale or chat-only origin references before semantic-review dispatch',async()=>{for(const originRefs of [[],[{id:'missing',revision:3}],[{id:'speech',revision:2}],[{id:'chat',revision:1}]] as {id:string;revision:number}[][]){const {provider,fetcher}=setup([{candidates:[{...proposal,originRefs}],heldIds:[]}]);const p=structuredClone(packet);p.sources.push({...p.sources[0],id:'chat',revision:1,kind:'chat',actorId:'chatter',text:'BRICK lol'});const result=await provider.proposeLore(p,phrases,safety());expect(result.value).toEqual({candidates:[],heldIds:['lore-brick']});expect(fetcher).toHaveBeenCalledTimes(1);}});
  it('holds ambiguity, sarcasm, instructions and invented causal explanation after semantic review',async()=>{for(const rejected of [{...accepted,unambiguous:false,issues:['unclear referent']},{...accepted,explicitOrigin:false,issues:['sarcasm']},{...accepted,notInstructions:false,issues:['quoted command']},{...accepted,faithful:false,issues:['invented cause']}]){const {provider}=setup([{candidates:[proposal],heldIds:[]},rejected]);expect((await provider.proposeLore(packet,phrases,safety())).value).toEqual({candidates:[],heldIds:['lore-brick']});}});

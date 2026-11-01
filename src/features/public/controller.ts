@@ -30,6 +30,8 @@ export class PublicRecapController {
   clearHistory() { this.options.history.clear(); this.setUntil(undefined); }
   private open() {
     const generation = ++this.generation;
+    // A replacement poller owns new deadlines. Withdraw live content before cancelling the old deadlines.
+    if (this.state.snapshot && this.state.snapshot.session.status !== 'finalized') this.emit({ ...this.state, status: 'loading', snapshot: null });
     this.poller?.stop(); clearTimeout(this.leaseTimer);
     const current = () => !this.stopped && generation === this.generation;
     const fetcher: typeof fetch = async (_url, init) => {

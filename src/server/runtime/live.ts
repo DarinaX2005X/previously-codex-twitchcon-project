@@ -2,7 +2,7 @@ import { Router, type RequestHandler } from 'express';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ChannelSchema, type Channel, type Clock } from '../../shared/contracts/index.js';
-import { ProviderTransport, OpenAIStoryProvider, OpenAITranscriptionProvider, SafetyService, OpenAIContextualPrivacy, OpenAIModeration } from '../providers/index.js';
+import { ProviderTransport, OpenAIStoryProvider, OpenAITranscriptionProvider, OpenAIRealtimeNarrationProvider, SafetyService, OpenAIContextualPrivacy, OpenAIModeration } from '../providers/index.js';
 import { AudioIntakeService } from '../audio/intake.js';
 import { createAudioRouter } from '../audio/router.js';
 import { PrivateMediaCache } from '../media/cache.js';
@@ -18,6 +18,7 @@ import { BoundedScheduler } from './scheduler.js';
 import type { RuntimeConfig } from './config.js';
 import type { RevisionStream } from './updates.js';
 import { ApiError } from './errors.js';
+import { createNarrationRuntime, type NarrationRuntime } from './narration-runtime.js';
 
 async function channelIdentity(config: RuntimeConfig): Promise<Channel | null> {
   const {clientId, clientSecret, channelLogin} = config.twitch;
@@ -50,14 +51,17 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
   const story = new OpenAIStoryProvider(transport);
   let twitch: ReturnType<typeof createTwitchRuntime>;
   let cloud: ReturnType<typeof createCloudRuntime>;
+  let narration: NarrationRuntime | undefined;
   const engine = new StoryEngine({channel, scope, storage, clock, updates, safety, story,
     isOwnEcho: id => twitch?.isOwnEcho(id) ?? false,
     onEffects: (sessionId, effects, state) => {
       twitch?.onEffects(sessionId, effects, state);
       cloud?.onEffects(sessionId, effects, state);
+      narration?.onEffects(sessionId, effects, state);
       for (const effect of effects) {
         if (effect.type === 'playback.prepare' || effect.type === 'playback.start') {
           for (const asset of effect.playback.plan?.media ?? []) media.protect(asset.id, clock.now() + 30_000);
+          if (effect.playback.plan?.audio) media.protect(effect.playback.plan.audio.id, clock.now() + 30_000);
         }
         if (effect.type === 'privacy') {
           for (const id of effect.receipt.hiddenEntityIds) void media.revoke(id).catch(() => {});
@@ -66,11 +70,13 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     },
   });
   const media = new PrivateMediaCache({directory: resolve(config.dataDir, 'media'), allowedHosts: ['production.assets.clips.twitchcdn.net'], now: clock.now,
-    visible: input => twitch?.allowsMedia(input) ?? false,
+    visible: input => input.id.startsWith('narration:') ? narration?.allowsMedia(input) ?? false : twitch?.allowsMedia(input) ?? false,
     onRevoke: () => updates.publish({...scope, event: 'privacy.invalidated', data: {sessionId: engine.activeSessionId(), revision: 0}}),
   });
   twitch = createTwitchRuntime({config, scope, channel, storage, engine, updates, clock, media, publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : undefined});
   cloud = createCloudRuntime({scope, channel, engine, storage, publicOrigin: config.publicOrigin, sharedSecret: config.publishSharedSecret, clock, updates});
+  const narrator = new OpenAIRealtimeNarrationProvider(transport, {approved: (text, language) => narration?.approved(text, language) ?? false});
+  narration = createNarrationRuntime({engine, media, provider: narrator, clock, available: () => Boolean(config.paidCallsEnabled && config.openaiApiKey && storage.budget.status().enabled)});
   const audio = new AudioIntakeService({repository: storage.repository, secret: config.sessionSecret, directory: resolve(config.dataDir, 'audio'), transcription: new OpenAITranscriptionProvider(transport), safety, now: clock.now,
     onSource: source => engine.drain(source.sessionId),
     onGap: async (sessionId, startMs, endMs) => {await engine.dispatch(sessionId, {type: 'gap', startMs, endMs});},
@@ -106,7 +112,7 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
       if (!principal || principal.expiresAtMs <= clock.now()) throw new ApiError(401, 'session_required', 'Sign in to continue.');
       if (principal.channelId !== scope.channelId || principal.runId !== 'live') throw new ApiError(403, 'role_forbidden', 'This session cannot access that media.');
       const mediaId = req.path.split('/').filter(Boolean).at(-1);
-      if (principal.role === 'overlay' && (!mediaId || !twitch.permitsOverlayMedia(decodeURIComponent(mediaId)))) throw new ApiError(410, 'media_revoked', 'This media is no longer part of the active recap.');
+      if (principal.role === 'overlay' && (!mediaId || !(narration?.permitsOverlayMedia(decodeURIComponent(mediaId)) || twitch.permitsOverlayMedia(decodeURIComponent(mediaId))))) throw new ApiError(410, 'media_revoked', 'This media is no longer part of the active recap.');
       res.locals.principal = principal; next();
     } catch (error) {next(error);}
   };
@@ -114,6 +120,7 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     {scope, kinds: ['stt'], concurrency: 2, execute: (job, signal) => audio.execute(scope, job, signal)},
     {scope, kinds: ['story'], concurrency: 1, execute: (job, signal) => engine.executeStory(job, signal)},
     {scope, kinds: ['owner.review'], concurrency: 1, retryOnShutdown: true, execute: (job, signal) => owner.executeReview(job, signal)},
+    {scope, kinds: ['narration'], concurrency: 1, execute: (job, signal) => narration!.execute(job, signal)},
   ], undefined, clock.now);
   let stopped = false, ticking = false, lastCleanupAt = 0;
   let tickFlight: Promise<void> | undefined, safetyFlight: Promise<void> | undefined;
@@ -129,6 +136,7 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
       }
       await twitch.tick();
       await cloud.tick();
+      await narration?.tick();
       if (config.paidCallsEnabled && config.openaiApiKey && !safetyFlight) safetyFlight = engine.checkPendingSources().catch(() => {}).finally(() => {safetyFlight = undefined;});
       if (clock.now() - lastCleanupAt >= 30_000) {lastCleanupAt = clock.now(); await audio.cleanup();}
     } catch {
@@ -139,12 +147,13 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
   return {
     engine, owner, audio, media, channel, scope, auth: twitch.auth,
     routers: {auth: twitch.authRouter, owner: ownerRouter, overlay: createOverlayRouter({engine, clock, presence: overlayPresence}), media: createMediaRouter(media, mediaAuthorization)},
-    setup: () => ({twitch: twitch.status(), openai: {connected: false, configured: Boolean(config.openaiApiKey), paidCallsEnabled: storage.budget.status().enabled}, publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : null}),
+    setup: () => ({twitch: twitch.status(), openai: {connected: false, configured: Boolean(config.openaiApiKey), paidCallsEnabled: storage.budget.status().enabled}, narration: narration?.status(), publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : null}),
     authorizeStream: (principal: {sessionId: string; role: 'owner'|'overlay'|'demo'; channelId: string; runId: string}) => principal.channelId === scope.channelId && principal.runId === 'live' && Boolean(storage.sessions.verify(scope, principal.sessionId, principal.role)),
     async start() {
       overlayPresence.start();
       await engine.recoverPlayback();
       await media.initialize(); await audio.cleanup();
+      await narration?.tick();
       await twitch.start();
       scheduler.start();
       interval = setInterval(scheduleTick, 1000); interval.unref();
@@ -154,7 +163,7 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
       if (stopped) return; stopped = true;
       overlayPresence.close(); stopObservingOverlay();
       if (interval) clearInterval(interval);
-      await twitch.stop(); await scheduler.stop(); await cloud.close(); await tickFlight; await safetyFlight; await engine.idle();
+      await twitch.stop(); await narration?.close(); await scheduler.stop(); await cloud.close(); await tickFlight; await safetyFlight; await engine.idle();
     },
   };
 }

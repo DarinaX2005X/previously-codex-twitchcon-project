@@ -37,7 +37,7 @@ export function SettingsSheet({ settings, client, onClose, onSaved }: SettingsSh
     {error && <InlineNotice tone="danger" live>{error}</InlineNotice>}
     <div className="dock-settings">
       <Select label="Scene position" value={draft.layout.preset} options={['left', 'right', 'lower', 'upper'].map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }))} onChange={event => patch({ layout: { ...draft.layout, preset: event.target.value as Settings['layout']['preset'] } })} />
-      <section><h3>Keep these areas clear</h3><p className="pv-secondary">Protect your editor, camera or game. Drag an area or use its coordinates. The scene leaves another 24 px around it.</p>
+      <section><h3>Protected areas</h3><p className="pv-secondary">Drag an area or enter its coordinates. The scene stays 24 px clear of each area.</p>
         <div className="dock-safe-board" ref={board} aria-label="1920 by 1080 broadcast canvas">
           {draft.layout.protectedRects.map((item, index) => <button type="button" key={index} className="dock-safe-rect" data-selected={selected === index} style={{ left: `${item.x / 19.2}%`, top: `${item.y / 10.8}%`, width: `${item.width / 19.2}%`, height: `${item.height / 10.8}%` }} aria-label={`Protected area ${index + 1}. Arrow keys move it by 10 pixels.`} onFocus={() => setSelected(index)} onPointerDown={event => { setSelected(index); drag.current = { x: event.clientX, y: event.clientY, rect: item }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={event => { if (!drag.current || !board.current) return; const bounds = board.current.getBoundingClientRect(); updateRect({ x: Math.round(drag.current.rect.x + (event.clientX - drag.current.x) * 1920 / bounds.width), y: Math.round(drag.current.rect.y + (event.clientY - drag.current.y) * 1080 / bounds.height) }); }} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onKeyDown={event => { const delta = event.shiftKey ? 1 : 10; if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); updateRect({ x: item.x + (event.key === 'ArrowLeft' ? -delta : event.key === 'ArrowRight' ? delta : 0), y: item.y + (event.key === 'ArrowUp' ? -delta : event.key === 'ArrowDown' ? delta : 0) }); } }}>{index + 1}</button>)}
         </div>
@@ -51,8 +51,8 @@ export function SettingsSheet({ settings, client, onClose, onSaved }: SettingsSh
       <Field label="Show recap shortcut" value={draft.hotkey} maxLength={40} hint="Works while this dock has focus. If your browser uses these keys, choose another binding. Leave blank to disable." onChange={event => patch({ hotkey: event.target.value })} />
       <label className="dock-check"><input type="checkbox" checked={draft.autoRaid} onChange={event => patch({ autoRaid: event.target.checked })} />Show a recap when a raid arrives</label>
       <label className="dock-check"><input type="checkbox" checked={draft.autoClips} onChange={event => patch({ autoClips: event.target.checked })} />Allow automatic Twitch clips</label>
-      <p className="pv-secondary">Twitch clips are published on Twitch. Forget removes their use in Previously; you must delete the Twitch clip separately.</p>
-      <Textarea label="Context for an early welcome" maxLength={500} value={draft.channelContext} hint="Use your own current context. This does not confirm an unverified lore origin." onChange={event => patch({ channelContext: event.target.value })} />
+      <p className="pv-secondary">Clips are published on Twitch. Forget removes them from Previously; delete the Twitch clip separately.</p>
+      <Textarea label="Context for an early welcome" maxLength={500} value={draft.channelContext} hint="Optional context to use before the stream has published chapters." onChange={event => patch({ channelContext: event.target.value })} />
     </div>
   </Sheet>;
 }

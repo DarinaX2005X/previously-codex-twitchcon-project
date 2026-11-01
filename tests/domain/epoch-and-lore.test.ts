@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {createDomainState,reduceDomain,type DomainEvent,type DomainState} from '../../src/core/index.js';
+import {createDomainState,reduceDomain,recapLineage,canDispatch,type DomainEvent,type DomainState} from '../../src/core/index.js';
 import {defaultSettings,type Clock,type Safety,type Source,type StoryPatch} from '../../src/shared/contracts/index.js';
 import {createStorage} from '../../src/server/storage/index.js';
 import {StoryEngine} from '../../src/server/runtime/engine.js';
@@ -47,6 +47,15 @@ describe('privacy epoch reconciliation',()=>{
 });
 
 describe('whole-language lore publication',()=>{
+  it('derives recap lineage from the exact published lore presentation and stops dispatch after erasure',()=>{
+    const h=confirmedLore(),item=h.state.published!.lore[0]!,refs=recapLineage(h.state).loreRefs![item.id]!;
+    expect(refs).toContainEqual({id:item.id,revision:h.state.lore.find(lore=>lore.id===item.id)!.revision});
+    expect(refs.some(ref=>h.state.nodes[ref.id]?.kind==='presentation')).toBe(true);
+    expect(canDispatch(h.state,{sessionId:'session',privacyEpoch:0,dependencyRefs:refs})).toBe(true);
+    h.send({type:'privacy',target:{kind:'source',sessionId:'session',id:'origin'}});
+    expect(canDispatch(h.state,{sessionId:'session',privacyEpoch:h.state.session.privacyEpoch,dependencyRefs:refs})).toBe(false);
+    expect(recapLineage(h.state).loreRefs?.[item.id]).toBeUndefined();
+  });
   it('refuses to drop visible approved lore until the target-language presentation is ready',()=>{
     const h=confirmedLore();expect(h.state.published!.lore[0]?.explanation).toContain('owner');
     const failed=h.send({type:'language',language:'ru'});expect(failed.effects).toContainEqual({type:'held',reason:'language_not_ready'});expect(h.state.published!.language).toBe('en');expect(h.state.published!.lore).toHaveLength(1);

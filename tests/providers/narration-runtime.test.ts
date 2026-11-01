@@ -1,0 +1,53 @@
+import {afterEach,describe,it,expect,vi} from 'vitest';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {join} from 'node:path';
+import {createDomainState,compileRecap,canDispatch,type DomainState,type DomainEvent} from '../../src/core/index.js';
+import {defaultSettings,type NarrationProvider,type PublicChapter} from '../../src/shared/contracts/index.js';
+import {createStorage} from '../../src/server/storage/index.js';
+import {PrivateMediaCache} from '../../src/server/media/cache.js';
+import {encodeWav} from '../../src/server/audio/wav.js';
+import {createNarrationRuntime,narrationTicket,type NarrationRuntime} from '../../src/server/runtime/narration-runtime.js';
+const cleanups:(()=>Promise<void>|void)[]=[];afterEach(async()=>{for(const cleanup of cleanups.splice(0).reverse())await cleanup();});
+function fixture(language:'en'|'ru'='en'){
+  const dir=mkdtempSync(join(process.cwd(),'tests/providers/narration-'));cleanups.push(()=>rmSync(dir,{recursive:true,force:true}));let now=100000;
+  const clock={now:()=>now,iso:()=>new Date(now).toISOString()},scope={channelId:'123',runId:'live'},channel={id:'123',login:'fixture',displayName:'Fixture'};
+  const storage=createStorage({path:join(dir,'state.sqlite'),now:clock.now});cleanups.push(()=>storage.close());storage.repository.ensureChannel(scope,'fixture');storage.repository.createSession(scope,{id:'s',startedAt:new Date(0).toISOString()});
+  let state=createDomainState({channel,session:storage.repository.getSession(scope,'s'),settings:{...defaultSettings,narrationEnabled:true,recapLanguage:language,listeningPaused:false}});
+  const texts=language==='en'?['Build saved notes.','Notes vanish after reload.']:['Сохраняем заметки.','Заметки исчезают после перезагрузки.'];
+  const chapters:PublicChapter[]=texts.map((text,i)=>({id:`chapter${i}`,revision:1,title:text,summary:text,startMs:i*1000,endMs:(i+1)*1000,mood:'neutral',claimIds:[],momentIds:[],pinned:false,edited:false,sourceLabels:[],maxDependencyEndMs:(i+1)*1000}));
+  for(const chapter of chapters){const node={id:chapter.id,revision:1,kind:'chapter' as const,supports:[],exposedTo:[],startMs:chapter.startMs,endMs:chapter.endMs,active:true,body:chapter};state.nodes[node.id]=node;storage.repository.saveEntity(scope,{id:node.id,sessionId:'s',kind:'chapter',body:chapter,refs:[],startMs:node.startMs,endMs:node.endMs});}
+  state.published={schemaVersion:1,channel,session:state.session,revision:1,privacyEpoch:0,language,asOf:clock.iso(),publishedAt:clock.iso(),liveLeaseUntil:new Date(now+30000).toISOString(),current:null,chapters,lore:[],moments:[],gaps:[],lastSyncedAt:null,vodUrl:null};
+  let runtime:NarrationRuntime;const engine={scope,repository:storage.repository,activeSessionId:()=> 's',state:()=>structuredClone(state),allowed:(input:Parameters<typeof canDispatch>[1])=>canDispatch(state,input),dispatch:async(_sessionId:string,event:DomainEvent)=>{if(event.type==='media'){state.media=[...state.media.filter(asset=>asset.id!==event.media.id),structuredClone(event.media)];state.nodes[event.media.id]={id:event.media.id,revision:event.media.revision,kind:'media',supports:event.media.refs,exposedTo:event.media.refs,startMs:event.media.captureStartMs,endMs:event.media.captureEndMs,active:event.media.state!=='revoked',body:event.media};}runtime?.onEffects('s',[],state);return structuredClone(state);}};
+  const provider={synthesize:vi.fn<NarrationProvider['synthesize']>(async(text,lang)=>{expect(runtime.approved(text,lang)).toBe(true);return {value:{bytes:encodeWav(new Float32Array(24000*2).fill(.1),24000),mimeType:'audio/wav',durationMs:2000},usage:{chargedMicroUsd:0},requestId:'authored',model:'authored'};})};
+  const media=new PrivateMediaCache({directory:join(dir,'media'),allowedHosts:[],visible:input=>runtime?.allowsMedia(input)??false,now:clock.now});
+  runtime=createNarrationRuntime({engine,media,provider,clock,available:()=>true});cleanups.push(()=>runtime.close());
+  const plan=()=>compileRecap(state.published!,state.settings.layout,{id:'raid',sessionId:'s',reason:'raid',occurredAt:clock.iso()},{media:state.media,durationMs:12000,narrationEnabled:state.settings.narrationEnabled});
+  const run=async()=>{await runtime.tick();const job=storage.repository.claimJob(scope,{kinds:['narration']});expect(job).not.toBeNull();const result=await runtime.execute(job!,new AbortController().signal);storage.repository.finishJob(scope,job!.id,job!.leaseToken,result.state);return result;};
+  return {get state(){return state;},engine,runtime,provider,media,storage,scope,clock,run,plan,setTime:(value:number)=>{now=value;},setRuntime:(value:NarrationRuntime)=>{runtime=value;}};
+}
+describe('optional prewarmed narration bridge, authored provider only',()=>{
+ it.each(['en','ru'] as const)('prepares exact published %s script before canonical playback and persists one job',async language=>{const f=fixture(language);expect(f.plan().audio).toBeNull();expect(await f.run()).toEqual({state:'done'});const plan=f.plan();expect(plan.audio).toMatchObject({durationMs:2000,startMs:0});expect(f.provider.synthesize).toHaveBeenCalledOnce();expect(f.provider.synthesize.mock.calls[0][0]).toBe(plan.beats.map(beat=>beat.text).join(' '));expect(plan.media).toHaveLength(0);const cached=await f.media.get(plan.audio!.id);expect(cached.record.mimeType).toBe('audio/wav');await f.runtime.tick();expect(f.storage.repository.claimJob(f.scope,{kinds:['narration']})).toBeNull();f.state.playbacks=[{id:'playback',status:'preparing',startAt:null,plan}];expect(f.runtime.permitsOverlayMedia(plan.audio!.id)).toBe(true);});
+ it('makes no provider request while disabled or unavailable and captions remain intact',async()=>{const f=fixture();f.state.settings.narrationEnabled=false;await f.runtime.tick();expect(f.runtime.status().state).toBe('disabled');expect(f.plan().audio).toBeNull();expect(f.plan().beats.length).toBeGreaterThan(1);expect(f.storage.repository.claimJob(f.scope,{kinds:['narration']})).toBeNull();f.state.settings.narrationEnabled=true;const unavailable=createNarrationRuntime({engine:f.engine,media:f.media,provider:f.provider,clock:f.clock,available:()=>false});await unavailable.tick();expect(unavailable.status().state).toBe('unavailable');expect(f.provider.synthesize).not.toHaveBeenCalled();await unavailable.close();});
+ it('refuses oversized narration and retains captions without automatic retry',async()=>{const f=fixture();f.provider.synthesize.mockResolvedValueOnce({value:{bytes:encodeWav(new Float32Array(24000*13).fill(.1),24000),mimeType:'audio/wav',durationMs:13000},usage:{chargedMicroUsd:0},requestId:'authored',model:'authored'});expect(await f.run()).toEqual({state:'unknown_outcome'});expect(f.plan().audio).toBeNull();expect(f.plan().beats.length).toBeGreaterThan(1);await f.runtime.tick();expect(f.provider.synthesize).toHaveBeenCalledOnce();expect(f.storage.repository.claimJob(f.scope,{kinds:['narration']})).toBeNull();});
+ it('aborts a late result after privacy change and never installs its audio',async()=>{const f=fixture();let release!:(value:Awaited<ReturnType<NarrationProvider['synthesize']>>)=>void;let observed:AbortSignal|undefined;f.provider.synthesize.mockImplementationOnce(async(_text,_language,signal)=>{observed=signal;return new Promise(resolve=>{release=resolve;});});await f.runtime.tick();const job=f.storage.repository.claimJob(f.scope,{kinds:['narration']})!;const work=f.runtime.execute(job,new AbortController().signal);await new Promise(resolve=>setTimeout(resolve,0));f.state.session.privacyEpoch++;f.state.published!.privacyEpoch++;f.runtime.onEffects('s',[],f.state);expect(observed?.aborted).toBe(true);release({value:{bytes:encodeWav(new Float32Array(24000).fill(.1),24000),mimeType:'audio/wav',durationMs:1000},usage:{chargedMicroUsd:0},requestId:'late',model:'authored'});expect(await work).toEqual({state:'failed'});expect(f.plan().audio).toBeNull();await expect(f.media.get((job.payload as {assetId:string}).assetId)).rejects.toThrow();});
+ it('published wording change does not reuse old narration, and old owner revision becomes inaccessible',async()=>{const f=fixture();await f.run();const old=f.plan().audio!.id;f.state.nodes.chapter0.revision=2;f.state.published!.chapters[0]={...f.state.published!.chapters[0],revision:2,title:'A different accepted goal.',summary:'A different accepted goal.'};expect(narrationTicket(f.state,f.clock)?.assetId).not.toBe(old);expect(f.plan().audio).toBeNull();expect(f.runtime.allowsMedia((await f.media.get(old).catch(()=>null))?.record??{id:old,kind:'audio',sessionId:'s',privacyEpoch:0,dependencyRefs:[{id:'chapter0',revision:1}],captureStartMs:0,captureEndMs:2000})).toBe(false);});
+ it('revokes pending narration when the durable work lease is lost after synthesis',async()=>{
+   const f=fixture();vi.spyOn(f.storage.repository,'renewJob').mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValue(false);
+   expect(await f.run()).toEqual({state:'failed'});expect(f.provider.synthesize).toHaveBeenCalledOnce();
+   expect(f.state.media).toHaveLength(1);expect(f.state.media[0].state).toBe('revoked');expect(f.plan().audio).toBeNull();
+   expect(f.runtime.status().state).toBe('unavailable');await expect(f.media.get(f.state.media[0].id)).rejects.toMatchObject({code:'revoked'});
+ });
+ it('turning narration off removes playback authorization immediately and keeps captions',async()=>{
+   const f=fixture();await f.run();const plan=f.plan(),id=plan.audio!.id;f.state.playbacks=[{id:'playing',status:'playing',startAt:f.clock.iso(),plan}];
+   expect(f.runtime.permitsOverlayMedia(id)).toBe(true);f.state.settings.narrationEnabled=false;
+   expect(f.runtime.permitsOverlayMedia(id)).toBe(false);await expect(f.media.get(id)).rejects.toMatchObject({code:'revoked'});
+   await f.runtime.tick();expect(f.runtime.status().state).toBe('disabled');expect(f.plan().audio).toBeNull();expect(f.plan().beats).toEqual(plan.beats);
+ });
+ it('ready narration survives runtime restart without a second synthesis and is held until playback selects it',async()=>{
+   const f=fixture();await f.run();const id=f.plan().audio!.id;await f.runtime.close();
+   const restarted=createNarrationRuntime({engine:f.engine,media:f.media,provider:f.provider,clock:f.clock,available:()=>true});f.setRuntime(restarted);cleanups.push(()=>restarted.close());
+   await restarted.tick();expect(restarted.status()).toMatchObject({state:'ready',assetId:id});expect(restarted.permitsOverlayMedia(id)).toBe(false);
+   expect(f.storage.repository.claimJob(f.scope,{kinds:['narration']})).toBeNull();expect(f.provider.synthesize).toHaveBeenCalledOnce();
+   f.state.playbacks=[{id:'prepared',status:'preparing',startAt:null,plan:f.plan()}];expect(restarted.permitsOverlayMedia(id)).toBe(true);
+ });
+});

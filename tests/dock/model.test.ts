@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { defaultSettings, type Chapter, type OwnerSnapshot, type RecapClient, type UpdateEvent } from '../../src/shared/contracts';
-import { DockStore, forgetWindow, hotkeyMatches, pauseListening, privacyAcknowledged, publicationLabel, saveChapterDraft } from '../../src/features/dock/model';
+import { dockClock, DockStore, forgetWindow, hotkeyMatches, pauseListening, privacyAcknowledged, publicationLabel, saveChapterDraft } from '../../src/features/dock/model';
 import { copyValue } from '../../src/features/setup/SetupPage';
 import type { DockCapturePort } from '../../src/features/dock/ports';
 
@@ -81,6 +81,24 @@ describe('dock async ownership and privacy', () => {
   });
 });
 describe('dock publication and interactions', () => {
+  it('keeps paused virtual Forget intervals and countdowns fixed as wall time passes', () => {
+    const paused = snapshot(); paused.serverNow = '2026-11-02T00:01:22.000Z';
+    const draft = chapter(); draft.eligibleAt = '2026-11-02T00:02:14.000Z';
+    const before = dockClock(paused.serverNow, 1000, 1000, 'snapshot');
+    const after = dockClock(paused.serverNow, 1000, 35000, 'snapshot');
+    expect(after).toEqual(before);
+    expect(forgetWindow(paused, after.elapsed)).toMatchObject({ fromMs: 0, toMs: 82000 });
+    expect(publicationLabel(draft, before.now)).toBe('Publishes in 52 s');
+    expect(publicationLabel(draft, after.now)).toBe('Publishes in 52 s');
+  });
+  it('advances the live dock clock between server observations', () => {
+    const live = snapshot(); live.serverNow = '2026-11-02T00:01:22.000Z';
+    const draft = chapter(); draft.eligibleAt = '2026-11-02T00:02:14.000Z';
+    const after = dockClock(live.serverNow, 1000, 35000);
+    expect(after.elapsed).toBe(34000);
+    expect(forgetWindow(live, after.elapsed)).toMatchObject({ fromMs: 0, toMs: 116000 });
+    expect(publicationLabel(draft, after.now)).toBe('Publishes in 18 s');
+  });
   it.each(['revision_conflict', 'save_failed'])('retains owner wording after %s without adopting a newer audio-derived chapter', async code => {
     const request = deferred<Chapter>();
     const editChapter = vi.fn(() => request.promise);

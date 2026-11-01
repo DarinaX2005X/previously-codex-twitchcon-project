@@ -48,6 +48,36 @@ describe('grounded story and publication',()=>{
   it('ignores late evidence from a different session',()=>{const h=harness();h.source('old','A different broadcast.',0,{sessionId:'previous-session'});expect(h.state.sources).toHaveLength(0);expect(h.state.pendingGeneration).toBeNull();});
 });
 
+describe('topic-independent context without a required story arc',()=>{
+  it.each([
+    ['gaming','Exploring the coast','The party is exploring the northern coast.'],
+    ['art','Painting the harbor','The artist is painting shadows around the harbor.'],
+    ['music','An acoustic set','The musician is playing an acoustic set.'],
+    ['cooking','Making soup','The cook is adding herbs to the soup.'],
+    ['conversation','Favorite train journeys','The host is discussing favorite train journeys.'],
+    ['coding','Reading the parser','The programmer is reading the parser implementation.'],
+  ])('publishes and recaps %s activity without inventing goals, changes or lore',(_topic,title,text)=>{
+    const h=harness();h.set(10000);h.source('activity',text);const ticket=h.state.pendingGeneration!.ticket;
+    h.send({type:'generation.result',ticket,patch:{sessionId:'session',baseRevision:ticket.baseEntityRevision,action:'update',title,claims:[{id:'activity',text,role:'state',support:[{id:'activity',revision:1}],attribution:'streamer',epistemic:'explicit'}],relations:[],currentAttemptId:null,language:'en',missingContext:[]},safety:allowed});
+    h.set(85000);h.send({type:'tick'});expect(h.state.published?.current).toMatchObject({goal:null,change:null,now:text});expect(h.state.published?.lore).toEqual([]);
+    h.send({type:'recap.trigger',trigger:{id:'recap',sessionId:'session',reason:'manual',occurredAt:h.clock.iso()}});
+    const plan=h.state.playbacks[0]!.plan!;expect(plan.variant).toBe('compact');expect(plan.beats).toHaveLength(1);expect(plan.beats[0]).toMatchObject({kind:'now',text});expect(canDispatch(h.state,plan)).toBe(true);
+    expect(RecapPlanSchema.safeParse(plan).success).toBe(true);
+  });
+  it.each([false,true])('does not invent a retained goal when the next grounded update omits it (new topic: %s)',newTopic=>{
+    const h=harness();h.set(10000);h.source('goal','The party wants to reach the lighthouse.');h.finish(undefined,'goal');h.set(85000);h.send({type:'tick'});
+    h.set(90000);h.source('activity','The host is discussing favorite train journeys.');
+    if(newTopic){const pending=h.state.pendingGeneration!;h.send({type:'generation.failed',jobId:pending.ticket.jobId,reason:'replaced_by_topic'});h.send({type:'topic',sourceRefs:[{id:'activity',revision:1}]});h.set(150000);h.send({type:'tick'});}
+    h.finish(undefined,'state');h.set(230000);h.send({type:'tick'});
+    expect(h.state.published?.current).toMatchObject({goal:null,change:null,now:'The host is discussing favorite train journeys.'});
+  });
+  it('keeps a long qualified claim whole in the chapter instead of publishing a clipped current statement',()=>{
+    const h=harness(),text=`The soup has been simmering while the cook describes ${'the ingredients and cooking process, '.repeat(8)}but the cook has not checked whether it is ready.`;
+    expect(text.length).toBeGreaterThan(300);expect(text.length).toBeLessThan(600);h.set(10000);h.source('qualified',text);h.finish(undefined,'state');h.set(85000);h.send({type:'tick'});
+    expect(h.state.published?.current?.now).toBeNull();expect(h.state.published?.chapters[0]?.summary).toBe(text);
+  });
+});
+
 describe('privacy and editorial races',()=>{
   it('delete-before-create and late STT cannot restore source content',()=>{
     const h=harness();h.send({type:'privacy',target:{kind:'message',sessionId:'session',externalMessageId:'msg'}});h.source('late','Secret text',0,{kind:'chat',actorId:'viewer',externalMessageId:'msg'});expect(h.state.sources).toHaveLength(0);
@@ -67,7 +97,8 @@ describe('privacy and editorial races',()=>{
   it('owner edit retracts immediately, blocks old candidate, then publishes safe edit without hold',()=>{
     const h=harness();h.set(10000);h.source('a','The note vanished.');h.finish();h.set(85000);h.send({type:'tick'});const chapter=h.state.chapters[0]!;
     const source={...h.state.sources[0]!,id:'owner',kind:'owner_statement' as const,revision:1,startMs:85000,endMs:85000,text:'Only the preview was missing.'};
-    h.send({type:'owner.edit',entityId:chapter.id,baseRevision:chapter.revision,source,title:'Preview issue',summary:'Only the preview was missing.',safety:pending});expect(h.state.published!.chapters).toHaveLength(0);
+    const edit=h.send({type:'owner.edit',entityId:chapter.id,baseRevision:chapter.revision,source,title:'Preview issue',summary:'Only the preview was missing.',safety:pending});expect(h.state.published!.chapters).toHaveLength(0);
+    expect(edit.effects.some(effect=>effect.type==='generation.request')).toBe(false);expect(h.state.pendingGeneration).toBeNull();
     const candidate=h.state.candidates.find(c=>c.ownerRevision===1)!;h.send({type:'candidate.safety',candidateId:candidate.id,safety:allowed});expect(h.state.published!.chapters[0]?.summary).toBe('Only the preview was missing.');
     h.send({type:'privacy',target:{kind:'entity',sessionId:'session',id:chapter.id}});h.send({type:'candidate.safety',candidateId:candidate.id,safety:allowed});expect(h.state.published!.chapters).toHaveLength(0);expect(h.state.sources.some(s=>s.id==='a'&&s.text)).toBe(true);
   });
@@ -101,6 +132,7 @@ describe('moments, lore, recap and closing',()=>{
     for(let i=0;i<9;i++)h.send({type:'recap.trigger',trigger:{id:`raid${i}`,sessionId:'session',reason:'raid',occurredAt:h.clock.iso(),fromLogin:`channel${i}`,viewers:10}});
     expect(h.state.playbacks).toHaveLength(2);expect(h.state.playbacks[0]?.plan?.variant).toBe('welcome');expect(h.state.playbacks[1]?.plan?.arrivals).toHaveLength(5);expect(h.state.playbacks[1]?.plan?.overflowArrivals.channels).toBe(3);
     h.send({type:'recap.trigger',trigger:{id:'raid0',sessionId:'session',reason:'raid',occurredAt:h.clock.iso()}});expect(h.state.playbacks).toHaveLength(2);expect(RecapPlanSchema.safeParse(h.state.playbacks[0]!.plan).success).toBe(true);
+    h.send({type:'recap.trigger',trigger:{id:'authored-no-arrival-details',sessionId:'session',reason:'raid',occurredAt:h.clock.iso()}});expect(h.state.playbacks[1]?.plan?.overflowArrivals).toEqual({channels:3,viewers:30});
   });
   it('deletion during preparation cancels playback and fails the outbound fence',()=>{
     const h=harness();h.set(10000);h.source('a','I am building persistence.');h.finish();h.set(85000);h.send({type:'tick'});h.send({type:'recap.trigger',trigger:{id:'raid',sessionId:'session',reason:'raid',occurredAt:h.clock.iso()}});const plan=h.state.playbacks[0]!.plan!;

@@ -21,7 +21,7 @@ function useReducedMotion(explicit:boolean|undefined):boolean {
 }
 function Caption({caption,size,highlight=false}: {caption:CaptionFrame;size:number;highlight?:boolean}) {
   return <div className="scene-caption" style={{fontSize:size}} aria-label={caption.text}>
-    {caption.lines.map((line,index)=><div key={`${caption.kind}:${caption.page}:${index}`} className="scene-line-mask"><span style={{transform:`translateY(${(1-caption.reveal)*105-caption.outgoing*110}%)`,filter:`blur(${(1-caption.reveal)*5}px)`}}>{highlight&&index===caption.lines.length-1?<mark>{line}</mark>:line}</span></div>)}
+    {caption.lines.map((line,index)=><div key={`${caption.kind}:${caption.page}:${index}`} className="scene-line-mask"><span style={{transform:`translateY(${(1-caption.reveal)*105-caption.outgoing*110}%)`,filter:`blur(${(1-caption.reveal)*5}px)`}}>{highlight?<mark>{line}</mark>:line}</span></div>)}
   </div>;
 }
 function Visual({bundle,id,timeMs,playing,onBlocked}: {bundle:PreparedMedia|null;id:string|null;timeMs:number;playing:boolean;onBlocked:()=>void}) {
@@ -40,7 +40,7 @@ export function ScenePlayer(props:ScenePlayerProps) {
   const reduced=useReducedMotion(props.reducedMotion),callbacks=useRef(props);callbacks.current=props;
   const layout=useMemo(()=>plan?resolveSceneLayout(plan.layout):null,[plan]);
   const sound=useRef<SceneSound|null>(null),ended=useRef(false),elapsed=useRef(0);
-  useLayoutEffect(()=>{if(!root.current)return;const observer=new ResizeObserver(entries=>setWidth(entries[0].contentRect.width));observer.observe(root.current);return()=>observer.disconnect();},[]);
+  useLayoutEffect(()=>{if(!root.current)return;setWidth(root.current.getBoundingClientRect().width);const observer=new ResizeObserver(entries=>setWidth(entries[0].contentRect.width));observer.observe(root.current);return()=>observer.disconnect();},[]);
   useEffect(()=>{let alive=true;void document.fonts.ready.then(()=>{if(!alive)return;const ctx=document.createElement('canvas').getContext('2d');if(ctx)setMeasure(()=>(text:string,size:number,weight=600)=>{ctx.font=`${weight} ${size}px Onest, sans-serif`;return ctx.measureText(text).width;});});return()=>{alive=false;};},[]);
   useEffect(()=>{ended.current=false;elapsed.current=0;setLocalTime(0);},[plan?.id]);
   useEffect(()=>{
@@ -77,14 +77,15 @@ export function ScenePlayer(props:ScenePlayerProps) {
   const canvasWidth=cropToLayout&&layout?layout.bounds.width:1920,canvasHeight=cropToLayout&&layout?layout.bounds.height:1080;
   const scale=width/canvasWidth;
   const available=frame?.mediaId?media?.visuals.has(frame.mediaId):false;
-  const labels=plan?.language==='ru'?{previous:'Ранее',now:'Что происходит сейчас',attempt:'Начали с',change:'Что изменилось',origin:'Откуда это пошло',clip:'Клип недоступен',source:'Источник',old:'Прошлый эфир',welcome:'Добро пожаловать',summary:'История эфира'}:{previous:'Previously',now:'What matters now',attempt:'The goal',change:'What changed',origin:'Where it started',clip:'Clip unavailable',source:'Source',old:'Previous stream',welcome:'Welcome',summary:'The story so far'};
+  const labels=plan?.language==='ru'?{previous:'Ранее',now:'Что происходит сейчас',attempt:'Начали с',change:'Что изменилось',origin:'Откуда это пошло',context:'Контекст эфира',clip:'Клип недоступен',source:'Источник',old:'Прошлый эфир',welcome:'Добро пожаловать',summary:'История эфира'}:{previous:'Previously',now:'What matters now',attempt:'The goal',change:'What changed',origin:'Where it started',context:'Stream context',clip:'Clip unavailable',source:'Source',old:'Previous stream',welcome:'Welcome',summary:'The story so far'};
   const arrivals=plan?.arrivals.slice(0,2)??[];
   const extraChannels=(plan?.overflowArrivals.channels??0)+Math.max(0,(plan?.arrivals.length??0)-2);
   const extraViewers=(plan?.overflowArrivals.viewers??0)+(plan?.arrivals.slice(2).reduce((n,a)=>n+a.viewers,0)??0);
-  return <div ref={root} className={`scene-player ${props.className??''}`} style={{aspectRatio:`${canvasWidth}/${canvasHeight}`}} data-phase={frame?.phase??'clear'}>
+  return <div ref={root} className={`scene-player ${props.className??''}`} style={{aspectRatio:`${canvasWidth}/${canvasHeight}`}} data-phase={frame?.phase??'clear'} data-time-ms={Math.round(t)}>
     {plan&&layout&&frame?.visible&&<div className="scene-canvas" style={{width:1920,height:1080,transform:`scale(${scale}) translate(${- (cropToLayout?layout.bounds.x:0)}px,${-(cropToLayout?layout.bounds.y:0)}px)`}}>
       <div className="scene-envelope" style={{left:layout.bounds.x,top:layout.bounds.y,width:layout.bounds.width,height:layout.bounds.height,opacity:frame.opacity}}>
         {!reduced&&frame.edgeOffsets.map((offset,index)=><div key={index} className="scene-source-edge" style={{left:32+offset,top:26+index*12,width:Math.min(1090,layout.bounds.width-140),height:layout.bounds.height-76,transform:`rotate(${(-2+index)*.7}deg) translateY(${-frame.exit*240}px)`,opacity:1-frame.assembly}}/>)}
+        {frame.retainedPlane&&frame.retainedCaption&&<div className="scene-aperture scene-aperture--retained" style={planeStyle(frame.retainedPlane)}><div className="scene-story"><div className="scene-context">{labels[frame.retainedCaption.kind]}</div><Caption caption={frame.retainedCaption} size={layout.captionSize}/></div></div>}
         <div className={`scene-aperture ${frame.assembly>.12?'scene-aperture--now':''}`} style={planeStyle(frame.aperture)}>
           <div className="scene-opening" style={{opacity:1-frame.openingExit,transform:`translateY(${(1-frame.opening)*110-frame.openingExit*130}px)`}}>
             <strong style={{fontSize:layout.openingSize}}>{labels.previous}</strong>
@@ -93,7 +94,7 @@ export function ScenePlayer(props:ScenePlayerProps) {
           </div>
           <div className={`scene-story ${reduced?'scene-story--reduced':''}`} style={{opacity:frame.openingExit,transform:`translateY(${(1-frame.openingExit)*90-frame.exit*100}px)`}}>
             <div className="scene-context">{plan.variant==='welcome'?labels.welcome:reduced?labels.summary:frame.caption?labels[frame.caption.kind]:labels.summary}</div>
-            {reduced?<ReducedContents plan={plan} layout={layout}/>:frame.caption&&<Caption caption={frame.caption} size={layout.captionSize} highlight={frame.assembly>.9}/>}
+            {reduced?<ReducedContents plan={plan} layout={layout}/>:frame.caption&&<Caption caption={frame.caption} size={layout.captionSize} highlight={frame.assembly>.9||frame.caption.kind==='origin'}/>}
             {!reduced&&frame.nextCaption&&frame.nextCaption.reveal>0&&<div className="scene-next-caption"><Caption caption={frame.nextCaption} size={layout.captionSize}/></div>}
           </div>
         </div>
@@ -112,6 +113,6 @@ function ReducedContents({plan,layout}:{plan:RecapPlan;layout:SceneLayout}) {
 /** Reflowed companion for narrow landing/replay surfaces, using the same immutable permitted plan. */
 export function SceneSummary({plan,className=''}:{plan:RecapPlan|null;className?:string}) {
   if(!plan)return null;
-  return <section className={`scene-summary ${className}`} aria-label={plan.language==='ru'?'Кратко об эфире':'Stream recap'}>{plan.beats.map(beat=><p key={beat.id} className={beat.kind==='now'?'scene-summary-current':undefined}><span>{plan.language==='ru'?({attempt:'Цель',change:'Что изменилось',origin:'Источник',now:'Сейчас'}[beat.kind]):({attempt:'The goal',change:'What changed',origin:'Where it started',now:'What matters now'}[beat.kind])}</span>{beat.text}</p>)}</section>;
+  return <section className={`scene-summary ${className}`} aria-label={plan.language==='ru'?'Кратко об эфире':'Stream recap'}>{plan.beats.map(beat=><p key={beat.id} className={beat.kind==='now'?'scene-summary-current':undefined}><span>{plan.language==='ru'?({attempt:'Цель',change:'Что изменилось',origin:'Источник',now:'Сейчас',context:'Контекст эфира'}[beat.kind]):({attempt:'The goal',change:'What changed',origin:'Where it started',now:'What matters now',context:'Stream context'}[beat.kind])}</span>{beat.text}</p>)}</section>;
 }
 export function ScenePreview(props:ScenePlayerProps){return <ScenePlayer {...props} cropToLayout={props.cropToLayout??true}/>;}

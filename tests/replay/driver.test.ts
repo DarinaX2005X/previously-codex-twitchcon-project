@@ -4,16 +4,18 @@ import {ReplayDriver} from '../../src/replay/driver.js';
 
 describe('same-core replay',()=>{
   it('uses recorded provider results under distinct runtime scopes and final hashes agree',()=>{
-    const a=new ReplayDriver(createAuthoredBundle(),'tab-a'),b=new ReplayDriver(createAuthoredBundle(),'tab-b');a.advanceTo(100000);b.advanceTo(100000);
+    const a=new ReplayDriver(createAuthoredBundle(),'tab-a'),b=new ReplayDriver(createAuthoredBundle(),'tab-b');a.advanceTo(100000);for(const at of [1234.1,1599,76001,82459,100000])b.advanceTo(at);
     expect(a.error).toBeNull();expect(a.state.published?.chapters).toHaveLength(1);expect(a.state.sources[0]?.id).not.toBe(b.state.sources[0]?.id);expect(a.normalizedHash()).toBe(b.normalizedHash());
   });
   it('holds until the exact boundary and pause does not advance virtual time',()=>{
     const d=new ReplayDriver(createAuthoredBundle(),'hold');d.advanceTo(75999);expect(d.state.published?.chapters.length??0).toBe(0);d.control({action:'pause'});expect(d.atMs).toBe(75999);d.advanceTo(76000);expect(d.state.published?.chapters).toHaveLength(1);
   });
   it('safe correction follows owner review and arbitrary text remains held',()=>{
-    const d=new ReplayDriver(createAuthoredBundle(),'edit');d.advanceTo(76000);let c=d.state.chapters[0]!;d.editChapter(c.id,{...d.correction,baseRevision:c.revision});expect(d.state.published?.chapters[0]?.title).toBe(d.correction.title);
+    const d=new ReplayDriver(createAuthoredBundle(),'edit');d.advanceTo(76000);let c=d.state.chapters[0]!;d.editChapter(c.id,{...d.correction,baseRevision:c.revision});expect(d.state.published?.chapters[0]?.title).toBe(d.correction.title);expect(d.error).toBeNull();expect(d.state.pendingGeneration).toBeNull();
     c=d.state.chapters[0]!;d.editChapter(c.id,{title:'Unknown',summary:'An unrecorded assertion',baseRevision:c.revision});expect(d.error).toBe('fixture_missing');expect(d.state.published?.chapters).toHaveLength(0);expect(d.state.chapters[0]?.publicationState).toBe('held');
   });
+  it('quantizes animation-clock fractions before creating owner source offsets',()=>{const d=new ReplayDriver(createAuthoredBundle(),'fractional');d.advanceTo(97386.399);expect(d.atMs).toBe(97386);const chapter=d.state.chapters[0]!;d.editChapter(chapter.id,{...d.correction,baseRevision:chapter.revision});expect(d.state.published?.chapters[0]?.summary).toBe(d.correction.summary);expect(d.error).toBeNull();expect(d.state.sources.every(s=>Number.isInteger(s.startMs)&&Number.isInteger(s.endMs))).toBe(true);});
+  it('finishes a manual scene after the last recorded source without fabricating input',()=>{const d=new ReplayDriver(createAuthoredBundle(),'tail');d.advanceTo(d.durationMs);const sourceCount=d.state.sources.length;d.send({type:'recap.trigger',trigger:{id:'tail-show',sessionId:d.state.session.id,reason:'manual',occurredAt:d.clock.iso()}});d.flush();d.control({action:'play'});d.advanceTo(100300);expect(d.state.playbacks.some(p=>p.status==='playing')).toBe(true);d.advanceTo(114000);expect(d.state.playbacks).toHaveLength(0);expect(d.state.sources).toHaveLength(sourceCount);expect(d.durationMs).toBe(100000);expect(d.atMs).toBeGreaterThan(d.durationMs);expect(d.playing).toBe(false);});
   it('switches recorded versions and does not publish a new inference',()=>{
     const d=new ReplayDriver(createAuthoredBundle(),'language');d.advanceTo(76000);d.setSettings({baseRevision:0,recapLanguage:'ru'});expect(d.state.published?.language).toBe('ru');expect(d.state.published?.chapters[0]?.title).toBe('Пропавшее превью');d.setSettings({baseRevision:d.state.settings.revision,recapLanguage:'en'});expect(d.state.published?.chapters[0]?.title).toBe('A missing preview');
   });
