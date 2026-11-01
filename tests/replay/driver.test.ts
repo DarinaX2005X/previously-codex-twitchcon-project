@@ -1,8 +1,30 @@
 import {describe,it,expect,vi} from 'vitest';
 import {createAuthoredBundle} from '../../fixtures/authored-notes.js';
 import {ReplayDriver} from '../../src/replay/driver.js';
+import {publicationLabel,recordingRecovery} from '../../src/features/dock/model.js';
+import {correctionTarget} from '../../src/features/replay/correction.js';
 
 describe('same-core replay',()=>{
+  it('recovers a held edit with the supplied correction using its latest revision and does not restore a deleted target',()=>{
+    const replay=new ReplayDriver(createAuthoredBundle(),'recover-held');replay.advanceTo(82300);
+    const original=correctionTarget(replay.snapshot(),replay.correction?.targetId)!;
+    replay.editChapter(original.id,{baseRevision:original.revision,title:'Unknown',summary:'An unrecorded assertion'});
+    const uncheckedSource=replay.state.sources.find(source=>source.kind==='owner_statement')!;
+    expect(replay.snapshot().published?.chapters).toHaveLength(0);
+    const held=correctionTarget(replay.snapshot(),replay.correction?.targetId)!;
+    expect(held.id).toBe(original.id);expect(held.revision).toBeGreaterThan(original.revision);
+    expect(correctionTarget(replay.snapshot(),original.id)?.revision).toBe(held.revision);
+    replay.editChapter(held.id,{...replay.correction!,baseRevision:held.revision});
+    expect(replay.error).toBeNull();expect(replay.correctionApplied).toBe(true);
+    expect(replay.snapshot().published?.chapters[0]?.summary).toBe(replay.correction!.summary);
+    expect(replay.preview()?.beats.length).toBeGreaterThan(0);
+    expect(replay.state.nodes[held.id]?.exposedTo.some(ref=>ref.id===uncheckedSource.id)).toBe(true);
+    replay.privacy({kind:'source',sessionId:replay.state.session.id,id:uncheckedSource.id});
+    expect(replay.snapshot().published?.chapters).toHaveLength(0);
+    expect(correctionTarget(replay.snapshot(),held.id)).toBeUndefined();
+    expect(correctionTarget(replay.snapshot())).toBeUndefined();
+  });
+  it('explains an unrecorded edit as a missing recorded outcome rather than personal information or connectivity',()=>{const replay=new ReplayDriver(createAuthoredBundle(),'recorded-edit-reason');replay.control({action:'seek',milestone:'raid'});replay.control({action:'pause'});const chapter=replay.state.chapters[0]!,edited=replay.editChapter(chapter.id,{baseRevision:chapter.revision,title:chapter.title,summary:'A different, unrecorded summary.'});expect(edited.publicationState).toBe('held');expect(edited.safety.reason).toBe('fixture_missing');expect(publicationLabel(edited,replay.clock.now())).toBe('This recording has no safety check for this edit');expect(replay.snapshot().status.story.message).toBe('This recording has no safety check for this edit');expect(recordingRecovery).toContain('no checked outcome');expect(recordingRecovery).toContain('restart the recording');expect(recordingRecovery).not.toMatch(/personal information|connection|refresh/i);});
   it('uses recorded provider results under distinct runtime scopes and final hashes agree',()=>{
     const a=new ReplayDriver(createAuthoredBundle(),'tab-a'),b=new ReplayDriver(createAuthoredBundle(),'tab-b');a.advanceTo(100000);for(const at of [1234.1,1599,76001,82459,100000])b.advanceTo(at);
     expect(a.error).toBeNull();expect(a.state.published?.chapters).toHaveLength(1);expect(a.state.sources[0]?.id).not.toBe(b.state.sources[0]?.id);expect(a.normalizedHash()).toBe(b.normalizedHash());

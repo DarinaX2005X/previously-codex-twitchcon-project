@@ -1,6 +1,8 @@
 import { safetyAllowsPublication, type Chapter, type InvalidationReceipt, type OwnerSnapshot, type RecapClient, type UpdateEvent } from '../../shared/contracts';
 import type { DockCapturePort } from './ports';
 
+export const recordingRecovery = 'This recording has no checked outcome for this change. Use the supplied checked wording, or restart the recording to restore the original.';
+
 export function errorCode(error: unknown): string {
   if (!error || typeof error !== 'object') return '';
   const value = error as { code?: string; status?: number; error?: { code?: string } };

@@ -1,0 +1,21 @@
+{
+  "profile": "engine-full-profile.json",
+  "processId": 170564,
+  "priority": "BelowNormal",
+  "sharedMachine": true,
+  "otherLoad": "Separate pure-reducer stress, project checks and unrelated user video rendering may overlap.",
+  "sourceRevision": "Start hashes are recorded in the progress header. Parent is repairing core owner.edit after launch; owner.edit is not dispatched in this profile. Compare final file hashes before reporting.",
+  "readOnlyProbe": {
+    "purpose": "Investigate growth-sensitive query planning; no SQL writes or process changes.",
+    "controlRows": 79274,
+    "existingQuery": "SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key LIKE 'blocked-lore:%' ORDER BY key LIMIT 500",
+    "existingPlan": "SEARCH control_state USING INDEX sqlite_autoindex_control_state_1 (channel_id=? AND run_id=?)",
+    "existingMilliseconds": 23.2767,
+    "rangeQuery": "SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key >= 'blocked-lore:' AND key < 'blocked-lore;' ORDER BY key LIMIT 500",
+    "rangePlan": "SEARCH control_state USING INDEX sqlite_autoindex_control_state_1 (channel_id=? AND run_id=? AND key>? AND key<?)",
+    "rangeMilliseconds": 0.3108,
+    "returnedRows": 0,
+    "limitation": "Single read-only query comparison with cache effects; not an isolated benchmark and not proof of the whole throughput decline cause."
+  },
+  "subsequentQueryRepair": "After launch, storage_build changed blocked-lore hydration from LIKE to the indexed binary key range. It reported 31 existing domain/hydration/lore-runtime tests passing. The active full run retains the old LIKE query and does not measure repaired-query long-run throughput."
+}

@@ -16,10 +16,10 @@ const allowed:Safety={moderation:'allowed',pii:'allowed',checkedAt:new Date(star
 const resources:ReturnType<typeof createStorage>[]=[];
 const directories:string[]=[];
 afterEach(()=>{for(const storage of resources.splice(0))storage.close();for(const directory of directories.splice(0)){if(!resolve(directory).startsWith(resolve(tmpdir())+sep))throw new Error('Unexpected test directory');rmSync(directory,{recursive:true,force:true});}});
-function harness(options:{deferReview?:boolean;session?:boolean;safeReview?:boolean;path?:string;transientReview?:boolean}={}) {
+function harness(options:{deferReview?:boolean;session?:boolean;safeReview?:boolean;blockReview?:boolean;path?:string;transientReview?:boolean}={}) {
   let now=start+10_000;
   const reviewResolvers:((value:{decision:'allow';spans:[]})=>void)[]=[];
-  const safety=new SafetyService({classify:async()=>{if(options.transientReview)throw new Error('Fixture provider unavailable');return options.deferReview?await new Promise(resolve=>{reviewResolvers.push(resolve);}):{decision:options.safeReview?'allow':'review',spans:[]};}}, {moderate:async()=>options.safeReview?'allowed':'unavailable'},()=>now);
+  const safety=new SafetyService({classify:async()=>{if(options.transientReview)throw new Error('Fixture provider unavailable');return options.deferReview?await new Promise(resolve=>{reviewResolvers.push(resolve);}):{decision:options.safeReview||options.blockReview?'allow':'review',spans:[]};}}, {moderate:async()=>options.blockReview?'blocked':options.safeReview?'allowed':'unavailable'},()=>now);
   const storage=createStorage({path:options.path??':memory:',now:()=>now});resources.push(storage);
   const scope={channelId:'channel',runId:'live'},channel={id:'channel',login:'fixture',displayName:'Authored fixture'};
   const engine=new StoryEngine({scope,channel,storage,clock:{now:()=>now,iso:()=>new Date(now).toISOString()},updates:new RevisionStream(),safety,story:{propose:async()=>{throw new Error('No provider calls in service tests.');}}});
@@ -38,6 +38,23 @@ function harness(options:{deferReview?:boolean;session?:boolean;safeReview?:bool
 }
 
 describe('owner service integration',()=>{
+  it.each(['pii','moderation'])('publishes checked replacement wording after a %s hold while retaining Forget lineage',async reason=>{
+    const options={safeReview:false,blockReview:reason==='moderation'},h=harness(options),seed=await h.seed(),original=seed.chapters[0];
+    await h.service.editChapter(h.context('held-replacement-first',original.revision),original.id,{summary:'The first owner statement.'});
+    await h.runReview();
+    const held=h.engine.state('session').chapters[0],unchecked=h.engine.state('session').sources.find(source=>source.kind==='owner_statement')!;
+    expect(held.publicationState).toBe('held');expect(unchecked.moderation).toBe('unavailable');
+    expect(reason==='moderation'?held.safety.moderation:held.safety.pii).toBe(reason==='moderation'?'blocked':'review');
+    options.safeReview=true;options.blockReview=false;
+    await h.service.editChapter(h.context('held-replacement-safe',held.revision),held.id,{summary:'The separately checked replacement.'});
+    await h.runReview();
+    const restored=h.engine.state('session');
+    expect(restored.published?.chapters[0]?.summary).toBe('The separately checked replacement.');
+    expect(restored.chapters[0].dependencyRefs.some(ref=>ref.id==='speech')).toBe(true);
+    expect(restored.nodes[held.id].exposedTo.some(ref=>ref.id===unchecked.id)).toBe(true);
+    await h.service.privacy(h.context('held-replacement-forget'),{target:{kind:'source',sessionId:'session',id:unchecked.id},reason:'Forget the earlier statement'});
+    expect(h.engine.state('session').published?.chapters).toHaveLength(0);
+  });
   it('clears visible output and source access while a received removal awaits storage recovery',async()=>{
     const h=harness();await h.seed();expect(h.service.bootstrap(h.principal).published).not.toBeNull();
     h.engine.setOutputsBlocked(true);

@@ -59,7 +59,7 @@ export class DomainPersistence {
     }
     const capture=this.db.get('SELECT epoch FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=?',...this.scoped(scope),sessionId);
     const blockedLore:Lore[]=[];
-    for(const row of this.db.all("SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key LIKE 'blocked-lore:%' ORDER BY key LIMIT 500",...this.scoped(scope))) {
+    for(const row of this.db.all("SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key >= 'blocked-lore:' AND key < 'blocked-lore;' ORDER BY key LIMIT 500",...this.scoped(scope))) {
       const stub=JSON.parse(String(row.body)) as {id:string;sessionId:string;revision:number;term:string;aliases:string[];firstSeenMs:number;status:'blocked'|'observed'};
       if(stub.sessionId===sessionId)blockedLore.push({...stub,explanation:'',originMs:null,originKind:'unknown',momentId:null,maxDependencyEndMs:0,dependencyRefs:[],safety:{moderation:'unavailable',pii:'review',checkedAt:null,reason:null}});
     }

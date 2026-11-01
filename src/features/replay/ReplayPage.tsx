@@ -4,6 +4,7 @@ import {DockPage} from '../dock/index.js';
 import {ScenePreview,renderAt,resolveSceneLayout} from '../overlay/index.js';
 import type {RecapPlan,Source} from '../../shared/contracts/index.js';
 import {useRecording} from './useRecording.js';
+import {correctionTarget} from './correction.js';
 import './replay.css';
 
 const time=(ms:number)=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}`;
@@ -30,7 +31,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
   const availableLanguages=t?.availableLanguages??[];
   const correction=t?.correction;
   const correctionId=correction?.targetId;
-  const correctionChapter=correctionId?published?.chapters.find(c=>c.id===correctionId):published?.chapters.length===1?published.chapters[0]:undefined;
+  const correctionChapter=correctionTarget(s,correctionId);
   const owner=useMemo(()=>client?{
     listSources:client.listSources.bind(client),
     editLore:async()=>{throw new Error('This recording has no safety check for this edit');},
@@ -93,7 +94,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
               {publishMilestone&&untilPublication!==null&&untilPublication>0&&<p className="replay-source-hold">Recap publication at {time(publishMilestone.atMs)}. {untilPublication} s of recording remaining.</p>}
             </>:<>
               <h2>{held?'The edit is waiting for review':removedContext?'The published recap has been cleared':s!.session?.title||'Waiting for the first recap'}</h2>
-              <p>{held?'The recording does not include a safety check for this wording. You can restore the original by restarting.':removedContext?'Restart to restore the original recording in this tab.':publishMilestone?`The first recap appears at ${time(publishMilestone.atMs)}. Play from the start${raidMilestone?' or jump to the incoming raid':''}.`:'Play the recording to follow its published recap.'}</p>
+              <p>{held?`The recording does not include a safety check for this wording. ${correction&&correctionChapter?'Apply the suggested correction below, or restart to restore the original.':'Restart to restore the original.'}`:removedContext?'Restart to restore the original recording in this tab.':publishMilestone?`The first recap appears at ${time(publishMilestone.atMs)}. Play from the start${raidMilestone?' or jump to the incoming raid':''}.`:'Play the recording to follow its published recap.'}</p>
             </>}
           </div>}
         </section>
@@ -123,7 +124,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
           <h2 id="replay-correction-title">{correction?'Change the recap':'Preview the recap'}</h2>
           {correction&&<><p className="replay-field-label">Suggested correction</p><blockquote>{correction.summary}</blockquote></>}
           <div className="replay-transport-row">{correction&&<Button disabled={!correctionChapter||busy||t!.correctionApplied} onClick={()=>void run(()=>client.editChapter(correctionChapter!.id,{title:correction.title,summary:correction.summary,baseRevision:correctionChapter!.revision}))}>{t!.correctionApplied?'Correction applied':'Apply correction'}</Button>}<QuietButton disabled={!chapter||busy} onClick={()=>void run(async()=>setPreview(await client.previewRecap(s!.session!.id)))}>Preview next recap</QuietButton></div>
-          {!chapter&&<p className="replay-help">Play the recording to publish a chapter first.</p>}
+          {!chapter&&<p className="replay-help">{held?'Preview becomes available after checked wording is published.':removedContext?'Restart to restore the original recording.':'Play the recording to publish a chapter first.'}</p>}
           {correction&&chapter&&!correctionChapter&&<p className="replay-help">Open the demo dock to choose a chapter to edit.</p>}
           {correction&&<p className="replay-help">New wording stays held unless this recording includes its safety check.</p>}
         </section>
