@@ -54,9 +54,9 @@ describe('bounded offline recording ZIP',()=>{
     expect(()=>createOfflineArchive(value.manifest,value.bundle,()=>Buffer.alloc(value.mediaBytes.length))).toThrow('recording_integrity_failed');
   });
   it('rejects changed assembled bundle contents despite repaired ZIP CRC',()=>{
-    const value=fixture(),changed=changeMember(value.bytes,'bundle.json',body=>{const at=body.indexOf(value.bundle.correction.title);body[at]=body[at]===65?66:65;});
+    const value=fixture(),changed=changeMember(value.bytes,'bundle.json',body=>{const at=body.indexOf(value.bundle.correction!.title);body[at]=body[at]===65?66:65;});
     expect(()=>loadOfflineArchive(changed)).toThrow('recording_integrity_failed');
-    const changedBundle=structuredClone(value.bundle);changedBundle.correction.title+=' changed';
+    const changedBundle=structuredClone(value.bundle);changedBundle.correction!.title+=' changed';
     expect(()=>createOfflineArchive(value.manifest,changedBundle,()=>value.mediaBytes)).toThrow('recording_integrity_failed');
   });
   it('rejects path traversal, duplicate members, compression, trailing data and truncation',()=>{

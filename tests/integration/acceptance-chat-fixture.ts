@@ -28,7 +28,7 @@ export async function chatIntakeFixture(options: {path?: string; onCommitted?: E
   const sockets: IntakeSocket[] = [], states: string[] = []; let sends = 0, transport!: TwitchEventSub, transportOptions!: EventSubOptions;
   const helix = {subscribe: async () => {}, bannedUsers: async (page: (rows: unknown[]) => void) => page([]), currentStream: async () => ({id: 'batch', user_id: '123', started_at: at, title: '', game_name: ''}), previousClips: async () => [], sendChat: async () => {sends++; return {message_id: 'authored-outgoing', is_sent: true};}} as unknown as TwitchHelix;
   const runtime = createTwitchRuntime({scope, channel, storage, engine, updates, clock, helix,
-    config: {origin: 'https://localhost:4317', publicOrigin: options.publicOrigin, sessionSecret: 's'.repeat(32), twitch: {clientId: 'authored-client', clientSecret: 'authored-secret', channelLogin: channel.login, redirectUri: 'https://localhost:4317/auth/twitch/callback'}},
+    config: {origin: 'https://localhost:4317', publicOrigin: options.publicOrigin, sessionSecret: 's'.repeat(32), twitch: {clientId: 'authored-client', clientSecret: 'authored-secret', channelLogin: channel.login, redirectUri: 'https://localhost:4317/auth/twitch/callback', markerEnabled: false}},
     fetch: async url => {if (String(url) !== 'https://id.twitch.tv/oauth2/validate') throw new Error('Network prohibited'); return Response.json({client_id: 'authored-client', user_id: '123', scopes: TWITCH_SCOPES, expires_in: 3600});},
     eventSubFactory: input => {
       transportOptions = input;

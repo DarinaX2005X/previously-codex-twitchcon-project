@@ -55,6 +55,7 @@ export async function pauseListening(client: RecapClient, snapshot: OwnerSnapsho
   const results = await Promise.allSettled([stopped, saved]);
   const failed = results.find(result => result.status === 'rejected');
   if (failed?.status === 'rejected') throw failed.reason;
+  if(capture?.getSnapshot().status==='pause_failed')throw new Error('Microphone stopped, but the server pause was not confirmed. Retry pause.');
 }
 
 export type DockState = { snapshot: OwnerSnapshot | null; error: string | null; loading: boolean; sourceEpoch: number; invalidatedIds: string[] | null };

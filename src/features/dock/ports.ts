@@ -2,8 +2,11 @@ import type { CaptureState } from '../capture/controller';
 import type { Lore, Source, InvalidationReceipt, RecapPlan, OwnerHistoryQuery, OwnerHistoryPage } from '../../shared/contracts';
 import type { ReactNode } from 'react';
 
+export type DockMarkerSnapshot = { enabled: boolean; sessionId: string | null; items: { momentId: string; timecodeMs: number; status: 'queued' | 'sent' | 'unavailable' | 'cancelled' | 'unknown_outcome'; reason?: string; externalId?: string; positionSeconds?: number; at?: string; expiresAtMs?: number }[] };
+
 /** Optional capabilities are injected. A recorded dock never discovers or calls live routes. */
 export interface DockOwnerPort {
+  listMarkers?(sessionId: string, signal?: AbortSignal): Promise<DockMarkerSnapshot>;
   listHistory?(query: OwnerHistoryQuery): Promise<OwnerHistoryPage>;
   listSources(query: { sessionId: string; fromMs?: number; toMs?: number; cursor?: string; limit: number }): Promise<{ items: Source[]; nextCursor: string | null }>;
   editLore(id: string, patch: { term: string; explanation: string; originMs: number | null; baseRevision: number }): Promise<Lore>;

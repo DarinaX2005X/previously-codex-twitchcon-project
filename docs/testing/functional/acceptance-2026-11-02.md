@@ -14,9 +14,7 @@ npx tsc --noEmit
 
 The runner defaults to both phases when no flag is supplied. It resolves the installed CLI at `../tools/twitch/twitch-cli_1.1.24_Windows_x86_64/twitch.exe`; set `TWITCH_CLI_PATH` for another installation. It fails if CLI is missing rather than silently skipping. Run CLI tests sequentially: official CLI 1.1.24 uses fixed loopback RPC port 44747. The test checks that port is free, chooses an ephemeral WebSocket port, spawns hidden on Windows, and stops only its own processes. No `.env` file or production OAuth token is loaded by the acceptance helpers.
 
-Observed results: the selected 12-file fixture suite passed 78 tests at 02:53 local test-run time. After the final runtime recovery adjustments, the affected runtime/restart group passed 13 tests and lifecycle/privacy group passed 9 tests. The actual CLI acceptance passed in 18.17 seconds after receiver-bound changes. Type checking of the acceptance files succeeded; a subsequent whole-project check encountered a concurrently edited `DockOwnerPort.listHistory` mismatch, reported to MAIN for the final project check.
-
-After bounded chat batching was integrated, the acceptance runner passed **83 tests across 13 files**; the CLI test passed again in **20.24 seconds**. The later gap-drain correction passed **10 focused batch, cap, privacy and lifecycle tests**. The [intake report](chat-intake-2026-11-02.md) records the paced 20/second and independent-producer 200/second measurements and their different load conditions.
+The acceptance runner passed **83 tests across 13 files** after bounded chat batching. The final gap-drain correction passed **10 focused batch, cap, privacy and lifecycle tests**, and the affected official CLI rerun passed in **21.95 seconds**. The latest whole-project typecheck passed. The [intake report](chat-intake-2026-11-02.md) records the paced 20/second and independent-producer 200/second measurements and their different load conditions.
 
 ## Boundary matrix
 

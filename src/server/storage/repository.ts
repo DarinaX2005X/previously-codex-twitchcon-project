@@ -600,8 +600,11 @@ export class SqliteRepository {
         WHERE j.channel_id=? AND j.run_id=? AND j.id=? AND j.kind='stt'`,...this.scope(scope),job.id);
       if(!record || record.state!=='running' || record.lease_token!==job.leaseToken || Number(record.lease_until_ms)<=this.now())return false;
       const session=this.getSession(scope,String(record.session_id));
-      const capture=this.db.get('SELECT actor_id,epoch,session_id FROM capture_leases WHERE channel_id=? AND run_id=?',...this.scope(scope));
+      const capture=this.db.get('SELECT actor_id,epoch,session_id,expires_at_ms FROM capture_leases WHERE channel_id=? AND run_id=?',...this.scope(scope));
       if(!capture || capture.actor_id!==record.actor_id || capture.session_id!==record.session_id || Number(capture.epoch)!==Number(record.capture_epoch) || session.privacyEpoch!==Number(record.privacy_epoch))return false;
+      // An unreachable pause endpoint must not let a dead live lease commit late STT.
+      // Closing sessions retain their explicitly bounded, already accepted offline tail.
+      if(session.status==='live' && Number(capture.expires_at_ms)<=this.now())return false;
       if(session.status==='finalized' || (session.status==='closing' && (!session.endedAt || this.now()>Date.parse(session.endedAt)+90000)))return false;
       if(source.sessionId!==session.id || source.id!==record.source_id || source.startMs!==Number(record.start_ms) || source.endMs!==Number(record.end_ms) || source.revision!==1 || this.tombstoned(scope,source))return false;
       const occurredAt=new Date(Date.parse(session.startedAt)+source.endMs).toISOString();

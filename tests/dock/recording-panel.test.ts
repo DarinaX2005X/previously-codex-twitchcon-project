@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RecordingReview, RecordingSummary } from '../../src/server/replay/recording-types';
+import type { RecordingReview, RecordingSummary, RecordingStartEligibility } from '../../src/server/replay/recording-types';
 import { HttpClient } from '../../src/shared/http-client';
 import { RecordingPanelModel, recordingApproval, recordingAssetUrl, recordingMediaKey, recordingReplayUrl, recordingSourceKey, type RecordingChecks, type RecordingPort } from '../../src/features/dock/RecordingPanel';
 
@@ -19,11 +19,12 @@ function checks(value: RecordingReview): RecordingChecks {
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 function harness(initial = review()) {
   let current = structuredClone(initial), item = structuredClone(initial.recording), removed = false;
+  let eligibility: RecordingStartEligibility | null = null;
   const calls: { path: string; options: Parameters<RecordingPort['request']>[1] }[] = [];
   const request = vi.fn(async <T,>(path: string, options?: Parameters<RecordingPort['request']>[1]): Promise<T> => {
     calls.push({ path, options });
     let result: unknown;
-    if (path === '/recordings') result = { items: removed ? [] : [item], activeId: ['armed', 'recording'].includes(item.status) ? id : null, automaticUpload: false, boundary: 'Start before context.' };
+    if (path.split('?')[0] === '/recordings') { const sessionId = new URL('https://owner.test' + path).searchParams.get('sessionId'), active = ['armed', 'recording'].includes(item.status); result = { items: removed ? [] : [item], activeId: active ? id : null, startEligibility: eligibility ?? { sessionId, canStartCurrent: !!sessionId && !active, canArmNext: !active, reason: active ? 'recording_active' : sessionId ? 'ready' : 'no_session' }, automaticUpload: false, boundary: 'Start before context.' }; }
     else if (path.endsWith('/start')) { item = summary({ status: options?.body && 'sessionId' in (options.body as object) ? 'recording' : 'armed' }); result = item; }
     else if (path.endsWith('/stop')) { item = summary(); result = item; }
     else if (path.endsWith('/review') && options?.method === 'POST') result = { receiptId: 'receipt' };
@@ -32,12 +33,13 @@ function harness(initial = review()) {
     else if (path.endsWith('/publish')) { item = { ...item, publication: { state: 'queued' } }; result = { status: 'queued', exportId: item.exportId }; }
     else if (path.endsWith('/revoke')) { item = { ...item, publication: { state: 'revoked', revocationPending: true, removalAllowed: false } }; result = { exportId: item.exportId, publication: item.publication }; }
     else if (path.endsWith('/media') && options?.method === 'POST') { current = { ...current, digest: '9'.repeat(64), recording: summary({ revision: 5 }) }; item = current.recording; result = { id, captureRevision: 5 }; }
+    else if (path.includes('/media/') && options?.method === 'DELETE') { current = { ...current, digest: '9'.repeat(64), recording: summary({ revision: 5 }), media: current.media.filter(media => !path.endsWith('/' + encodeURIComponent(media.id))) }; item = current.recording; result = { removed: true, id, captureRevision: 5 }; }
     else if (path === '/recordings/' + id && options?.method === 'DELETE') { removed = true; result = { removed: true }; }
     else throw new Error('Unexpected request: ' + path);
     return structuredClone(result) as T;
   });
   const model = new RecordingPanelModel({ request: request as RecordingPort['request'] });
-  return { model, request, calls, setItem: (next: RecordingSummary) => { item = next; }, setReview: (next: RecordingReview) => { current = next; } };
+  return { model, request, calls, setItem: (next: RecordingSummary) => { item = next; }, setReview: (next: RecordingReview) => { current = next; }, setEligibility: (next: RecordingStartEligibility) => { eligibility = next; } };
 }
 function markAll(model: RecordingPanelModel, value: RecordingReview) {
   model.check('metadata', '', true);
@@ -95,9 +97,45 @@ describe('recording review confirmations', () => {
     markAll(test.model, value); await test.model.approve(); await test.model.selectMedia('clip', true);
     expect(test.model.getSnapshot().review?.digest).toBe('9'.repeat(64));
     expect(test.model.getSnapshot().receiptId).toBeNull();
-    expect(test.model.getSnapshot().checks.sources).toEqual([]);
-    expect(test.model.getSnapshot().checks.metadata).toBe(false);
-    expect(test.calls.slice(-2).map(call => call.path)).toEqual(['/recordings/' + id + '/review', '/recordings']);
+    expect(test.model.getSnapshot().checks).toEqual(checks(value));
+    expect(test.calls.slice(-2).map(call => call.path)).toEqual(['/recordings/' + id + '/media', '/recordings/' + id + '/review']);
+    await test.model.createExport(); expect(test.calls.some(call => call.path.endsWith('/export'))).toBe(false);
+  });
+  it('keeps reviewed text and metadata after excluding media, but requires a fresh approval receipt', async () => {
+    const value = review(), test = harness(value); await test.model.load(); await test.model.openReview(id); markAll(test.model, value); await test.model.approve();
+    await test.model.selectMedia('selected', false);
+    const state = test.model.getSnapshot();
+    expect(state.review?.media).toEqual([]);
+    expect(state.checks).toEqual({ ...checks(value), visual: [], audio: [] });
+    expect(state.receiptId).toBeNull();
+    await test.model.createExport(); expect(test.calls.some(call => call.path.endsWith('/export'))).toBe(false);
+    await test.model.approve();
+    expect(test.calls.at(-1)?.options?.body).toMatchObject({ captureRevision: 5, digest: '9'.repeat(64), reviewedMedia: [], metadataReviewed: true });
+    expect(test.model.getSnapshot().receiptId).toBe('receipt');
+  });
+  it('retains only unchanged source, output, metadata and media identities from the fresh review', async () => {
+    const value = review(); value.media.push({ ...value.media[0], id: 'unchanged-media' });
+    const test = harness(value); await test.model.openReview(id); markAll(test.model, value);
+    const next = structuredClone(value);
+    next.sources[0] = { ...next.sources[0], revision: 2, textHash: '0'.repeat(64), text: 'Changed wording.' };
+    next.outputs = [value.outputs[1], { hash: '1'.repeat(64), text: 'A new output.' }];
+    next.metadata.title = 'A changed title'; next.media[0].hash = '2'.repeat(64);
+    next.media.push({ ...next.media[0], id: 'new-media' }); test.setReview(next);
+    await test.model.selectMedia('clip', true);
+    expect(test.model.getSnapshot().checks).toEqual({ metadata: false, sources: [recordingSourceKey(value.sources[1])], outputs: [value.outputs[1].hash], visual: [recordingMediaKey(value.media[1])], audio: [recordingMediaKey(value.media[1])] });
+    await test.model.approve(); expect(test.calls.some(call => call.options?.method === 'POST' && call.path.endsWith('/review'))).toBe(false);
+    expect(test.model.getSnapshot().receiptId).toBeNull();
+  });
+  it('keeps the review mounted during media refresh and clears approval safely if the fresh review fails', async () => {
+    const value = review(), test = harness(value); await test.model.openReview(id); markAll(test.model, value); await test.model.approve();
+    const mutation = deferred<unknown>(); test.request.mockImplementationOnce(async () => await mutation.promise as never); test.request.mockRejectedValueOnce(new Error('Refresh unavailable'));
+    const selecting = test.model.selectMedia('selected', false);
+    expect(test.model.getSnapshot().review?.digest).toBe(value.digest); expect(test.model.getSnapshot().receiptId).toBeNull();
+    const count = test.request.mock.calls.length; await test.model.load(); await test.model.createExport(); expect(test.request).toHaveBeenCalledTimes(count);
+    mutation.resolve({ removed: true }); await selecting;
+    expect(test.model.getSnapshot().review).toBeNull(); expect(test.model.getSnapshot().receiptId).toBeNull();
+    expect(test.model.getSnapshot().checks).toEqual({ metadata: false, sources: [], outputs: [], visual: [], audio: [] });
+    await test.model.approve(); await test.model.createExport(); expect(test.calls.filter(call => call.path.endsWith('/export'))).toHaveLength(0);
   });
 });
 
@@ -160,6 +198,28 @@ describe('managed recording publication and withdrawal', () => {
 });
 
 describe('private recording lifetime', () => {
+  it('uses authoritative current-session eligibility and arms the next recording without a forbidden current-session request', async () => {
+    const test = harness(); test.setEligibility({ sessionId: 'session', canStartCurrent: false, canArmNext: true, reason: 'context_started' });
+    await test.model.setSession('session');
+    expect(test.calls[0].path).toBe('/recordings?sessionId=session'); expect(test.model.getSnapshot().startEligibility?.canStartCurrent).toBe(false);
+    await test.model.start('session'); expect(test.calls.some(call => call.path.endsWith('/start'))).toBe(false);
+    await test.model.start(null); expect(test.calls.find(call => call.path.endsWith('/start'))?.options?.body).toEqual({});
+  });
+  it('does not reuse start permission from another session or after a failed eligibility refresh', async () => {
+    const test = harness(); await test.model.setSession('session');
+    expect(test.model.getSnapshot().startEligibility?.canStartCurrent).toBe(true);
+    await test.model.start('other-session'); expect(test.calls.some(call => call.path.endsWith('/start'))).toBe(false);
+    test.request.mockRejectedValueOnce(new Error('Eligibility unavailable')); await test.model.load();
+    expect(test.model.getSnapshot().startEligibility).toBeNull(); await test.model.start('session');
+    expect(test.calls.some(call => call.path.endsWith('/start'))).toBe(false);
+  });
+  it('switches to next-session arming if context arrives after the eligibility check', async () => {
+    const test = harness(); await test.model.setSession('session');
+    test.request.mockRejectedValueOnce(Object.assign(new Error('Context was already collected.'), { code: 'recording_prefix_missing' }));
+    await test.model.start('session');
+    expect(test.model.getSnapshot().startEligibility).toEqual({ sessionId: 'session', canStartCurrent: false, canArmNext: true, reason: 'context_started' });
+    expect(test.model.getSnapshot().error).toBe('Context was already collected.');
+  });
   it('clears source text and receipt immediately on invalidation and ignores the old review response', async () => {
     const pending = deferred<RecordingReview>(), value = review();
     const port: RecordingPort = { request: vi.fn(async <T,>(path: string) => path.endsWith('/review') ? await pending.promise as T : { items: [], activeId: null } as T) as RecordingPort['request'] };
@@ -182,8 +242,8 @@ describe('private recording lifetime', () => {
     await test.model.start(null);
     expect(test.calls[0]).toMatchObject({ path: '/recordings/start', options: { method: 'POST', body: {} } });
     expect(test.model.getSnapshot().items[0].status).toBe('armed');
-    const live = harness(); await live.model.start('session');
-    expect(live.calls[0].options?.body).toEqual({ sessionId: 'session' });
+    const live = harness(); await live.model.setSession('session'); await live.model.start('session');
+    expect(live.calls.find(call => call.path.endsWith('/start'))?.options?.body).toEqual({ sessionId: 'session' });
     expect(live.model.getSnapshot().items[0].status).toBe('recording');
     expect(live.calls.some(call => call.path.endsWith('/publish'))).toBe(false);
   });

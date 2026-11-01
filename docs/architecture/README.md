@@ -48,6 +48,18 @@ A raid consumes a prepared plan, not a fresh model request. The plan selects pub
 
 The normal scene duration is selectable as 10, 12, or 15 seconds. A welcome without enough supported context lasts 5 seconds. Prior-session clips are separately approved and labelled; they never establish the current stream's goal. Narration is optional, prepared from published text, and invalidated with its dependencies.
 
+## Private recording, reviewed export, and replay
+
+The [recording controller](../../src/server/replay/recording-controller.ts) subscribes to committed domain transitions. It must be armed before the session collects context; it cannot recover earlier provider inputs or outcomes. Private capture stores normalized text, exact checked outcomes, and candidate media references. It does not capture the screen or automatically retain raw microphone audio as replay media. A process restart interrupts capture instead of resuming it silently.
+
+The dock's review binds the capture revision and digest, every source revision and text hash, saved text hashes, metadata acknowledgement, and both visual and audio acknowledgements for each selected asset. Export requires a complete stopped capture, at least one checked story result, unchanged safe sources, and completed checks for recorded text. It validates deterministic replay twice in distinct run scopes and requires a published chapter. A raid, an owner correction, and additional output languages are optional. Replay exposes only the milestones, correction, and checked language presentations that the recording actually contains.
+
+Only ready media from that recording's validated cache can be selected. Source lineage and the original capture interval survive preparation. Larger video is bounded through `h264_nvenc`; it has no automatic software encoder fallback. Text checks cannot establish that a frame is safe, so actual prepared bytes require owner review. Any subsequent privacy-epoch change invalidates the private capture and the dependent export; revision and dependency checks also fence reads and uploads.
+
+Creating an export writes private reviewed assets plus an export registration in SQLite. The [registry](../../src/server/replay/recording-registry.ts) uploads assets only after an explicit Publish action, then sends their signed manifest. Public URL availability requires the exact export operation's acknowledgement. Withdrawal immediately fences local access, queues public retraction, and preserves a distinct pending state until its own acknowledgement. Private removal cannot erase the records needed to finish a queued export's withdrawal.
+
+Public replay downloads the current manifest and hashed package through gated endpoints, then runs the core in a Web Worker with recorded time and a simulation sink. It polls the manifest even while loading chunks and expires after six seconds without successful validation. The owner ZIP instead carries the reviewed manifest, an assembled bundle, and selected media. Offline helpers validate the ZIP and resolve local media without providers, but that downloaded copy has no remote revocation channel. See the [replay guide](../replay/README.md) for the complete owner journey and archive contract.
+
 ## Resource limits and failure behavior
 
 The limits below are implementation bounds, not measured live capacity claims.
@@ -65,6 +77,9 @@ The limits below are implementation bounds, not measured live capacity claims.
 | Replay upload asset | At most 3,000,000 bytes |
 | Recording package | At most 100 assets and 32,000,000 declared bytes, including selected media; larger JSON is split into hashed event/provider chunks |
 | Assembled recording | At most 32,000,000 bytes, 10,000 events, and 10,000 provider outcomes |
+| Private captures | At most 20 recordings and 100 media candidates per recording |
+| Selected recording media | At most 12 assets, each at most 3,000,000 bytes and 120 seconds |
+| Offline ZIP | At most 32,000,000 bytes including assembled JSON, manifest, selected media, and archive overhead |
 | Cloud snapshot | At most 1,000,000 bytes |
 | Cloud head | At most 100 episode pointers and 10 export manifests |
 

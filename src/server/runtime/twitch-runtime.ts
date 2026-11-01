@@ -4,7 +4,7 @@ import type {DomainEffect,DomainMedia,DomainState} from '../../core/types.js';
 import type {Channel,Clock,EventEnvelope,Moment,PublicSnapshot,Scope,Session,VersionRef} from '../../shared/contracts/index.js';
 import {bindControlStore,createTwitchAuth,type AuthOptions} from '../auth/index.js';
 import type {PrivateMediaCache,MediaDescriptor} from '../media/cache.js';
-import {TwitchBanSync,TwitchEffects,TwitchEventSub,TwitchHelix,composeReply,parseCommand,type ChatCommand,type ConnectionState,type EffectContext,type EventSubOptions,type TwitchClip,type TwitchStream} from '../twitch/index.js';
+import {TwitchBanSync,TwitchEffects,TwitchEventSub,TwitchHelix,composeReply,parseCommand,type ChatCommand,type ConnectionState,type EffectContext,type EventSubOptions,type TwitchClip,type TwitchStream,type MarkerContext,type MarkerResult} from '../twitch/index.js';
 import type {RuntimeConfig} from './config.js';
 import type {RuntimeStorage,StoryEngine} from './engine.js';
 import {ApiError} from './errors.js';
@@ -92,6 +92,7 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
         if(connection.state!=='active'||!connection.quotesReady||!bans.ready()||state.session.status!=='live'||liveId()!==input.sessionId||state.settings.listeningPaused)return false;
         if(input.kind==='chat'&&extended.publicationRevision!==undefined&&(state.published?.revision??null)!==extended.publicationRevision)return false;
         if(input.kind==='clip'&&!state.settings.autoClips)return false;
+        if(input.kind==='marker'&&(!options.markerEnabled||state.session.twitchStreamId!==(input as EffectContext&{streamId?:string}).streamId))return false;
       }
       if(input.kind==='previous.clip'&&!state.session.endedAt&&state.session.status!=='live')return false;
       return true;
@@ -118,9 +119,19 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
   };
   const authService=(options.authFactory??createTwitchAuth)({scope,clientId:config.twitch.clientId,clientSecret:config.twitch.clientSecret,redirectUri:config.twitch.redirectUri,origin:config.origin,sessionSecret:config.sessionSecret,tokenVault:storage.tokenVault,sessions:storage.sessions,control,now:clock.now.bind(clock),fetch:options.fetch,markerEnabled:options.markerEnabled,onAuthorized:connect,onDisconnect:()=>{void stopNetwork().catch(()=>setFailure('Twitch is disconnected. Reconnect to continue.'));updates.revoke(principal=>principal.channelId===scope.channelId&&principal.runId===scope.runId);},onOverlayRotated:()=>updates.revoke(principal=>principal.channelId===scope.channelId&&principal.runId===scope.runId&&principal.role==='overlay')});
   const helix=options.helix??new TwitchHelix(channel.id,authService.tokens);
+  const onMarker=(input:MarkerContext,result:MarkerResult)=>{
+    control.put(`twitch:marker:${input.sessionId}:${input.momentId}`,{...result,at:clock.iso(),expiresAtMs:input.expiresAtMs},clock.now()+7*86400000);
+    updates.publish({...scope,event:'snapshot.changed',data:{sessionId:input.sessionId,revision:engine.state(input.sessionId).revision}});
+  };
+  const markerStatus=(sessionId:string|null=liveId())=>({enabled:Boolean(options.markerEnabled),sessionId,items:sessionId?engine.state(sessionId).moments.map(moment=>{
+    const saved=control.get<MarkerResult&{at:string;expiresAtMs:number}>(`twitch:marker:${sessionId}:${moment.id}`);
+    // A process may die after sending but before persisting confirmation. Never leave that as queued forever.
+    const result=saved?.status==='queued'&&saved.expiresAtMs<=clock.now()?{...saved,status:'unknown_outcome' as const,reason:'marker_not_confirmed'}:saved;
+    return {momentId:moment.id,timecodeMs:moment.endMs,...(result??{status:'unavailable' as const,reason:options.markerEnabled?'marker_not_queued':'marker_disabled'})};
+  }):[]});
   const effects=new TwitchEffects({scope,helix,repository,control,now:clock.now.bind(clock),allowed,
     prepareMedia:async input=>{if(!options.media)throw new Error('private_media_unavailable');const extended=input as ClipContext&typeof input;const clipId=input.id.startsWith('clip:')?input.id.slice(5):undefined;const id=mediaId(extended,clipId);const result=await options.media.prepare({...input,id});control.put(`twitch:media:${id}`,{durationMs:result.durationMs});return result;},
-    onClip,previousPermitted:clip=>clip.broadcaster_id===channel.id&&!control.get(`twitch:clip-block:${clip.id}`),
+    onClip,onMarker,previousPermitted:clip=>clip.broadcaster_id===channel.id&&!control.get(`twitch:clip-block:${clip.id}`),
     onResult:(_id,result)=>{if(result.status==='unknown_outcome')lastFailure='Twitch did not confirm an external action. It will not be sent again automatically.';},
   });
   const refreshPrevious=async()=>{
@@ -332,6 +343,19 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
       if(!authService.status().connected)return;
       await bans.tick();const active=liveId();if(active){const state=engine.state(active);for(const actor of state.bannedActors.filter(actor=>bans.allows(actor)).slice(0,10))await mutateAcrossSessions(actor,null);}
       if(active)await attachApproved(active);
+      const markerIntent=repository.claimJob(scope,{kinds:['twitch.marker.intent']});if(markerIntent){
+        const state=engine.state(markerIntent.sessionId),moment=state.moments.find(item=>item.id===record(markerIntent.payload).momentId);
+        if(!moment||markerIntent.privacyEpoch!==state.session.privacyEpoch)repository.finishJob(scope,markerIntent.id,markerIntent.leaseToken,'failed');
+        else{
+          const context:MarkerContext={sessionId:markerIntent.sessionId,privacyEpoch:markerIntent.privacyEpoch,dependencyRefs:moment.dependencyRefs,momentId:moment.id,streamId:state.session.twitchStreamId??'',expiresAtMs:Date.parse(state.session.startedAt)+moment.endMs+60000};
+          repository.runIdempotentControl(scope,`twitch-marker-convert:${markerIntent.id}`,{momentId:moment.id,privacyEpoch:markerIntent.privacyEpoch},()=>{
+            // A generic description never copies chat or unreviewed moment wording into Twitch.
+            const id=effects.enqueueMarker({...context,key:`marker:${moment.id}:${markerIntent.privacyEpoch}`,description:'Previously saved moment',enabled:Boolean(options.markerEnabled)});
+            onMarker(context,id?{status:'queued'}:{status:'unavailable',reason:!options.markerEnabled?'marker_disabled':context.expiresAtMs<=clock.now()?'marker_expired':'marker_not_eligible'});
+            repository.finishJob(scope,markerIntent.id,markerIntent.leaseToken,'done');return id;
+          });
+        }
+      }
       const intent=repository.claimJob(scope,{kinds:['twitch.clip.intent']});if(intent){
         const value=record(intent.payload),moment=value.moment as Moment|undefined;const state=engine.state(intent.sessionId);
         if(!moment||intent.privacyEpoch!==state.session.privacyEpoch||!state.moments.some(item=>item.id===moment.id)){repository.finishJob(scope,intent.id,intent.leaseToken,'failed');}
@@ -361,6 +385,7 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     return {jobId:id,status:permission.state==='ready'?'ready' as const:'queued' as const,mediaId:permission.mediaId,previousSession:true,ownerApproved:permission.approved};
   };
   const ownerRouter=Router();ownerRouter.use(authService.ownerRouter);
+  ownerRouter.get('/twitch/markers',(req,res,next)=>{try{const sessionId=typeof req.query.sessionId==='string'?req.query.sessionId:liveId();res.json(markerStatus(sessionId));}catch(error){next(error);}});
   ownerRouter.get('/twitch/previous-clip',(_req,res)=>{const selected=control.get<PreviousSelection>('twitch:previous');res.json({candidate:selected,previousSession:true,checkedAt:control.get<number>('twitch:previous-checked')});});
   ownerRouter.post('/twitch/previous-clip/refresh',async(_req,res,next)=>{try{await refreshPrevious();res.json({candidate:control.get<PreviousSelection>('twitch:previous')});}catch(error){next(error);}});
   ownerRouter.post('/twitch/previous-clip/prepare',async(req,res,next)=>{try{if(typeof req.body?.clipId!=='string'||req.body.sessionId!==null&&req.body.sessionId!==undefined&&typeof req.body.sessionId!=='string'||typeof req.body?.use!=='boolean')throw new ApiError(400,'invalid_clip_selection','Choose a previous clip and whether to use it.');res.status(202).json(await preparePrevious(req.body.clipId,req.body.sessionId??null,req.body.use,typeof req.headers['idempotency-key']==='string'?req.headers['idempotency-key']:undefined));}catch(error){next(error);}});
@@ -370,7 +395,7 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     permitsOverlayMedia(id:string){const active=liveId();if(!active)return false;const state=engine.state(active),media=state.media.find(media=>media.id===id);if(!media||media.state!=='ready'||!media.ownerApproved||!state.playbacks.some(playback=>['queued','preparing','playing'].includes(playback.status)&&playback.plan?.media.some(item=>item.id===id)))return false;if(media.previousSession&&media.clipId){const permission=control.get<PreviousPermission>(permissionKey(permissionId(media.clipId)));if(!permission?.approved||permission.state!=='ready')return false;}return engine.allowed({sessionId:active,privacyEpoch:state.session.privacyEpoch,dependencyRefs:[{id:media.id,revision:media.revision}]});},
     privacyBlocked:()=>connection.privacyBlocked,
     status:()=>({...authService.status(),connection:{...connection},lastFailure,previousClip:control.get<PreviousSelection>('twitch:previous')?.status??'none'}),
-    previousCandidate:()=>control.get<PreviousSelection>('twitch:previous'),refreshPrevious,preparePrevious,
+    previousCandidate:()=>control.get<PreviousSelection>('twitch:previous'),refreshPrevious,preparePrevious,markerStatus,
     async start(){if(running)return;running=true;try{await authService.start();await connect();}catch{setFailure('Reconnect Twitch to continue.');}},
     async stop(){running=false;authService.stop();await stopNetwork();await tickFlight;},
   };

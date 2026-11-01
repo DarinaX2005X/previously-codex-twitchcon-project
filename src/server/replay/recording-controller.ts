@@ -13,7 +13,7 @@ import {ManifestSchema,type ExportAsset} from '../../cloud/contracts.js';
 import {assertNoCredentials} from './recorder.js';
 import {RecordingStore} from './recording-store.js';
 import {collectSources,digest,exportBundle,reviewOf,sourceHash,summary} from './recording-review.js';
-import type {RecordingRecord,RecordingReview,ReviewedExport,SourceReview,MediaReview,RecordingMedia} from './recording-types.js';
+import type {RecordingRecord,RecordingReview,ReviewedExport,SourceReview,MediaReview,RecordingMedia,RecordingStartEligibility} from './recording-types.js';
 
 export type RecordingOptions={dataDir:string;scope:Scope;clock:Clock;state:(sessionId:string)=>DomainState;source?:(id:string)=>Source|null;providerModel:string;registerExport?:(value:ReviewedExport)=>{exportId:string;status:'staged';publishSeq?:number};resolveMedia?:(id:string)=>Promise<{record:MediaRecord;path:string}>;outputsBlocked?:()=>boolean;};
 export type ReviewInput={captureRevision:number;digest:string;reviewedSources:SourceReview[];reviewedOutputHashes:string[];reviewedMedia?:MediaReview[];metadataReviewed:true;};
@@ -48,7 +48,15 @@ export class RecordingController {
     try{const state=this.options.state(record.sessionId);if(state.session.privacyEpoch!==record.privacyEpoch)this.invalidate(record,'This recording was erased after a source privacy change. Record a new clean session.');}
     catch(error){if(error instanceof ApiError&&error.code==='recording_invalidated')throw error;this.invalidate(record,'The original session is no longer available.');}
   }
-  list(principal:Principal){this.authorize(principal);for(const record of this.records.values())this.validateCurrent(record);return {items:[...this.records.values()].map(summary),activeId:this.active,boundary:'Arm before a session or before any context is collected. Earlier provider results cannot be recovered retrospectively.',automaticUpload:false};}
+  list(principal:Principal,input:{sessionId?:string}={}){this.authorize(principal);for(const record of this.records.values())this.validateCurrent(record);return {items:[...this.records.values()].map(summary),activeId:this.active,startEligibility:this.startEligibility(input.sessionId),boundary:'Arm before a session or before any context is collected. Earlier provider results cannot be recovered retrospectively.',automaticUpload:false};}
+  private startEligibility(sessionId?:string):RecordingStartEligibility{
+    const base={sessionId:sessionId??null,canStartCurrent:false,canArmNext:false};
+    if(this.active)return {...base,reason:'recording_active'};
+    if(this.records.size>=20)return {...base,reason:'retention_limit'};
+    if(!sessionId)return {...base,canArmNext:true,reason:'no_session'};
+    try{const ready=pristine(this.options.state(sessionId));return {...base,canArmNext:true,canStartCurrent:ready,reason:ready?'ready':'context_started'};}
+    catch{return {...base,canArmNext:true,reason:'session_unavailable'};}
+  }
   start(principal:Principal,input:{sessionId?:string}={}){
     this.authorize(principal);if(this.active)throw fail('recording_already_active','Stop the current recording before starting another.');if(this.records.size>=20)throw fail('recording_retention_limit','Remove a private recording before starting another.');
     const state=input.sessionId?this.options.state(input.sessionId):null;if(state&&!pristine(state))throw fail('recording_prefix_missing','Arm recording before the session collects context. Earlier provider outcomes were not recorded.');
@@ -106,7 +114,7 @@ export class RecordingController {
         const chapter=input.previous.chapters.find(c=>c.id===event.entityId);if(!chapter)throw new Error('recording_owner_prefix_missing');
         const request={title:chapter.title,summary:chapter.summary};append('owner_review',request,{title:event.title,summary:event.summary,safety:event.safety,...event.current?{current:event.current}:{}});
         const source=input.previous.sources.find(s=>s.id===event.sourceId&&s.revision===event.sourceRevision);
-        if(source&&source.text===event.summary&&request.title===event.title&&safetyAllowsPublication(event.safety)){record.safeSourceHashes.push(sourceHash(source));record.correction={...request,targetId:event.entityId};}
+        if(source&&source.text===event.summary&&request.title===event.title&&safetyAllowsPublication(event.safety)){record.safeSourceHashes.push(sourceHash(source));record.correction={...request,targetId:event.entityId,language:event.language??source.languageCodes.find((language):language is 'en'|'ru'=>language==='en'||language==='ru')??input.previous.settings.recapLanguage};}
       }
       if(event.type==='presentation'){
         const chapter=input.previous.chapters.find(c=>c.id===event.entityId);if(!chapter)throw new Error('recording_presentation_prefix_missing');
@@ -119,7 +127,7 @@ export class RecordingController {
       // A crash always interrupts capture, so only a stopped recording is exportable.
       // Checkpoint at most once per five seconds instead of rewriting a growing bundle per tick/chat.
       if(this.options.clock.now()-this.lastCaptureWrite>=5000){this.store.write(record);this.lastCaptureWrite=this.options.clock.now();}
-    }catch{record.status='failed';record.message='Recording stopped because a normalized input could not be saved safely. The live session continues.';record.receipt=null;this.active=null;try{this.persist(record);}catch{/* Original session validity remains authoritative after restart. */}}
+    }catch(error){record.status='failed';const code=error instanceof Error?error.message:'';record.message=code==='recording_capacity'?'Recording stopped at its limit of 10,000 events or provider results. This incomplete capture cannot be exported.':code==='recording_media_capacity'?'Recording stopped at its limit of 100 media entries. This incomplete capture cannot be exported.':code==='private_recording_too_large'?'Recording stopped at its 32 MB private capture limit. This incomplete capture cannot be exported.':'Recording stopped because a normalized input could not be saved safely. The live session continues.';record.receipt=null;this.active=null;try{this.persist(record);}catch{/* Original session validity remains authoritative after restart. */}}
   };
   review(principal:Principal,id:string):RecordingReview{this.authorize(principal);this.outputGate();return reviewOf(this.get(id));}
   approve(principal:Principal,id:string,input:ReviewInput){

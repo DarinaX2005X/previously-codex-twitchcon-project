@@ -33,8 +33,8 @@ function Modal({ open, onOpenChange, title, description, children, footer, dismi
     if (returnFocus.current?.isConnected) returnFocus.current.focus();
   }, []);
   return <dialog ref={ref} className={['pv-dialog', sheet && 'pv-dialog--sheet', className].filter(Boolean).join(' ')} aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}
-    onCancel={event => { event.preventDefault(); if (dismissible) onOpenChange(false); }}
-    onClose={() => { if (open) onOpenChange(false); }}>
+    onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); if (dismissible) onOpenChange(false); }}
+    onClose={event => { if (event.target === event.currentTarget && open) onOpenChange(false); }}>
     <div className="pv-dialog__header"><h2 id={titleId}>{title}</h2>{dismissible && <IconButton label={closeLabel} onClick={() => onOpenChange(false)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></IconButton>}</div>
     {description && <p id={descriptionId} className="pv-dialog__description">{description}</p>}
     <div className="pv-dialog__body">{children}</div>

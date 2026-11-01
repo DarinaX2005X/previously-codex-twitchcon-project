@@ -33,7 +33,7 @@ it('real runtime privacy callback fires before failed SQLite status persistence 
     return put(s, key, value, expires);
   });
   const runtime = createTwitchRuntime({scope, channel, storage, engine, updates, clock, helix,
-    config: {origin: 'https://localhost:4317', publicOrigin: undefined, sessionSecret: 's'.repeat(32), twitch: {clientId: 'authored-client', clientSecret: 'authored-secret', channelLogin: channel.login, redirectUri: 'https://localhost:4317/auth/twitch/callback'}},
+    config: {origin: 'https://localhost:4317', publicOrigin: undefined, sessionSecret: 's'.repeat(32), twitch: {clientId: 'authored-client', clientSecret: 'authored-secret', channelLogin: channel.login, redirectUri: 'https://localhost:4317/auth/twitch/callback', markerEnabled: false}},
     fetch: async url => {if (String(url) !== 'https://id.twitch.tv/oauth2/validate') throw new Error('Unexpected network'); return Response.json({client_id: 'authored-client', user_id: '123', scopes: TWITCH_SCOPES, expires_in: 3600});},
     onPrivacyBlocked: blocked => {gates.push(blocked); if (blocked) expect(writes).not.toContain('ban:snapshot');},
     eventSubFactory: options => {transport = new TwitchEventSub({...options, socketFactory: () => {const socket = new Socket(); sockets.push(socket); return socket as unknown as WebSocket;}}); return transport;},

@@ -34,7 +34,7 @@ npx tsx scripts/publish-authored-replay.mts $channelLogin $channelId
 
 The script publishes the authored text example, not an own-stream recording. It leaves an existing registered example alone and refuses to restore a revoked export. A reviewed replacement needs a new revision through the publication contract. Ordinary replay page loads never republish or restore exports.
 
-The recording workflow stages approved own-stream material locally. Export review does not upload it automatically. The separate authenticated `POST /api/owner/recordings/:id/publish` operation queues its signed publication. See [Replay and recordings](../replay/README.md) and the [publication adapter contract](../../src/server/publication/README.md) for the review and publication boundaries.
+Open **Recordings** in the dock header. **Approve reviewed contents** and **Create private export** stage own-stream material locally. They do not upload it. **Publish recording** calls the authenticated `POST /api/owner/recordings/:id/publish` operation to queue signed publication. Keep the collector running until that exact export is acknowledged; only then does **Open published recording** appear. A newer unrelated snapshot acknowledgement cannot make the recording look published. **Retry publication** is available when confirmation fails. See [Replay and recordings](../replay/README.md) and the [publication adapter contract](../../src/server/publication/README.md) for the review and publication boundaries.
 
 ## Read, revoke, and recover
 
@@ -50,6 +50,8 @@ The recording workflow stages approved own-stream material locally. Export revie
 Public responses use `no-store`. Asset reads, including Range requests, recheck the manifest. An old revision, revoked export, or unavailable export cannot be opened through a guessed old asset URL. The browser clears its replay and media when revalidation fails or its six-second visibility lease expires. A public page loading successfully does not by itself prove that a replay manifest is available.
 
 A live recap needs the collector's heartbeat lease. A finalized episode can remain readable after the collector stops. Losing connectivity does not turn held or private material into a public fallback. A privacy change made offline remains pending until its retraction reaches the cloud; already downloaded external copies cannot be recalled.
+
+**Withdraw recording** closes its local replay and ZIP downloads when the withdrawal is saved, and queues a separate signed cloud retraction. The dock reports **Withdrawn locally, public withdrawal pending** until that operation is acknowledged. During that interval an existing public copy may remain available; local success alone is not a remote deletion guarantee. Use **Retry withdrawal** if needed, and keep the collector running. Private capture removal stays disabled until the necessary acknowledgement. A private export that was never queued for publication can be removed after local withdrawal. This action withdraws the export, while the stream's published chapters remain; Forget is the underlying source privacy action.
 
 The private-store and deployed HTTP checks are described in [cloud verification](../testing/cloud-storage.md). The probe scripts create and remove isolated authored test records and perform real cloud writes; they are not part of routine startup or the default test suite. Run them only against an explicitly designated verification identity.
 

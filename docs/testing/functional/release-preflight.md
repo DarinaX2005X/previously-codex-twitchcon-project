@@ -1,0 +1,15 @@
+# Release preflight
+
+This independent code/runtime review used isolated authored data. It made no paid requests and did not exercise a live Twitch account, microphone, OBS output or real model quality.
+
+Two serious races were reproduced and repaired. A failed capture pause stopped the local device but silently reported success, while an accepted transcription could still commit after its live lease expired. The same reproduction now reports an unconfirmed pause, keeps the device stopped, rejects the expired live commit and stores no source. The retained control can be retried. Closing-stream audio remains subject to its separate bounded tail policy; an acknowledged pause cancels it.
+
+A delayed OAuth validation response restored encrypted credentials after disconnect. Validation, refresh and authorization replacement now fence both successful and failed responses against the current authorization. A late second HTTP 401 cannot revoke a newer authorization. The original disconnect reproduction remains disconnected with no saved credentials. The focused auth suite passed 22 tests; the capture/audio/dock group passed 35 tests.
+
+The review also found that the marker adapter had no production caller. Optional stream markers now have a durable intent, a matching live-stream check, expiry, deduped dispatch and a confirmed response boundary. A failed or ambiguous request preserves the local moment and its timecode. Thirty-eight focused Twitch/storage tests passed before the owner status presentation was added; the later 54-test dock/HTTP group covers that presentation and request boundary. These are authored Helix responses, not evidence of actual VOD marker availability.
+
+The recording workflow no longer requires tutorial-only events. Safe stopped recordings with a checked story can export in English or Russian without a correction, raid or second language. Optional replay controls reflect the checked contents of that recording. Missing checks, altered source wording, invalid dependencies, interrupted prefixes and missing provider outcomes still block publication. The replay/panel group passed 77 tests at this integration boundary, followed by 23 panel and three focused server checks for authoritative start eligibility.
+
+The final public artifact audit found no configured-secret matches or prohibited private files in the inspected tracked files and fresh public-mode build. Its exact scope and counts are in [release-audit.json](../reliability/release-audit.json). It sampled no private transcript text, so it is not a semantic audit of private stream content. New deployment access, the long load profiles, owned recording, live provider behavior and OBS remain separate evidence.
+
+See [visual observations](../visual/experience-review.md), [chat intake measurements](chat-intake-2026-11-02.md), [official CLI acceptance](acceptance-2026-11-02.md), and [reliability scope](../reliability/README.md). No agent walkthrough is presented as user approval or measured human comprehension.

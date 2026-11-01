@@ -4,6 +4,7 @@ import {createTwitchRuntime} from '../../src/server/runtime/twitch-runtime.js';
 import {StoryEngine} from '../../src/server/runtime/engine.js';
 import {RevisionStream} from '../../src/server/runtime/updates.js';
 import {SafetyService} from '../../src/server/providers/safety.js';
+import {HelixError} from '../../src/server/twitch/index.js';
 import {TWITCH_SCOPES} from '../../src/server/auth/index.js';
 import type {BannedUser,EventSubOptions,TwitchClip,TwitchHelix,TwitchStream} from '../../src/server/twitch/index.js';
 import type {EventEnvelope,Source,StoryProvider} from '../../src/shared/contracts/index.js';
@@ -14,28 +15,73 @@ afterEach(async()=>{for(const action of cleanup.splice(0).reverse())await action
 const startAt=Date.parse('2026-11-02T00:00:00.000Z');
 const scope={channelId:'123',runId:'live'},channel={id:'123',login:'fixture_channel',displayName:'Fixture channel'};
 const fixtureClip:TwitchClip={id:'ownclip',broadcaster_id:'123',creator_id:'123',created_at:'2026-11-01T00:00:00Z',duration:12,video_id:'',vod_offset:null,url:'https://clips.twitch.tv/ownclip',embed_url:'https://clips.twitch.tv/embed?clip=ownclip',title:'Previous permitted clip'};
-function fixture(options:{authorized?:boolean;autoClips?:boolean;initialBans?:BannedUser[];previous?:boolean;offline?:boolean}={}){
+function fixture(options:{authorized?:boolean;autoClips?:boolean;markers?:boolean;markerPermission?:boolean;initialBans?:BannedUser[];previous?:boolean;offline?:boolean}={}){
   let now=startAt+20000;const clock={now:()=>now,iso:()=>new Date(now).toISOString()};
   const storage=createStorage({path:':memory:',now:clock.now,encryptionKey:new Uint8Array(32).fill(7)});cleanup.push(storage.close);
   storage.repository.ensureChannel(scope,channel.login);storage.repository.updateSettings(scope,0,{listeningPaused:false,autoClips:options.autoClips??false});
-  if(options.authorized!==false)storage.tokenVault!.put(scope,'twitch',{accessToken:'fixture-access',refreshToken:'fixture-refresh',expiresAtMs:now+3600000,scopes:TWITCH_SCOPES});
+  const scopes=[...TWITCH_SCOPES,...(options.markers&&options.markerPermission!==false?['channel:manage:broadcast']:[])];
+  if(options.authorized!==false)storage.tokenVault!.put(scope,'twitch',{accessToken:'fixture-access',refreshToken:'fixture-refresh',expiresAtMs:now+3600000,scopes});
   const updates=new RevisionStream(1000,clock.now);cleanup.push(()=>updates.close());
   const safety=new SafetyService({classify:async()=>({decision:'allow',spans:[]})},{moderate:async()=> 'allowed'},clock.now);
   const propose=vi.fn<StoryProvider['propose']>(async()=>{throw new Error('This test never runs provider jobs');});
   let runtime:ReturnType<typeof createTwitchRuntime>|undefined;
   const engine=new StoryEngine({scope,channel,storage,clock,updates,safety,story:{propose},onEffects:(...args)=>runtime?.onEffects(...args),isOwnEcho:id=>runtime?.isOwnEcho(id)??false});
-  let banned=options.initialBans??[];let stream:TwitchStream|null=options.offline?null:{id:'one',user_id:'123',started_at:new Date(startAt).toISOString(),title:'',game_name:''};
+  let banned=options.initialBans??[];let stream:TwitchStream|null=options.offline?null:{id:'one',user_id:'123',started_at:new Date(startAt).toISOString(),title:'',game_name:'',type:'live'};
   const sendChat=vi.fn(async(_message:string)=>({message_id:'fixture-outgoing',is_sent:true}));const createClip=vi.fn(async()=>({id:'ownclip',edit_url:'https://clips.twitch.tv/ownclip/edit'}));
-  const helix={bannedUsers:async(page:(users:BannedUser[])=>void|Promise<void>,actor?:string)=>{await page(actor?banned.filter(user=>user.user_id===actor):banned);},currentStream:async()=>stream,previousClips:async()=>options.previous?[fixtureClip]:[],sendChat,createClip,getClip:async()=>fixtureClip,downloadUrl:async()=> 'https://production.assets.clips.twitchcdn.net/fixture.mp4',subscribe:async()=>({}),marker:async()=>({})} as unknown as TwitchHelix;
+  const marker=vi.fn(async(_description:string,beforeRequest?:()=>boolean)=>{if(beforeRequest&&!beforeRequest())throw new Error('fence changed');return {id:'marker-one',created_at:clock.iso(),position_seconds:20,description:'Previously saved moment'};});
+  const currentStream=vi.fn(async()=>stream);
+  const helix={bannedUsers:async(page:(users:BannedUser[])=>void|Promise<void>,actor?:string)=>{await page(actor?banned.filter(user=>user.user_id===actor):banned);},currentStream,previousClips:async()=>options.previous?[fixtureClip]:[],sendChat,createClip,getClip:async()=>fixtureClip,downloadUrl:async()=> 'https://production.assets.clips.twitchcdn.net/fixture.mp4',subscribe:async()=>({}),marker} as unknown as TwitchHelix;
   const mediaRecords=new Map<string,MediaRecord>();const prepare=vi.fn(async(input:MediaInput):Promise<MediaRecord>=>{const {url:_url,...metadata}=input;const result:MediaRecord={...metadata,file:'fixture.media',size:10,durationMs:12000,mimeType:'video/mp4',lastUsedAt:now,state:'ready'};mediaRecords.set(input.id,result);return result;});const revoke=vi.fn(async(_id:string)=>{});const alias=vi.fn(async(sourceId:string,targetId:string):Promise<MediaRecord>=>{const result={...mediaRecords.get(sourceId)!,id:targetId};mediaRecords.set(targetId,result);return result;});
-  const fetcher=vi.fn<typeof fetch>(async url=>{if(String(url)!=='https://id.twitch.tv/oauth2/validate')throw new Error('Unexpected network request');return Response.json({client_id:'fixture-client',user_id:'123',scopes:TWITCH_SCOPES,expires_in:3600});});
+  const fetcher=vi.fn<typeof fetch>(async url=>{if(String(url)!=='https://id.twitch.tv/oauth2/validate')throw new Error('Unexpected network request');return Response.json({client_id:'fixture-client',user_id:'123',scopes,expires_in:3600});});
   let transport:EventSubOptions;const transportStart=vi.fn(async()=>{transport.status?.('connecting',{quotesReady:false,gapSince:null});await transport.bans.begin('fixture-sync');await helix.bannedUsers(users=>transport.bans.page('fixture-sync',users));await transport.bans.finish('fixture-sync');await transport.onStream(stream,clock.iso());transport.status?.('active',{quotesReady:true,gapSince:null});});const transportStop=vi.fn(async()=>{transport.status?.('disconnected',{quotesReady:false,gapSince:null});});
-  runtime=createTwitchRuntime({config:{twitch:{clientId:'fixture-client',clientSecret:'fixture-secret',channelLogin:channel.login,redirectUri:'https://localhost:4317/auth/twitch/callback'},origin:'https://localhost:4317',sessionSecret:'s'.repeat(32),publicOrigin:'https://fixture-public.test'},scope,channel,storage,engine,updates,clock,media:{prepare,revoke,alias},fetch:fetcher,helix,eventSubFactory:input=>{transport=input;return {start:transportStart,stop:transportStop,status:()=>({state:'active',quotesReady:true,gapSince:null})};}});
+  runtime=createTwitchRuntime({config:{twitch:{markerEnabled:Boolean(options.markers),clientId:'fixture-client',clientSecret:'fixture-secret',channelLogin:channel.login,redirectUri:'https://localhost:4317/auth/twitch/callback'},origin:'https://localhost:4317',sessionSecret:'s'.repeat(32),publicOrigin:'https://fixture-public.test'},scope,channel,storage,engine,updates,clock,media:{prepare,revoke,alias},markerEnabled:Boolean(options.markers),fetch:fetcher,helix,eventSubFactory:input=>{transport=input;return {start:transportStart,stop:transportStop,status:()=>({state:'active',quotesReady:true,gapSince:null})};}});
   cleanup.push(()=>runtime!.stop());
   const event=(kind:string,id:string,payload:unknown,at=clock.iso(),sessionId:string|null='stream_one'):EventEnvelope=>({...scope,schemaVersion:1,eventId:`twitch:${id}`,externalId:id,origin:'twitch',kind,occurredAt:at,receivedAt:clock.iso(),sessionId,sessionOffsetMs:Math.max(0,Date.parse(at)-startAt),payload});
-  return {runtime,storage,engine,clock,fetcher,sendChat,createClip,prepare,revoke,alias,propose,transportStart,event,transport:()=>transport!,advance:(ms:number)=>{now+=ms;},setBans:(rows:BannedUser[])=>{banned=rows;},setStream:(next:TwitchStream|null)=>{stream=next;}};
+  return {runtime,storage,engine,clock,fetcher,sendChat,createClip,marker,currentStream,prepare,revoke,alias,propose,transportStart,event,transport:()=>transport!,advance:(ms:number)=>{now+=ms;},setBans:(rows:BannedUser[])=>{banned=rows;},setStream:(next:TwitchStream|null)=>{stream=next;}};
 }
 describe('Twitch runtime composition with isolated adapters',()=>{
+  it('durably saves one optional marker independently of automatic clips and preserves the moment timecode',async()=>{
+    const f=fixture({markers:true});await f.runtime.start();
+    await f.engine.dispatch('stream_one',{type:'moment.save',id:'marker-moment',atMs:20000});
+    expect(f.storage.repository.pendingJobCount(scope,'stream_one',['twitch.marker.intent'])).toBe(1);
+    await f.runtime.tick();await f.runtime.tick();
+    await f.engine.dispatch('stream_one',{type:'moment.save',id:'marker-moment',atMs:20000});await f.runtime.tick();
+    expect(f.marker).toHaveBeenCalledTimes(1);expect(f.createClip).not.toHaveBeenCalled();
+    expect(f.marker.mock.calls[0][0]).toBe('Previously saved moment');
+    expect(f.runtime.markerStatus().items).toEqual([expect.objectContaining({momentId:'marker-moment',timecodeMs:20000,status:'sent',externalId:'marker-one',positionSeconds:20})]);
+    expect(f.engine.state('stream_one').moments[0]).toMatchObject({endMs:20000,clip:null,mediaState:'none'});
+  });
+  it.each([{markers:false,reason:'marker_disabled'},{markers:true,reason:'marker_vod_or_permission_unavailable'}])('keeps saved timecode when marker is $reason',async({markers,reason})=>{
+    const f=fixture({markers});await f.runtime.start();f.marker.mockRejectedValue(new HelixError(403,'permission_or_disabled'));
+    await f.engine.dispatch('stream_one',{type:'moment.save',id:'unavailable-marker',atMs:20000});await f.runtime.tick();await f.runtime.tick();
+    expect(f.marker).toHaveBeenCalledTimes(markers?1:0);expect(f.runtime.markerStatus().items[0]).toMatchObject({timecodeMs:20000,status:'unavailable',reason});
+    expect(f.engine.statuses().chat.state).toBe('ready');expect(f.engine.state('stream_one').moments[0].clip).toBeNull();
+  });
+  it('does not retry an ambiguous marker result or mark a new stream with an old moment',async()=>{
+    const f=fixture({markers:true});await f.runtime.start();f.marker.mockRejectedValue(new Error('network timeout'));
+    await f.engine.dispatch('stream_one',{type:'moment.save',id:'unknown-marker',atMs:20000});await f.runtime.tick();await f.runtime.tick();
+    expect(f.marker).toHaveBeenCalledTimes(1);expect(f.runtime.markerStatus().items[0]).toMatchObject({status:'unknown_outcome'});
+    await f.engine.dispatch('stream_one',{type:'moment.save',id:'old-marker',atMs:20000});f.setStream({id:'next-stream',user_id:'123',started_at:f.clock.iso(),title:'',game_name:'',type:'live'});await f.runtime.tick();
+    expect(f.marker).toHaveBeenCalledTimes(1);expect(f.runtime.markerStatus().items[1]).toMatchObject({status:'unavailable',reason:'marker_stream_not_live'});
+  });
+  it('requires the optional scope and an actual marker confirmation',async()=>{
+    const missing=fixture({markers:true,markerPermission:false});await missing.runtime.start();await missing.runtime.tick();
+    expect(missing.runtime.status()).toMatchObject({connected:false,missingPermissions:['channel:manage:broadcast']});expect(missing.marker).not.toHaveBeenCalled();
+    const f=fixture({markers:true});await f.runtime.start();f.marker.mockResolvedValue({id:'',created_at:f.clock.iso(),position_seconds:20,description:''});
+    await f.engine.dispatch('stream_one',{type:'moment.save',id:'unconfirmed-marker',atMs:20000});await f.runtime.tick();await f.runtime.tick();
+    expect(f.marker).toHaveBeenCalledTimes(1);expect(f.runtime.markerStatus().items[0]).toMatchObject({status:'unknown_outcome',reason:'marker_confirmation_missing'});
+  });
+  it('distinguishes a failed live lookup from an ambiguous marker POST',async()=>{
+    const f=fixture({markers:true});await f.runtime.start();f.currentStream.mockRejectedValue(new Error('network unavailable'));
+    await f.engine.dispatch('stream_one',{type:'moment.save',id:'lookup-marker',atMs:20000});await f.runtime.tick();
+    expect(f.marker).not.toHaveBeenCalled();expect(f.runtime.markerStatus().items[0]).toMatchObject({status:'unavailable',reason:'marker_live_check_unavailable'});
+  });
+  it('rechecks privacy after the fresh live lookup and expires old marker intents',async()=>{
+    const f=fixture({markers:true});await f.runtime.start();await f.engine.dispatch('stream_one',{type:'moment.save',id:'forgotten-marker',atMs:20000});
+    const stream=await f.currentStream();f.currentStream.mockImplementationOnce(async()=>{await f.engine.dispatch('stream_one',{type:'privacy',target:{kind:'entity',sessionId:'stream_one',id:'forgotten-marker'}});return stream;});
+    await f.runtime.tick();expect(f.marker).not.toHaveBeenCalled();expect(f.runtime.markerStatus().items).toHaveLength(0);
+    await f.engine.dispatch('stream_one',{type:'moment.save',id:'expired-marker',atMs:20000});f.advance(60001);await f.runtime.tick();expect(f.marker).not.toHaveBeenCalled();expect(f.runtime.markerStatus().items[0]).toMatchObject({status:'unavailable',reason:'marker_expired'});
+  });
   it('does no network work without a saved grant and never starts microphone or paid providers',async()=>{
     const f=fixture({authorized:false});await f.runtime.start();await f.runtime.tick();expect(f.fetcher).not.toHaveBeenCalled();expect(f.transportStart).not.toHaveBeenCalled();expect(f.sendChat).not.toHaveBeenCalled();expect(f.createClip).not.toHaveBeenCalled();expect(f.propose).not.toHaveBeenCalled();expect(f.engine.statuses().mic.state).toBe('paused');expect(f.storage.budget.status().usedMicroUsd).toBe(0);
   });

@@ -87,7 +87,7 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     if (blocked) {engine.setOutputsBlocked(true);cloud?.suspend();}
     // Recovery is completed inside tick, after cancelling interrupted scenes.
   };
-  twitch = createTwitchRuntime({config, scope, channel, storage, engine, updates, clock, media, onPrivacyBlocked: suspendPrivacyOutput, publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : undefined});
+  twitch = createTwitchRuntime({config, scope, channel, storage, engine, updates, clock, media, markerEnabled: config.twitch.markerEnabled, onPrivacyBlocked: suspendPrivacyOutput, publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : undefined});
   cloud = createCloudRuntime({scope, channel, engine, storage, publicOrigin: config.publicOrigin, sharedSecret: config.publishSharedSecret, clock, updates, recordingExports});
   const narrator = new OpenAIRealtimeNarrationProvider(transport, {approved: (text, language) => narration?.approved(text, language) ?? false});
   narration = createNarrationRuntime({engine, media, provider: narrator, clock, available: () => Boolean(config.paidCallsEnabled && config.openaiApiKey && storage.budget.status().enabled)});

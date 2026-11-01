@@ -15,7 +15,10 @@
 .dock-privacy { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px; margin:9px 0 0; }
 .dock-privacy .pv-button { min-height:40px; padding:6px 8px; font-size:13px; background:transparent; }.dock-privacy .pv-button--danger { border-color:transparent; }
 .dock-queue { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:14px; padding:4px 0 0; margin-top:8px; }.dock-queue .pv-button { font-size:14px; background:transparent; }
+.dock-recording-status { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px; font-size:13px; line-height:1.4; }.dock-recording-status > span { min-width:0; }.dock-recording-status .pv-button { flex:0 0 auto; min-height:40px; padding:6px 8px; font-size:13px; background:transparent; }
+.dock-recordings-sheet .recording-panel { margin-top:0; padding-top:0; border-top:0; }.dock-recordings-sheet .recording-panel > h2 { display:none; }
 .dock-page .pv-language { margin:22px 0 10px; }.dock-page .pv-language > span { font-size:14px; }.dock-page .pv-language .pv-secondary { font-size:13px; }
+.dock-language-label { margin:22px 0 10px; font-size:14px; color:var(--pv-secondary); }
 .dock-page p { overflow-wrap:anywhere; }.dock-page a { color:var(--pv-text); text-underline-offset:3px; }.dock-page a:hover { text-decoration-thickness:2px; }
 .dock-page .pv-notice,.dock-paper .pv-notice { margin:16px 0; font-size:14px; }.dock-page .pv-notice p { margin:4px 0; }.dock-page .pv-notice a { display:inline; }
 .dock-result { font-size:14px; line-height:1.6; margin:12px 0 20px; color:var(--pv-text); }
@@ -31,6 +34,7 @@
 .dock-empty { font-size:14px; color:var(--pv-secondary); padding:20px 0; }
 .dock-lore { padding:24px 0; }.dock-lore-heading { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:baseline; justify-content:space-between; }.dock-lore-heading > span { font-size:13px; color:var(--pv-secondary); }.dock-lore h3 { margin:0; font-size:18px; overflow-wrap:anywhere; }.dock-lore p { font-size:14px; line-height:1.6; }
 .dock-moments { padding:28px 0; border-top:1px solid var(--pv-edge); }.dock-moments > div { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; font-size:13px; margin:16px 0; }.dock-moments small { grid-column:2; color:var(--pv-secondary); }
+.dock-moments .dock-marker-state { font-size:13px; line-height:1.5; }.dock-marker-error { font-size:13px; line-height:1.5; color:var(--pv-warning); }
 .dock-paper { color:var(--pv-slate); background:var(--pv-paper); }
 .dock-paper .pv-dialog__body { display:grid; gap:18px; }.dock-paper p { line-height:1.6; overflow-wrap:anywhere; }.dock-paper h3 { overflow-wrap:anywhere; }
 .dock-comparison { padding:8px 0; }.dock-comparison h3 { margin-top:0; margin-bottom:12px; font-size:16px; }.dock-source { padding:20px 0; }.dock-source > div { display:flex; gap:12px; color:var(--pv-secondary); font-size:14px; }.dock-source blockquote { margin:16px 0; font-size:16px; line-height:1.65; overflow-wrap:anywhere; }

@@ -1,7 +1,7 @@
 import type { CaptureLease } from '../../shared/contracts/index.js';
 import { encodeWav } from '../../server/audio/wav.js';
 
-export type CaptureState={status:'idle'|'permission_pending'|'listening'|'paused'|'denied'|'no_device'|'device_lost'|'conflict'|'delayed'|'error'|'closing';level:number;message:string|null;droppedChunks:number};
+export type CaptureState={status:'idle'|'permission_pending'|'listening'|'pausing'|'pause_failed'|'paused'|'denied'|'no_device'|'device_lost'|'conflict'|'delayed'|'error'|'closing';level:number;message:string|null;droppedChunks:number};
 export type AudioMetadata={sessionId:string;leaseEpoch:number;captureEpoch:number;sequence:number;startMs:number;endMs:number;sampleRate:number;sha256:string;token:string;browserId:string};
 export interface CaptureTransport {lease(sessionId:string,browserId:string,takeover:boolean):Promise<CaptureLease>;renew(lease:CaptureLease,browserId:string):Promise<CaptureLease>;pause(lease:CaptureLease,browserId:string):Promise<void>;upload(bytes:Uint8Array,metadata:AudioMetadata,signal:AbortSignal):Promise<void>}
 export interface CaptureDevice {sampleRate:number;stop():void;flush?():Promise<void>;start(onFrame:(frame:Float32Array)=>void,onLost:()=>void):Promise<void>}
@@ -10,12 +10,14 @@ type Chunk={samples:Float32Array;startMs:number;endMs:number;sequence:number};
 export class CaptureController {
   private state:CaptureState={status:'idle',level:0,message:null,droppedChunks:0};private listeners=new Set<()=>void>();
   private device:CaptureDevice|null=null;private lease:CaptureLease|null=null;private timer:unknown;private generation=0;private frameBuffer:Float32Array[]=[];private frameCount=0;private sequence=0;private nextStart=0;private queue:Chunk[]=[];private active:AbortController|null=null;private startedAt=0;private renewing=false;private draining:Promise<void>|null=null;
+  private pendingPause:CaptureLease|null=null;private pauseRequest:Promise<void>|null=null;
   constructor(private readonly transport:CaptureTransport,private readonly environment:CaptureEnvironment,readonly browserId:string){}
   getSnapshot=()=>this.state;
   subscribe=(listener:()=>void)=>{this.listeners.add(listener);return()=>{this.listeners.delete(listener);};};
   private update(patch:Partial<CaptureState>){this.state={...this.state,...patch};for(const listener of this.listeners)listener();}
   async start(sessionId:string,takeover=false):Promise<void> {
     if(this.device||this.state.status==='permission_pending')return;
+    if(this.pendingPause){await this.pause();if(this.pendingPause)return;}
     const generation=++this.generation;this.update({status:'permission_pending',message:null,level:0});
     let device:CaptureDevice|null=null;
     try {
@@ -29,7 +31,7 @@ export class CaptureController {
   }
   resume(sessionId:string){return this.start(sessionId);}
   takeover(sessionId:string){return this.start(sessionId,true);}
-  private async renew(){if(!this.lease||this.renewing)return;this.renewing=true;const generation=this.generation;try{const lease=await this.transport.renew(this.lease,this.browserId);if(generation===this.generation)this.lease=lease;}catch{if(generation===this.generation){await this.pause();this.update({status:'conflict',message:'Capture lease ended. Start listening to reconnect.'});}}finally{this.renewing=false;}}
+  private async renew(){if(!this.lease||this.renewing)return;this.renewing=true;const generation=this.generation;try{const lease=await this.transport.renew(this.lease,this.browserId);if(generation===this.generation)this.lease=lease;}catch{if(generation===this.generation){await this.pause();if(this.pendingPause)return;this.update({status:'conflict',message:'Capture lease ended. Start listening to reconnect.'});}}finally{this.renewing=false;}}
   private receive(frame:Float32Array){if(!this.device||!['listening','delayed','closing'].includes(this.state.status))return;let sum=0;for(const value of frame)sum+=value*value;this.update({level:this.state.status==='closing'?0:Math.min(1,Math.sqrt(sum/Math.max(1,frame.length))*4)});this.frameBuffer.push(new Float32Array(frame));this.frameCount+=frame.length;if(this.state.status==='closing')return;const size=this.device.sampleRate*20;while(this.frameCount>=size)this.makeChunk(size);}
   private takeSamples(count:number){const samples=new Float32Array(count);let offset=0;while(offset<count){const frame=this.frameBuffer[0],take=Math.min(frame.length,count-offset);samples.set(frame.subarray(0,take),offset);offset+=take;if(take===frame.length)this.frameBuffer.shift();else this.frameBuffer[0]=frame.slice(take);}this.frameCount-=count;return samples;}
   private makeChunk(count:number){if(!this.device||!this.lease)return;const samples=this.takeSamples(count),duration=count/this.device.sampleRate*1000;const chunk={samples,startMs:Math.round(this.nextStart),endMs:Math.round(this.nextStart+duration),sequence:this.sequence++};this.nextStart+=duration;
@@ -39,10 +41,22 @@ export class CaptureController {
     this.queue.push(chunk);void this.pump();
   }
   private pump():Promise<void>{if(this.draining)return this.draining;this.draining=this.drain().finally(()=>{this.draining=null;if(this.queue.length&&this.device&&this.lease)void this.pump();});return this.draining;}
-  private async drain(){const generation=this.generation;while(this.queue.length&&this.lease&&this.device&&generation===this.generation){const chunk=this.queue.shift()!,lease=this.lease,sampleRate=this.device.sampleRate;const controller=new AbortController();this.active=controller;try{const bytes=encodeWav(chunk.samples,sampleRate),sha256=await this.environment.digest(bytes);if(generation!==this.generation)return;await this.transport.upload(bytes,{sessionId:lease.sessionId,leaseEpoch:lease.epoch,captureEpoch:lease.captureEpoch,sequence:chunk.sequence,startMs:chunk.startMs,endMs:chunk.endMs,sampleRate,sha256,token:lease.token,browserId:this.browserId},controller.signal);}catch(error){if(generation===this.generation){if(error instanceof Error&&['CaptureConflict','CaptureStorageFull'].includes(error.name)){await this.pause();this.update({status:error.name==='CaptureConflict'?'conflict':'error',message:error.name==='CaptureStorageFull'?'Capture stopped because local storage is full.':'Capture session changed. Start listening to reconnect.'});return;}this.update({status:this.state.status==='closing'?'closing':'delayed',droppedChunks:this.state.droppedChunks+1,message:'An audio chunk could not be uploaded.'});}}finally{if(this.active===controller)this.active=null;}}
+  private async drain(){const generation=this.generation;while(this.queue.length&&this.lease&&this.device&&generation===this.generation){const chunk=this.queue.shift()!,lease=this.lease,sampleRate=this.device.sampleRate;const controller=new AbortController();this.active=controller;try{const bytes=encodeWav(chunk.samples,sampleRate),sha256=await this.environment.digest(bytes);if(generation!==this.generation)return;await this.transport.upload(bytes,{sessionId:lease.sessionId,leaseEpoch:lease.epoch,captureEpoch:lease.captureEpoch,sequence:chunk.sequence,startMs:chunk.startMs,endMs:chunk.endMs,sampleRate,sha256,token:lease.token,browserId:this.browserId},controller.signal);}catch(error){if(generation===this.generation){if(error instanceof Error&&['CaptureConflict','CaptureStorageFull'].includes(error.name)){await this.pause();if(this.pendingPause)return;this.update({status:error.name==='CaptureConflict'?'conflict':'error',message:error.name==='CaptureStorageFull'?'Capture stopped because local storage is full.':'Capture session changed. Start listening to reconnect.'});return;}this.update({status:this.state.status==='closing'?'closing':'delayed',droppedChunks:this.state.droppedChunks+1,message:'An audio chunk could not be uploaded.'});}}finally{if(this.active===controller)this.active=null;}}
   }
   /** Privacy pause never flushes. Cancels permission-pending, stops tracks, erases queued samples. */
-  async pause():Promise<void>{++this.generation;const lease=this.lease;this.environment.cancelTimer(this.timer);this.timer=undefined;this.device?.stop();this.device=null;this.lease=null;this.active?.abort();this.active=null;this.queue=[];this.frameBuffer=[];this.frameCount=0;this.update({status:'paused',level:0,message:null});if(lease)await this.transport.pause(lease,this.browserId).catch(()=>{});}
+  async pause():Promise<void>{
+    if(this.pauseRequest)return this.pauseRequest;
+    const generation=++this.generation,lease=this.lease??this.pendingPause;
+    this.environment.cancelTimer(this.timer);this.timer=undefined;this.device?.stop();this.device=null;this.lease=null;this.active?.abort();this.active=null;this.queue=[];this.frameBuffer=[];this.frameCount=0;
+    this.pendingPause=lease;this.update({status:lease?'pausing':'paused',level:0,message:lease?'Microphone stopped. Confirming the server pause…':null});
+    if(!lease)return;
+    this.pauseRequest=(async()=>{
+      try{await Promise.resolve().then(()=>this.transport.pause(lease,this.browserId));if(this.pendingPause===lease)this.pendingPause=null;if(generation===this.generation&&this.state.status==='pausing')this.update({status:'paused',message:null});}
+      catch{if(generation===this.generation)this.update({status:'pause_failed',message:'Microphone stopped. Server pause was not confirmed; already uploaded speech may still finish. Retry pause.'});}
+      finally{this.pauseRequest=null;}
+    })();
+    return this.pauseRequest;
+  }
   /** Normal offline preserves the bounded tail. A concurrent pause wins via generation and server epoch. */
   async offline(endedOffsetMs:number):Promise<void>{if(!this.device||!this.lease)return;const generation=this.generation;this.update({status:'closing',level:0});await this.device.flush?.();if(generation!==this.generation||!this.device||!this.lease)return;this.device.stop();const remaining=Math.max(0,Math.min(this.frameCount,Math.floor((endedOffsetMs-this.nextStart)*this.device.sampleRate/1000)));if(remaining>=this.device.sampleRate)this.makeChunk(remaining);this.frameBuffer=[];this.frameCount=0;await this.pump();if(generation!==this.generation)return;this.environment.cancelTimer(this.timer);this.device=null;this.lease=null;this.update({status:'idle',message:null});}
   dispose(){return this.pause();}

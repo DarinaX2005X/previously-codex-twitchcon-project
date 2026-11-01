@@ -9,6 +9,7 @@ export type MediaReview={id:string;hash:string;visualReviewed:true;audioReviewed
 
 export type RecordingStatus='armed'|'recording'|'stopped'|'interrupted'|'invalidated'|'failed'|'exported';
 export type RecordingPublication={state:'staged'|'queued'|'published'|'revoked'|'error';replayUrl?:string;revocationPending?:boolean;removalAllowed?:boolean;message?:string};
+export type RecordingStartEligibility={sessionId:string|null;canStartCurrent:boolean;canArmNext:boolean;reason:'ready'|'no_session'|'context_started'|'recording_active'|'session_unavailable'|'retention_limit'};
 export type RecordingSummary={id:string;status:RecordingStatus;revision:number;sessionId:string|null;startedAt:string;stoppedAt:string|null;eventCount:number;providerCount:number;message:string|null;exportId:string|null;publication?:RecordingPublication};
 export type SourceReview={id:string;revision:number;textHash:string};
 export type ReviewReceipt={id:string;recordingId:string;captureRevision:number;digest:string;sourceReviews:SourceReview[];outputHashes:string[];mediaReviews?:MediaReview[];reviewedBy:string;reviewedAt:string;privacyEpoch:number};

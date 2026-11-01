@@ -1,7 +1,7 @@
 {
-  "checkedAt": "2026-11-01T22:12:24.003Z",
+  "checkedAt": "2026-11-01T23:01:43.162Z",
   "scope": "Tracked files plus a fresh public-mode Vite build in a separate temporary directory. Exact comparisons against configured secrets and up to2000 recent nontrivial source strings per top-level private SQLite database. No values or matching lines are emitted. Not a deployed-host or complete historical transcript/audio audit.",
-  "trackedFiles": 285,
+  "trackedFiles": 314,
   "publicBuildSucceeded": true,
   "publicFiles": 30,
   "configuredSecretValues": 4,
@@ -41,25 +41,8 @@
       "ignored": true
     }
   ],
-  "findings": [
-    {
-      "file": "fresh-public/assets/replay-BItPks_f.js",
-      "kind": "local-auth-link"
-    }
-  ],
+  "findings": [],
   "notes": [
-    {
-      "file": "dist-public/assets/FoundationShowcase-D6RV_9UW.js",
-      "kind": "local-or-dev-chunk-in-existing-artifact-review-fresh-build-before-deploy"
-    },
-    {
-      "file": "dist-public/assets/LocalExperience-B9f5yaHs.js",
-      "kind": "local-or-dev-chunk-in-existing-artifact-review-fresh-build-before-deploy"
-    },
-    {
-      "file": "dist-public/assets/LocalExperience-coygwDTa.css",
-      "kind": "local-or-dev-chunk-in-existing-artifact-review-fresh-build-before-deploy"
-    },
     {
       "file": "fresh-public/worklets/pcm-capture.js",
       "kind": "static-worklet-copied-without-microphone-entrypoint"

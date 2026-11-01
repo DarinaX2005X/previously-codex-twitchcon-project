@@ -260,6 +260,10 @@ export class DomainPersistence {
           state.published=snapshot;
         }
         if(effect.type==='clip.request')this.repository.enqueueJob(scope,{id:`clip-intent:${effect.moment.id}:${effect.privacyEpoch}`,sessionId,kind:'twitch.clip.intent',businessKey:`clip-intent:${effect.moment.id}:${effect.privacyEpoch}`,payload:{moment:effect.moment,privacyEpoch:effect.privacyEpoch},dependencyRefs:effect.moment.dependencyRefs});
+        if(scope.runId==='live'&&state.session.status==='live'&&effect.type==='entity.upsert'&&effect.node.kind==='moment'&&effect.node.revision===1&&effect.node.active){
+          const moment=state.moments.find(item=>item.id===effect.node.id);
+          if(moment)this.repository.enqueueJob(scope,{id:`marker-intent:${moment.id}:${state.session.privacyEpoch}`,sessionId,kind:'twitch.marker.intent',businessKey:`marker-intent:${moment.id}:${state.session.privacyEpoch}`,payload:{momentId:moment.id},dependencyRefs:moment.dependencyRefs});
+        }
         if(effect.type==='clip.cleanup')this.repository.enqueueOutbox(scope,{sessionId,kind:'clip_cleanup',businessKey:`clip-cleanup:${effect.clipId}`,payload:{clipId:effect.clipId,manageUrl:effect.manageUrl,cleanupOnly:true},priority:1000});
         if(effect.type==='playback.prepare' || effect.type==='playback.start' || effect.type==='playback.cancel')this.repository.enqueueOutbox(scope,{id:`${effect.type}:${effect.playback.id}`,sessionId,kind:'playback',businessKey:`${effect.type}:${effect.playback.id}`,payload:{action:effect.type.slice('playback.'.length),playback:effect.playback},priority:effect.type==='playback.cancel' ? 1000 : 0,dependencyRefs:effect.playback.plan?.dependencyRefs ?? []});
       }

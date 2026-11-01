@@ -15,11 +15,8 @@ export function reviewOf(record:RecordingRecord):RecordingReview {
   if(record.status!=='stopped'&&record.status!=='exported')blockedReasons.push('Stop the recording before reviewing it.');
   if(!record.initial||!record.events.length)blockedReasons.push('No complete session prefix was captured.');
   if(!record.providers.some(p=>p.operation==='story'&&!p.error))blockedReasons.push('A checked story result has not been recorded.');
-  if(!record.correction)blockedReasons.push('Record one checked owner correction before exporting.');
-  if(!record.milestones.some(m=>m.id==='raid'))blockedReasons.push('An incoming raid has not been recorded.');
-  if(!record.providers.some(p=>p.operation==='translation'&&(p.input as {language?:string}).language==='ru'&&!p.error)||!record.providers.some(p=>p.operation==='translation'&&(p.input as {language?:string}).language==='en'&&!p.error))blockedReasons.push('Both checked English and Russian presentations are required.');
   const sources=record.sources.map(source=>({id:source.id,revision:source.revision,textHash:sourceHash(source),kind:source.kind,startMs:source.startMs,endMs:source.endMs,text:source.text,safe:record.safeSourceHashes.includes(sourceHash(source))}));
-  if(sources.some(s=>s.text!==null&&!s.safe))blockedReasons.push('Some captured source wording lacks an unchanged, completed safety check. Record clean material again; unchecked or redacted input cannot reuse an old provider result.');
+  if(sources.some(s=>s.text!==null&&!s.safe))blockedReasons.push('Some recorded wording was unchecked or later redacted. Export cannot reuse provider results for changed inputs. Start a new capture with the corrected wording.');
   for(const {event}of record.events)if('safety' in event&&!['owner.edit','lore.confirm'].includes(event.type)&&!safetyAllowsPublication(event.safety))blockedReasons.push('A captured text result is still awaiting a completed safety check.');
   for(const p of record.providers){if(p.error)continue;const safety=(p.output as {safety?:unknown})?.safety;if(!safety||!safetyAllowsPublication(safety as Parameters<typeof safetyAllowsPublication>[0]))blockedReasons.push('A recorded provider result is still held.');}
   const outputs=textFields({initial:record.initial,events:record.events,providers:record.providers,correction:record.correction,media:record.selectedMedia});
@@ -27,7 +24,7 @@ export function reviewOf(record:RecordingRecord):RecordingReview {
 }
 /** Structural scope/actor sanitization preserves source text and exact normalized provider inputs. */
 export function exportBundle(record:RecordingRecord):CaptureBundle {
-  if(!record.initial||!record.sessionId||!record.correction||!record.stoppedAt)throw new Error('recording_not_ready');
+  if(!record.initial||!record.sessionId||!record.stoppedAt)throw new Error('recording_not_ready');
   const actors=new Map<string,string>();const clean=(value:unknown,key=''):unknown=>{
     if(key==='channelId')return 'recorded-channel';if(key==='runId')return 'recorded';if(key==='channelContext')return '';
     if(key==='actorId'&&typeof value==='string'){if(!actors.has(value))actors.set(value,`participant-${actors.size+1}`);return actors.get(value);}

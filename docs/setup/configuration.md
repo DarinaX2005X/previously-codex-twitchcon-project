@@ -18,6 +18,7 @@ The server reads `.env` from the project directory; process environment values t
 | `TWITCH_CLIENT_SECRET` | Twitch application's secret, kept server-side. Needed for the live integration. |
 | `TWITCH_CHANNEL_LOGIN` | Broadcaster login without `@` or a URL. OAuth must use this broadcaster. |
 | `TWITCH_REDIRECT_URI` | Must be `https://localhost:4317/auth/twitch/callback`. |
+| `TWITCH_MARKERS_ENABLED` | Optional `true` or `false`, default `false`. Enables attempts to add VOD markers for saved moments. Restart and reconnect Twitch after enabling to grant `channel:manage:broadcast`. Unavailable markers leave the saved moment and its timecode intact. |
 | `OPENAI_API_KEY` | Server-side API key. Missing or disabled access leaves new provider-dependent work held. Keyless replay does not use it. |
 | `OPENAI_PAID_CALLS_ENABLED` | Explicit `true` or `false`, default `false`. A key alone cannot enable dispatch. Replay never enables live providers. |
 | `RECAP_LANGUAGE` | Initial recap language, `en` or `ru`. The owner can change the persisted setting in the dock. It does not set the source recognition language. |
@@ -41,6 +42,8 @@ Every paid attempt reserves budget before dispatch. Restarting does not reset re
 
 `DATA_DIR/previously.sqlite` contains sessions, sources, derived history, checkpoints, settings, encrypted tokens, durable work, publication state, and budget records. SQLite migrations run at startup. The live token vault needs the original `TOKEN_ENCRYPTION_KEY`; changing it does not decrypt an existing authorization.
 
-Other private subdirectories hold temporary audio, validated media, the local replay registry, and reviewed export work. None belongs in the public build. The authored replay registry is separate from live session history, and a revoked local export is not silently restored on restart.
+Other private subdirectories hold temporary audio, validated media, the local replay registry, and reviewed export work. Private recordings live in `DATA_DIR/exports/private-recordings`; their reviewed packages live in `DATA_DIR/exports/reviewed-recordings`. No path belongs in the public build or a static download directory. The authored replay registry is separate from live session history, and a revoked local export is not silently restored on restart.
+
+Recording is explicitly armed in the owner dock, not through an environment flag. At most twenty private recordings are retained. Remove unwanted unexported captures through the dock; exported ones must first be withdrawn, with cloud acknowledgement when publication was queued. Active recordings are marked interrupted after restart and cannot be exported. The [recording guide](../replay/README.md) explains review and ZIP limits.
 
 Back up the database and its matching encryption configuration while the process is stopped. Treat that backup as private stream material. Keep it out of Git and public cloud asset directories. A backup restored from before a Forget action may contain material you intended to remove; do not publish or export it without reconciling the current privacy state.

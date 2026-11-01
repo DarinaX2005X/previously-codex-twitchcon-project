@@ -18,13 +18,18 @@ function sourceExcerpt(text:string){
 export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
   const {client,view,error,origin,resolveMedia}=useRecording(manifestUrl);
   const [dock,setDock]=useState(false),[evidence,setEvidence]=useState<Source[]|null>(null),[actionError,setActionError]=useState<string|null>(null),[preview,setPreview]=useState<RecapPlan|null>(null),[busy,setBusy]=useState(false);
+  const dockRegion=useRef<HTMLElement|null>(null),dockTrigger=useRef<HTMLButtonElement|null>(null);
+  const closeDock=()=>{setDock(false);dockTrigger.current?.focus({preventScroll:true});dockTrigger.current?.scrollIntoView({block:'nearest',behavior:'instant'});};
+  useEffect(()=>{if(dock){dockRegion.current?.focus({preventScroll:true});dockRegion.current?.scrollIntoView({block:'start',behavior:'instant'});}},[dock]);
   const [sceneMediaUnavailable,setSceneMediaUnavailable]=useState(false);
   const [reducedMotion,setReducedMotion]=useState(()=>typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches);
   useEffect(()=>{const preference=matchMedia('(prefers-reduced-motion: reduce)'),update=()=>setReducedMotion(preference.matches);preference.addEventListener('change',update);return()=>preference.removeEventListener('change',update);},[]);
   const s=view?.snapshot,t=view?.transport,published=s?.published,chapter=published?.chapters.at(-1),active=s?.playback.find(p=>p.status==='playing'&&p.plan);
   const publishMilestone=t?.milestones.find(m=>m.id==='published');
   const raidMilestone=t?.milestones.find(m=>m.id==='raid');
-  const correctionId=t?.correction.targetId;
+  const availableLanguages=t?.availableLanguages??[];
+  const correction=t?.correction;
+  const correctionId=correction?.targetId;
   const correctionChapter=correctionId?published?.chapters.find(c=>c.id===correctionId):published?.chapters.length===1?published.chapters[0]:undefined;
   const owner=useMemo(()=>client?{
     listSources:client.listSources.bind(client),
@@ -61,7 +66,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
     </nav>
     <header className="replay-heading">
       <h1>Recorded stream</h1>
-      <p>{origin==='own-stream'?'Play the stream and try a correction. Changes stay in this tab.':'Explore an authored text example with no recorded video. Changes stay in this tab.'}</p>
+      <p>{origin==='own-stream'?'Play the recorded stream context. Changes stay in this tab.':'Explore an authored text example with no recorded video. Changes stay in this tab.'}</p>
     </header>
     {error?<section className="replay-unavailable" role="alert"><h2>Recording unavailable</h2><p>{error}</p><Button onClick={()=>location.reload()}>Reload recording</Button></section>:!client||!view?<section className="replay-unavailable" role="status">Loading the recording…</section>:<>
       <div className="replay-player">
@@ -102,8 +107,8 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
           <div className="replay-progress" role="progressbar" aria-label="Recording position" aria-valuemin={0} aria-valuemax={t!.durationMs} aria-valuenow={Math.round(t!.atMs)}><span style={{width:`${t!.durationMs?t!.atMs/t!.durationMs*100:0}%`}}/></div>
           <div className="replay-secondary-controls">
             <div className="replay-control-group"><span>Playback speed</span><SegmentedControl label="Recording speed" disabled={busy} value={String(t!.speed)} options={[{value:'1',label:'1×'},{value:'2',label:'2×'},{value:'4',label:'4×'}]} onChange={speed=>void run(()=>client.controlReplay({action:t!.playing?'play':'pause',speed:Number(speed) as 1|2|4}))}/>{t!.speed!==1&&<span className="replay-speed-note">Accelerated recording</span>}</div>
-            <div className="replay-control-group"><span>Recap language</span><SegmentedControl label="Recap language" disabled={busy} value={s!.settings.recapLanguage} options={[{value:'en',label:'English'},{value:'ru',label:'Русский'}]} onChange={language=>void run(()=>client.setSettings({baseRevision:s!.settings.revision,recapLanguage:language as 'en'|'ru'}))}/></div>
-            <QuietButton aria-expanded={dock} aria-controls="replay-demo-dock" onClick={()=>setDock(!dock)}>{dock?'Close demo dock':'Open demo dock'}</QuietButton>
+            {availableLanguages.length>0&&<div className="replay-control-group"><span>Recap language</span>{availableLanguages.length>1?<SegmentedControl label="Recap language" disabled={busy} value={s!.settings.recapLanguage} options={availableLanguages.map(language=>({value:language,label:language==='en'?'English':'Русский'}))} onChange={language=>void run(()=>client.setSettings({baseRevision:s!.settings.revision,recapLanguage:language as 'en'|'ru'}))}/>:<span>{availableLanguages[0]==='en'?'English':'Русский'}</span>}</div>}
+            <QuietButton aria-expanded={dock} aria-controls="replay-demo-dock" onClick={event=>{dockTrigger.current=event.currentTarget;if(dock)closeDock();else setDock(true);}}>{dock?'Close demo dock':'Open demo dock'}</QuietButton>
           </div>
         </section>
       </div>
@@ -115,15 +120,15 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
           {evidence&&<div className="replay-source-drawer" id="replay-source-drawer">{evidence.map(source=><figure key={source.id}><figcaption>{time(source.startMs)} {source.kind==='owner_statement'?'Owner correction':source.kind==='speech'?'Speech':'Source'}</figcaption><blockquote>{source.text}</blockquote></figure>)}</div>}
         </section>
         <section className="replay-correction" aria-labelledby="replay-correction-title">
-          <h2 id="replay-correction-title">Change the recap</h2>
-          <p className="replay-field-label">Suggested correction</p>
-          <blockquote>{t!.correction.summary}</blockquote>
-          <div className="replay-transport-row"><Button disabled={!correctionChapter||busy||t!.correctionApplied} onClick={()=>void run(()=>client.editChapter(correctionChapter!.id,{title:t!.correction.title,summary:t!.correction.summary,baseRevision:correctionChapter!.revision}))}>{t!.correctionApplied?'Correction applied':'Apply correction'}</Button><QuietButton disabled={!chapter||busy} onClick={()=>void run(async()=>setPreview(await client.previewRecap(s!.session!.id)))}>Preview next recap</QuietButton></div>
-          {!correctionChapter&&<p className="replay-help">{!chapter?'Play the recording to publish a chapter first.':'Open the demo dock to choose a chapter to edit.'}</p>}
-          <p className="replay-help">New wording stays held unless this recording includes its safety check.</p>
+          <h2 id="replay-correction-title">{correction?'Change the recap':'Preview the recap'}</h2>
+          {correction&&<><p className="replay-field-label">Suggested correction</p><blockquote>{correction.summary}</blockquote></>}
+          <div className="replay-transport-row">{correction&&<Button disabled={!correctionChapter||busy||t!.correctionApplied} onClick={()=>void run(()=>client.editChapter(correctionChapter!.id,{title:correction.title,summary:correction.summary,baseRevision:correctionChapter!.revision}))}>{t!.correctionApplied?'Correction applied':'Apply correction'}</Button>}<QuietButton disabled={!chapter||busy} onClick={()=>void run(async()=>setPreview(await client.previewRecap(s!.session!.id)))}>Preview next recap</QuietButton></div>
+          {!chapter&&<p className="replay-help">Play the recording to publish a chapter first.</p>}
+          {correction&&chapter&&!correctionChapter&&<p className="replay-help">Open the demo dock to choose a chapter to edit.</p>}
+          {correction&&<p className="replay-help">New wording stays held unless this recording includes its safety check.</p>}
         </section>
       </div>
-      {dock&&<section className="replay-dock" id="replay-demo-dock" aria-label="Demo dock"><DockPage client={client} owner={owner} clockMode="snapshot" recording label="Recorded stream" renderPreview={(plan,close)=><div><ScenePreview plan={plan} playing soundEnabled={false} resolveMedia={resolveMedia}/><QuietButton onClick={close}>Close preview</QuietButton></div>}/></section>}
+      {dock&&<section ref={dockRegion} tabIndex={-1} className="replay-dock" id="replay-demo-dock" aria-label="Demo dock"><div style={{padding:'16px 20px 0'}}><QuietButton onClick={closeDock}>Close demo dock</QuietButton></div><DockPage client={client} owner={owner} clockMode="snapshot" recording availableLanguages={availableLanguages} label="Recorded stream" renderPreview={(plan,close)=><div><ScenePreview plan={plan} playing soundEnabled={false} resolveMedia={resolveMedia}/><QuietButton onClick={close}>Close preview</QuietButton></div>}/></section>}
       {preview&&<section className="replay-preview" aria-label="Local scene preview"><div className="replay-transport-row"><h2>Next recap preview</h2><QuietButton onClick={()=>setPreview(null)}>Close preview</QuietButton></div><ScenePreview plan={preview} playing soundEnabled={false} resolveMedia={resolveMedia}/></section>}
     </>}
   </main>;

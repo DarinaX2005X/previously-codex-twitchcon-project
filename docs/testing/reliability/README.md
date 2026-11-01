@@ -78,3 +78,15 @@ Generation retrieval additionally selects at most four exactly mentioned, verifi
 
 After the generation-selection checks were added, the storage-history and reliability suites passed 14 tests across three files. The story/runtime and UI owners integrate these methods into historical projection and editing. Storage tests do not themselves verify historical UI navigation, language rendering or editing. Those integration results belong to their owners and must be checked before claiming the full R24 behavior.
 
+
+## Actual-engine full profile
+
+`engine-full-profile.mts` runs the actual `StoryEngine.ingestBatch`, `ingest` and `executeStory` paths against file-backed SQLite. The full profile was launched at 2026-11-01 22:46:16 UTC; its final result is pending. It processes 20 chats per virtual second, a 200/s burst during virtual seconds 7200–7259, and the final 60 seconds of each virtual hour without chat: 577,200 distinct chat messages over 28,800 virtual seconds. Metadata and synthetic pre-reviewed speech arrive every five virtual minutes. It also includes duplicate-delivery probes, ten-minute message deletions, virtual delayed/failing deterministic story jobs, and a bounded local publication sink.
+
+The 620-second harness calibration (`engine-full-calibration.json`) completed 12,400 distinct chats in 190.128 wall seconds with 3 duplicate probes, 1 deletion, 7 synthetic provider calls (5 failed/held, 2 done) and 2 chapters. SQLite quick-check, receipt/source counts and 12,406-row paginated retrieval passed. It retained at most 500 sources, one pending story job, zero false single-actor moments, and stayed within the packet cap.
+
+```powershell
+node --expose-gc --import tsx scripts/stress/engine-full-profile.mts 28800 docs/testing/reliability/engine-full-profile.json
+```
+
+This profile uses accelerated timestamps and already-queued batches of at most 20. It is not an eight-hour wall-clock soak, socket queue/latency test, real provider-quality test or cloud-publication test. Chat stays pending safety; supplied speech is synthetic pre-reviewed text, and metadata/story checks use deterministic local stubs. The sink acknowledges local outbox work without external publication. The normal file-backed repository durability configuration is unchanged. Process priority is BelowNormal; other workers and the separate reducer stress share the machine. Source hashes, hardware, exact scope, progress, retained heap/RSS and database footprint are recorded. The SQLite file is retained under the path in the result for diagnosis; no user data or credentials are used.

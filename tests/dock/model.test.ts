@@ -61,13 +61,18 @@ describe('dock async ownership and privacy', () => {
     const order: string[] = [];
     const server = deferred<ReturnType<RecapClient['setSettings']> extends Promise<infer T> ? T : never>();
     const client = { setSettings: vi.fn(() => { order.push('server'); return server.promise; }) } as unknown as RecapClient;
-    const capture = { pause: vi.fn(() => { order.push('tracks stopped'); return Promise.resolve(); }) } as unknown as DockCapturePort;
+    const capture = { pause: vi.fn(() => { order.push('tracks stopped'); return Promise.resolve(); }),getSnapshot:()=>({status:'paused'}) } as unknown as DockCapturePort;
     const action = pauseListening(client, snapshot(), capture);
     expect(order).toEqual(['tracks stopped', 'server']);
     server.resolve(defaultSettings); await action;
     const failing = { setSettings: vi.fn().mockRejectedValue(new Error('disk full')) } as unknown as RecapClient;
     await expect(pauseListening(failing, snapshot(), capture)).rejects.toThrow('disk full');
     expect(capture.pause).toHaveBeenCalledTimes(2);
+  });
+  it('does not report pause success when the capture endpoint was not confirmed',async()=>{
+    const client={setSettings:vi.fn().mockResolvedValue(defaultSettings)} as unknown as RecapClient;
+    const capture={pause:vi.fn().mockResolvedValue(undefined),getSnapshot:()=>({status:'pause_failed'})} as unknown as DockCapturePort;
+    await expect(pauseListening(client,snapshot(),capture)).rejects.toThrow('server pause was not confirmed');
   });
   it('does not mistake the cloud publish sequence for a privacy acknowledgment', () => {
     const receipt = { revision: 2, privacyEpoch: 2, hiddenEntityIds: ['chapter'], rebuildStatus: 'queued' as const, publicSync: 'pending' as const, externalClipActions: [] };

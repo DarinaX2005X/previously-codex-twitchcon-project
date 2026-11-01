@@ -1,18 +1,18 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { Chapter, InvalidationReceipt, Lore, OwnerSnapshot, PrivacyTarget, PublicChapter, RecapClient, RecapPlan } from '../../shared/contracts';
-import { ActionGroup, Brand, Button, ChapterRow, Dialog, DockLayout, Field, InlineNotice, LanguageControl, QuietButton, SegmentedControl, Sheet, SourceDisclosure, SourceStatus, Textarea, Timecode, formatTimecode } from '../../ui';
+import { Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { Chapter, InvalidationReceipt, Lore, OwnerSnapshot, PrivacyTarget, PublicChapter, RecapClient, RecapLanguage, RecapPlan } from '../../shared/contracts';
+import { ActionGroup, Brand, Button, ChapterRow, Dialog, DockLayout, Field, IconButton, InlineNotice, LanguageControl, QuietButton, SegmentedControl, Sheet, SourceDisclosure, SourceStatus, Textarea, Timecode, formatTimecode } from '../../ui';
 import { SettingsSheet } from '../settings/SettingsSheet';
 import { dockClock, DockStore, errorCode, forgetWindow, hotkeyMatches, pauseListening, privacyAcknowledged, publicationLabel, saveChapterDraft, type DockClockMode } from './model';
-import type { DockCapturePort, DockOwnerPort, DockPreviewRenderer } from './ports';
+import type { DockCapturePort, DockMarkerSnapshot, DockOwnerPort, DockPreviewRenderer } from './ports';
 import { SourceSheet, type SourceContext } from './SourceSheet';
 import { LoreRow } from './LoreRow';
 import { DockHistoryStore, historyKey, mergeHistory, type HistoryContext } from './history';
-import type { RecordingPort } from './RecordingPanel';
+import type { RecordingPanelStatus, RecordingPort } from './RecordingPanel';
 import './dock.css';
 
 const RecordingPanel = import.meta.env.MODE === 'public' ? null : lazy(() => import('./RecordingPanel').then(module => ({ default: module.RecordingPanel })));
 
-export interface DockPageProps { client: RecapClient; capture?: DockCapturePort; owner?: DockOwnerPort; renderPreview?: DockPreviewRenderer; recordingPort?: RecordingPort; label?: string; clockMode?: DockClockMode; recording?: boolean; }
+export interface DockPageProps { client: RecapClient; capture?: DockCapturePort; owner?: DockOwnerPort; renderPreview?: DockPreviewRenderer; recordingPort?: RecordingPort; label?: string; clockMode?: DockClockMode; recording?: boolean; availableLanguages?: RecapLanguage[]; }
 type Edit = { id: string; title: string; summary: string; baseRevision: number; error: string; conflict: boolean };
 const idleCapture = { status: 'idle' as const, level: 0, message: null, droppedChunks: 0 };
 const idleSubscribe = () => () => {};
@@ -21,7 +21,35 @@ const getIdleCapture = () => idleCapture;
 function statusView(state: OwnerSnapshot['status']['mic']['state']): 'ready' | 'pending' | 'paused' | 'unavailable' | 'error' {
   return state === 'ready' || state === 'listening' ? 'ready' : state === 'paused' ? 'paused' : state === 'error' ? 'error' : state === 'connecting' || state === 'delayed' ? 'pending' : 'unavailable';
 }
-export function DockPage({ client, capture: providedCapture, owner, renderPreview, recordingPort, label, clockMode = 'server', recording = false }: DockPageProps) {
+export function dockMarkerLabel(marker: DockMarkerSnapshot['items'][number]): string {
+  if (marker.status === 'sent') return marker.positionSeconds === undefined ? 'Twitch marker saved' : `Twitch marker saved at ${formatTimecode(marker.positionSeconds * 1000)}`;
+  if (marker.status === 'queued') return 'Twitch marker pending';
+  if (marker.status === 'unknown_outcome') return 'Twitch marker not confirmed. No automatic retry.';
+  return 'Twitch marker unavailable. Timecode saved.';
+}
+/** This polls only owner result metadata; it never creates a Twitch side effect. */
+export function pollDockMarkers(read: NonNullable<DockOwnerPort['listMarkers']>, sessionId: string, onValue: (value: DockMarkerSnapshot) => void, onError: () => void, visible: () => boolean): () => void {
+  let closed = false, enabled: boolean | null = null, failures = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined, active: AbortController | undefined;
+  async function poll() {
+    if (closed) return;
+    if (!visible()) { timer = setTimeout(() => void poll(), 2000); return; }
+    active = new AbortController();
+    try {
+      const value = await read(sessionId, active.signal);
+      if (closed) return;
+      if (value.sessionId !== sessionId) throw new Error('Marker session changed');
+      enabled = value.enabled; failures = 0; onValue(value);
+    } catch { if (!closed) { ++failures; onError(); } }
+    finally {
+      active = undefined;
+      if (!closed && enabled !== false) timer = setTimeout(() => void poll(), Math.min(10000, 2000 * 2 ** failures));
+    }
+  }
+  void poll();
+  return () => { closed = true; clearTimeout(timer); active?.abort(); };
+}
+export function DockPage({ client, capture: providedCapture, owner, renderPreview, recordingPort, label, clockMode = 'server', recording = false, availableLanguages }: DockPageProps) {
   const capture = import.meta.env.MODE === 'public' || recording ? undefined : providedCapture;
   const store = useMemo(() => new DockStore(client), [client]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
@@ -31,11 +59,22 @@ export function DockPage({ client, capture: providedCapture, owner, renderPrevie
   const historyState = useSyncExternalStore(historyStore.subscribe, historyStore.getSnapshot, historyStore.getSnapshot);
   const [filter, setFilter] = useState('published'), [limit, setLimit] = useState(20);
   const [loreLimit, setLoreLimit] = useState(20);
+  const [markerResult, setMarkerResult] = useState<{ key: string; value: DockMarkerSnapshot; error: boolean } | null>(null);
+  const markerKey = `${snapshot?.session?.id ?? ''}:${state.sourceEpoch}`;
+  const markerMomentIds = snapshot?.moments.slice(-10).map(item => item.id).join('|') ?? '';
+  const hasMarkerUI = import.meta.env.MODE !== 'public' && !recording && Boolean(owner?.listMarkers) && Boolean(snapshot?.session) && Boolean(snapshot?.moments.length);
+  const markers = hasMarkerUI && markerResult?.key === markerKey ? markerResult : null;
   const historyContext: HistoryContext | null = snapshot?.session ? { sessionId: snapshot.session.id, privacyEpoch: snapshot.session.privacyEpoch, language: snapshot.settings.recapLanguage, filter: filter === 'drafts' ? 'draft' : filter === 'held' ? 'held' : 'published', resetKey: `${state.sourceEpoch}:${snapshot.published?.language ?? ''}` } : null;
   const contextKey = historyContext ? historyKey(historyContext) : '';
   const history = historyState.key === contextKey ? historyState : null;
   const durableHistory = Boolean(owner?.listHistory && historyContext && !(filter === 'published' && snapshot?.published && snapshot.published.language !== snapshot.settings.recapLanguage));
   const [edit, setEdit] = useState<Edit | null>(null), [settings, setSettings] = useState(false);
+  const [recordingsOpen, setRecordingsOpen] = useState(false);
+  const [recordingStatus, setRecordingStatus] = useState<{ epoch: number; value: RecordingPanelStatus } | null>(null);
+  const recordingsId = useId();
+  const hasRecordingUI = import.meta.env.MODE !== 'public' && !recording && Boolean(recordingPort) && Boolean(RecordingPanel);
+  const receiveRecordingStatus = useCallback((value: RecordingPanelStatus) => { setRecordingStatus({ epoch: state.sourceEpoch, value }); }, [state.sourceEpoch]);
+  const activeRecording = hasRecordingUI && recordingStatus?.epoch === state.sourceEpoch && recordingStatus.value.activeId ? recordingStatus.value : null;
   const [source, setSource] = useState<SourceContext | null>(null), [forget, setForget] = useState<PrivacyTarget | null>(null);
   const [preview, setPreview] = useState<RecapPlan | null>(null), [previewOpen, setPreviewOpen] = useState(false);
   const [notice, setNotice] = useState(''), [error, setError] = useState('');
@@ -57,6 +96,13 @@ export function DockPage({ client, capture: providedCapture, owner, renderPrevie
   }, [state.sourceEpoch]);
   useEffect(() => { setLimit(20); }, [filter, snapshot?.session?.id]);
   useEffect(() => { historyStore.reset(historyContext ?? undefined); setLoreLimit(20); return () => historyStore.reset(); }, [historyStore, contextKey]);
+  useEffect(() => {
+    if (!hasMarkerUI || !owner?.listMarkers || !snapshot?.session) return;
+    return pollDockMarkers((sessionId, signal) => owner.listMarkers!(sessionId, signal), snapshot.session.id,
+      value => setMarkerResult({ key: markerKey, value, error: false }),
+      () => setMarkerResult(current => current?.key === markerKey ? { ...current, error: true } : current),
+      () => document.visibilityState === 'visible');
+  }, [hasMarkerUI, owner, markerKey, markerMomentIds]);
 
   async function run(key: string, action: () => Promise<void>) {
     if (busy.current.has(key)) return;
@@ -119,23 +165,24 @@ export function DockPage({ client, capture: providedCapture, owner, renderPrevie
   const lore = (durableHistory && history?.loreLoaded ? mergeHistory<Lore>(history.lore, localLore.slice(0, 20)) : localLore.slice(0, loreLimit)).sort((a, b) => b.firstSeenMs - a.firstSeenMs || b.id.localeCompare(a.id));
   const paused = snapshot?.settings.listeningPaused || captureState.status === 'paused';
   const captured = captureState.status === 'listening' || captureState.status === 'delayed';
-  const captureEngaged = captured || captureState.status === 'permission_pending';
+  const captureEngaged = captured || ['permission_pending','pausing','pause_failed'].includes(captureState.status);
   const micLabel = recording ? 'Recorded speech' : capture ? captureState.status === 'permission_pending' ? 'Microphone permission pending' : captured ? 'Microphone listening' : captureState.status === 'no_device' ? 'No microphone found' : captureState.status === 'denied' ? 'Microphone access blocked' : 'Microphone off' : snapshot?.status.mic.message ?? 'Microphone is not enabled in this dock';
   const micObservation = recording ? paused ? 'Paused in this recording' : 'No microphone is used' : captureState.message ?? (paused ? 'New speech is not being added' : snapshot?.status.mic.lastObservedAt ? `Observed ${new Date(snapshot.status.mic.lastObservedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Start listening to include speech');
   const chatObservation = recording ? paused ? 'Paused in this recording' : 'From this recording' : snapshot?.status.chat.lastObservedAt ? `Observed ${new Date(snapshot.status.chat.lastObservedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'No chat observation yet';
   const chatLabel = recording ? 'Recorded chat' : { unconfigured: 'Chat not configured', disconnected: 'Chat disconnected', connecting: 'Chat reconnecting', ready: 'Chat connected', listening: 'Chat receiving', paused: 'Chat paused', delayed: 'Chat delayed', error: 'Chat disconnected' }[snapshot?.status.chat.state ?? 'unconfigured'];
 
   const header = <>
-    <div className="dock-identity"><Brand variant="small-mark" tone="dark" /><div><strong>{snapshot?.channel.displayName ?? 'Your channel'}</strong><span>{label ?? (snapshot?.session ? snapshot.session.status === 'live' ? 'Streamer dock' : 'Stream ended' : 'No live session')}</span></div><QuietButton disabled={!snapshot} onClick={() => setSettings(true)}>Settings</QuietButton></div>
+    <div className="dock-identity"><Brand variant="small-mark" tone="dark" /><div><strong>{snapshot?.channel.displayName ?? 'Your channel'}</strong><span>{label ?? (snapshot?.session ? snapshot.session.status === 'live' ? 'Streamer dock' : 'Stream ended' : 'No live session')}</span></div>{hasRecordingUI && <QuietButton aria-expanded={recordingsOpen} aria-controls={recordingsId} onClick={() => setRecordingsOpen(true)}>Recordings</QuietButton>}{hasRecordingUI ? <IconButton label="Scene settings" disabled={!snapshot} onClick={() => setSettings(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 3-.7 2.1-1.6.9-2.2-.4-2 3.4 1.5 1.7v1.9L3.5 14l2 3.4 2.2-.4 1.6.9.7 2.1h4l.7-2.1 1.6-.9 2.2.4 2-3.4-1.5-1.7v-1.9l1.5-1.7-2-3.4-2.2.4-1.6-.9L14 3Z"/><circle cx="12" cy="11.5" r="3"/></svg></IconButton> : <QuietButton disabled={!snapshot} onClick={() => setSettings(true)}>Settings</QuietButton>}</div>
     {snapshot?.session?.title && <p className="dock-stream-title">{snapshot.session.title}</p>}
-    <div className="dock-statuses"><SourceStatus label={micLabel} state={recording ? paused ? 'paused' : 'ready' : captureState.status === 'denied' || captureState.status === 'error' ? 'error' : captured ? 'ready' : 'paused'} observation={micObservation} /><SourceStatus label={chatLabel} state={recording ? paused ? 'paused' : 'ready' : statusView(snapshot?.status.chat.state ?? 'unconfigured')} observation={chatObservation} /></div>
+    <div className="dock-statuses"><SourceStatus label={micLabel} state={recording ? paused ? 'paused' : 'ready' : ['denied','error','pause_failed'].includes(captureState.status) ? 'error' : captured ? 'ready' : 'paused'} observation={micObservation} /><SourceStatus label={chatLabel} state={recording ? paused ? 'paused' : 'ready' : statusView(snapshot?.status.chat.state ?? 'unconfigured')} observation={chatObservation} /></div>
     <ActionGroup className="dock-scene-actions"><Button pending={pending.has('show')} disabled={!snapshot?.session || snapshot.status.overlay.state !== 'ready'} title={snapshot?.settings.hotkey ? `Show recap (${snapshot.settings.hotkey} while this dock has focus)` : undefined} onClick={() => void show()}>Show recap</Button><QuietButton pending={pending.has('preview')} disabled={!snapshot?.session} onClick={() => void showPreview()}>Preview</QuietButton><QuietButton pending={pending.has('moment')} disabled={!snapshot?.session} onClick={() => void run('moment', async () => { const moment = await client.saveMoment({ sessionId: snapshot!.session!.id }); setNotice(`Moment saved at ${formatTimecode(moment.startMs)}. ${moment.mediaState === 'pending' ? 'Clip pending.' : moment.mediaState === 'ready' ? 'Clip ready.' : 'Clip unavailable. The time is saved.'}`); await store.refresh(); })}>Save moment</QuietButton></ActionGroup>
     <div className="dock-privacy"><QuietButton pending={pending.has(captureEngaged || !snapshot?.settings.listeningPaused ? 'pause' : 'listen')} disabled={!snapshot} onClick={() => snapshot && void run(captureEngaged || !snapshot.settings.listeningPaused ? 'pause' : 'listen', async () => {
       if (captureEngaged || !snapshot.settings.listeningPaused) { await pauseListening(client, snapshot, capture); setNotice('Listening paused. New speech and chat are not being added.'); }
       else { if (capture && snapshot.session) { await capture.start(snapshot.session.id); if (!['listening', 'delayed'].includes(capture.getSnapshot().status)) return; } else if (capture) throw new Error('No live session'); await client.setSettings({ listeningPaused: false, baseRevision: snapshot.settings.revision }); setNotice(capture ? 'Microphone listening. New speech and chat can be added.' : 'Listening resumed in this recording.'); }
       await store.refresh();
-    })}>{captureEngaged || !snapshot?.settings.listeningPaused ? 'Pause listening' : 'Resume listening'}</QuietButton><QuietButton tone="danger" disabled={!snapshot?.session} onClick={() => snapshot && setForget(forgetWindow(snapshot, elapsed))}>Forget last 2 min</QuietButton></div>
+    })}>{captureState.status==='pause_failed' ? 'Retry pause' : captureEngaged || !snapshot?.settings.listeningPaused ? 'Pause listening' : 'Resume listening'}</QuietButton><QuietButton tone="danger" disabled={!snapshot?.session} onClick={() => snapshot && setForget(forgetWindow(snapshot, elapsed))}>Forget last 2 min</QuietButton></div>
     {active.map(item => <div className="dock-queue" key={item.id}><span>{item.status === 'queued' ? 'Recap queued' : item.status === 'preparing' ? 'Preparing broadcast recap' : 'Recap playing'}</span><QuietButton pending={pending.has(`cancel:${item.id}`)} onClick={() => void run(`cancel:${item.id}`, async () => { await client.cancelRecap(item.id); setNotice('Recap cancelled.'); refresh(); })}>Cancel recap</QuietButton></div>)}
+    {activeRecording && <div className="dock-recording-status" role="status"><span>{activeRecording.status === 'armed' ? 'Recording armed for the next session' : 'Recording privately'}</span><QuietButton pending={activeRecording.pending} onClick={activeRecording.stop}>Stop recording</QuietButton></div>}
   </>;
   return <main className="dock-page" onKeyDown={focusHotkey}>
     <DockLayout header={header} aria-label={label ?? 'Streamer dock'}>
@@ -155,7 +202,7 @@ export function DockPage({ client, capture: providedCapture, owner, renderPrevie
         {!snapshot.session && <InlineNotice>There is no live stream. Start your stream on Twitch, then refresh this dock. Your saved settings remain available.</InlineNotice>}
         {snapshot.session && snapshot.session.status !== 'live' && <InlineNotice>{snapshot.session.status === 'closing' ? 'Finishing the recap. Keep this process running.' : snapshot.session.finalSnapshotAckAt ? 'Episode saved online.' : 'Public update pending. Keep this process running until the final snapshot is acknowledged.'}</InlineNotice>}
         {!recording && snapshot.sync.state === 'unconfigured' && <InlineNotice tone="warning">Cloud sync is not configured. Your recap is saved locally. <a href="/setup">Set up public sharing</a>.</InlineNotice>}
-        <LanguageControl value={snapshot.settings.recapLanguage} disabled={pending.has('language')} onChange={language => void run('language', async () => { await client.setSettings({ recapLanguage: language, baseRevision: snapshot.settings.revision }); await store.refresh(); })} />
+        {availableLanguages === undefined || availableLanguages.length > 1 ? <LanguageControl showHint={!recording} value={snapshot.settings.recapLanguage} disabled={pending.has('language')} onChange={language => void run('language', async () => { if (availableLanguages && !availableLanguages.includes(language)) return; await client.setSettings({ recapLanguage: language, baseRevision: snapshot.settings.revision }); await store.refresh(); })} /> : availableLanguages.length === 1 ? <p className="dock-language-label">Recap language: {availableLanguages[0] === 'ru' ? 'Русский' : 'English'}</p> : null}
         {published && published.language !== snapshot.settings.recapLanguage && <InlineNotice>Preparing {snapshot.settings.recapLanguage === 'ru' ? 'Russian' : 'English'} recap. The complete {published.language === 'en' ? 'English' : 'Russian'} version stays published until the new version is ready.</InlineNotice>}
         <section className="dock-current" aria-labelledby="dock-current-title"><h2 id="dock-current-title">Currently published</h2>{published?.current ? <><p className="dock-current-main">{published.current.now ?? published.current.goal ?? published.current.change}</p>{published.current.goal && published.current.now && <p>{published.current.goal}</p>}{published.current.change && <p className="pv-secondary">{published.current.change}</p>}</> : <p className="pv-secondary">Your recap will appear after the stream has context to share.</p>}</section>
         <SegmentedControl label="Chapter collection" value={filter} onChange={setFilter} options={[{ value: 'published', label: 'Published' }, { value: 'drafts', label: snapshot.drafts.length ? `Drafts (${snapshot.drafts.length})` : 'Drafts' }, { value: 'held', label: snapshot.held.length ? `Held (${snapshot.held.length})` : 'Held' }]} />
@@ -166,10 +213,10 @@ export function DockPage({ client, capture: providedCapture, owner, renderPrevie
           {history?.error && <InlineNotice tone="danger">{history.error}</InlineNotice>}
         </section>
         {filter === 'held' && <>{lore.map(item => <LoreRow key={`${item.id}:${state.sourceEpoch}`} lore={item} owner={owner} onSaved={result => { if (result && 'status' in result && historyContext) historyStore.apply(result, historyContext); else if (result && 'privacyEpoch' in result) store.invalidate(result.hiddenEntityIds); refresh(); }} onSource={() => snapshot.session && setSource({ title: item.term, sessionId: snapshot.session.id, fromMs: Math.max(0, item.firstSeenMs - 30_000), toMs: Math.min(172_800_000, item.firstSeenMs + 30_000) })} />)}{durableHistory && historyContext ? (!history?.loreLoaded || history.loreCursor) && <QuietButton pending={history?.loading === 'lore'} disabled={Boolean(history?.loading)} onClick={() => void historyStore.load('lore', historyContext)}>{history?.loreLoaded || localLore.length > 20 ? 'Earlier lore' : 'Browse lore history'}</QuietButton> : localLore.length > loreLimit && <QuietButton onClick={() => setLoreLimit(value => value + 20)}>Show more lore</QuietButton>}</>}
-        {snapshot.moments.length > 0 && <section className="dock-moments"><h2>Saved moments</h2>{snapshot.moments.slice(-10).reverse().map(moment => <div key={moment.id}><Timecode milliseconds={moment.startMs} /><span>{moment.label}</span><small>{moment.mediaState === 'ready' ? 'Clip ready' : moment.mediaState === 'pending' ? 'Clip pending' : 'Clip unavailable'}</small></div>)}</section>}
+        {snapshot.moments.length > 0 && <section className="dock-moments"><h2>Saved moments</h2>{snapshot.moments.slice(-10).reverse().map(moment => { const marker = markers?.value.enabled ? markers.value.items.find(item => item.momentId === moment.id) : null; return <div key={moment.id}><Timecode milliseconds={moment.startMs} /><span>{moment.label}</span><small>{moment.mediaState === 'ready' ? 'Clip ready' : moment.mediaState === 'pending' ? 'Clip pending' : 'Clip unavailable'}</small>{marker && <small className="dock-marker-state">{dockMarkerLabel(marker)}</small>}</div>; })}{markers?.value.enabled && markers.error && <p className="dock-marker-error">Twitch marker status could not refresh. The saved timecodes are still available.</p>}</section>}
       </>}
-      {!recording && recordingPort && RecordingPanel && <Suspense fallback={<p role="status">Opening recording controls…</p>}><RecordingPanel port={recordingPort} sessionId={snapshot?.session?.status === 'live' ? snapshot.session.id : null} sourceEpoch={state.sourceEpoch} /></Suspense>}
     </DockLayout>
+    {hasRecordingUI && recordingPort && RecordingPanel && <Sheet open={recordingsOpen} onOpenChange={setRecordingsOpen} title="Stream recordings" className="dock-paper dock-recordings-sheet" footer={<QuietButton onClick={() => setRecordingsOpen(false)}>Close recordings</QuietButton>}><div id={recordingsId}><Suspense fallback={<p role="status">Opening recording controls…</p>}><RecordingPanel port={recordingPort} sessionId={snapshot?.session?.status === 'live' ? snapshot.session.id : null} sourceEpoch={state.sourceEpoch} onStatusChange={receiveRecordingStatus} /></Suspense></div></Sheet>}
     <Sheet open={!!edit} onOpenChange={open => { if (!open) closeEdit(); }} title="Edit chapter" className="dock-paper" description="Your saved wording is kept when new audio arrives. Publication still requires a safety check." footer={<ActionGroup><Button pending={pending.has('edit')} disabled={!edit?.title.trim() || !edit?.summary.trim() || edit.conflict} onClick={() => void saveEdit()}>Save chapter</Button><QuietButton onClick={closeEdit}>Cancel</QuietButton></ActionGroup>}>
       {edit && <><Field label="Chapter title" disabled={pending.has('edit')} value={edit.title} maxLength={120} onChange={event => setEdit({ ...edit, title: event.target.value })} /><Textarea label="Chapter summary" disabled={pending.has('edit')} value={edit.summary} maxLength={700} onChange={event => setEdit({ ...edit, summary: event.target.value })} />{edit.error && <InlineNotice tone="danger" live>{edit.error}</InlineNotice>}{edit.conflict && <section className="dock-comparison"><h3>Latest saved version</h3>{comparison ? <><strong>{comparison.title}</strong><p>{comparison.summary}</p><QuietButton onClick={() => setEdit({ ...edit, baseRevision: comparison.revision, conflict: false, error: '' })}>Keep my edit against this version</QuietButton></> : <p>This chapter is no longer available. Copy any wording you want to keep before closing.</p>}</section>}<p className="pv-secondary">Delete chapter removes the chapter from the recap. Use Forget from Source to remove captured material and its derived stories.</p></>}
     </Sheet>

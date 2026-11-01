@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState, useSyncExternalStore } from 'react';
-import type { RecordingReview, RecordingSummary, ReviewReceipt, SourceReview, MediaReview, RecordingPublication } from '../../server/replay/recording-types';
+import type { RecordingReview, RecordingSummary, ReviewReceipt, SourceReview, MediaReview, RecordingPublication, RecordingStartEligibility } from '../../server/replay/recording-types';
 import { ActionGroup, Button, Dialog, QuietButton, Sheet, formatTimecode } from '../../ui';
 import './recording-panel.css';
 
@@ -9,17 +9,31 @@ export interface RecordingPort {
 }
 export type { RecordingPublication } from '../../server/replay/recording-types';
 export type PanelRecording = RecordingSummary;
-type RecordingList = { items: PanelRecording[]; activeId: string | null; boundary: string; automaticUpload: false };
+type RecordingList = { items: PanelRecording[]; activeId: string | null; startEligibility: RecordingStartEligibility; boundary: string; automaticUpload: false };
 export type RecordingChecks = { metadata: boolean; sources: string[]; outputs: string[]; visual: string[]; audio: string[] };
 export type RecordingApproval = { captureRevision: number; digest: string; reviewedSources: SourceReview[]; reviewedOutputHashes: string[]; reviewedMedia: MediaReview[]; metadataReviewed: true };
 type RecordingPanelState = {
   sourceEpoch: number; items: PanelRecording[]; activeId: string | null; loading: boolean;
+  startEligibility: RecordingStartEligibility | null;
   review: RecordingReview | null; checks: RecordingChecks; receiptId: string | null;
   pending: string | null; error: string | null; notice: string | null;
 };
 const emptyChecks = (): RecordingChecks => ({ metadata: false, sources: [], outputs: [], visual: [], audio: [] });
 export const recordingSourceKey = (source: RecordingReview['sources'][number]) => source.id + ':' + source.revision + ':' + source.textHash;
 export const recordingMediaKey = (media: RecordingReview['media'][number]) => media.id + ':' + media.hash;
+const metadataKey = (review: RecordingReview) => JSON.stringify([review.metadata.channel, review.metadata.title, review.metadata.category]);
+/** The fresh server review proves each retained confirmation; the capture digest is never an item identity. */
+function retainedChecks(previous: RecordingReview, next: RecordingReview, checked: RecordingChecks): RecordingChecks {
+  if (previous.recording.id !== next.recording.id) return emptyChecks();
+  const sources = new Set(previous.sources.map(recordingSourceKey)), outputs = new Set(previous.outputs.map(output => output.hash)), media = new Set(previous.media.map(recordingMediaKey));
+  return {
+    metadata: checked.metadata && metadataKey(previous) === metadataKey(next),
+    sources: next.sources.map(recordingSourceKey).filter(key => sources.has(key) && checked.sources.includes(key)),
+    outputs: next.outputs.map(output => output.hash).filter(hash => outputs.has(hash) && checked.outputs.includes(hash)),
+    visual: next.media.map(recordingMediaKey).filter(key => media.has(key) && checked.visual.includes(key)),
+    audio: next.media.map(recordingMediaKey).filter(key => media.has(key) && checked.audio.includes(key)),
+  };
+}
 export function recordingApproval(review: RecordingReview, checks: RecordingChecks): RecordingApproval | null {
   if (review.blockedReasons.length || !checks.metadata ||
     review.sources.some(source => !checks.sources.includes(recordingSourceKey(source))) ||
@@ -52,8 +66,8 @@ export class RecordingPanelModel {
   private readGeneration = 0;
   private controllers = new Set<AbortController>();
   private disposed = false;
-  constructor(private readonly port: RecordingPort, sourceEpoch = 0) {
-    this.state = { sourceEpoch, items: [], activeId: null, loading: false, review: null, checks: emptyChecks(), receiptId: null, pending: null, error: null, notice: null };
+  constructor(private readonly port: RecordingPort, sourceEpoch = 0, private sessionId: string | null = null) {
+    this.state = { sourceEpoch, items: [], activeId: null, loading: false, startEligibility: null, review: null, checks: emptyChecks(), receiptId: null, pending: null, error: null, notice: null };
   }
   activate() { this.disposed = false; }
   getSnapshot = () => this.state;
@@ -67,20 +81,22 @@ export class RecordingPanelModel {
   invalidate(sourceEpoch: number) {
     this.generation++; this.readGeneration++;
     for (const controller of this.controllers) controller.abort();
-    this.set({ sourceEpoch, review: null, checks: emptyChecks(), receiptId: null, pending: null, notice: null, error: null });
+    this.set({ sourceEpoch, startEligibility: null, review: null, checks: emptyChecks(), receiptId: null, pending: null, notice: null, error: null });
     void this.load();
   }
   dispose() { this.disposed = true; this.generation++; for (const controller of this.controllers) controller.abort(); this.listeners.clear(); this.state = { ...this.state, review: null, checks: emptyChecks(), receiptId: null }; }
+  async setSession(sessionId: string | null) { if (this.sessionId === sessionId) return; this.sessionId = sessionId; this.readGeneration++; this.set({ startEligibility: null }); await this.load(); }
   async load() {
+    if (this.state.pending?.startsWith('media:')) return;
     const generation = this.generation, read = ++this.readGeneration;
     this.set({ loading: true });
     try {
-      const list = await this.request<RecordingList>('/recordings');
+      const list = await this.request<RecordingList>('/recordings' + (this.sessionId ? '?sessionId=' + encodeURIComponent(this.sessionId) : ''));
       if (this.disposed || generation !== this.generation || read !== this.readGeneration) return;
       const review = this.state.review, current = review && list.items.find(item => item.id === review.recording.id);
       const changed = !!review && (!current || current.revision !== review.recording.revision || current.publication?.state === 'revoked' || ['invalidated', 'failed', 'interrupted'].includes(current.status));
-      this.set({ items: list.items, activeId: list.activeId, loading: false, ...(changed ? { review: null, checks: emptyChecks(), receiptId: null, notice: 'The recording changed. Open its current contents to review again.' } : {}) });
-    } catch (error) { if (!this.disposed && generation === this.generation && read === this.readGeneration) { const status = (error as { status?: number })?.status; this.set({ loading: false, error: safeMessage(error), ...([401, 403, 410].includes(status ?? 0) ? { review: null, checks: emptyChecks(), receiptId: null } : {}) }); } }
+      this.set({ items: list.items, activeId: list.activeId, loading: false, startEligibility: list.startEligibility ?? null, ...(changed ? { review: null, checks: emptyChecks(), receiptId: null, notice: 'The recording changed. Open its current contents to review again.' } : {}) });
+    } catch (error) { if (!this.disposed && generation === this.generation && read === this.readGeneration) { const status = (error as { status?: number })?.status; this.set({ loading: false, startEligibility: null, error: safeMessage(error), ...([401, 403, 410].includes(status ?? 0) ? { review: null, checks: emptyChecks(), receiptId: null } : {}) }); } }
   }
   private async perform(key: string, action: () => Promise<void>) {
     if (this.disposed || this.state.pending) return;
@@ -97,9 +113,13 @@ export class RecordingPanelModel {
   }
   private current(generation: number) { return !this.disposed && generation === this.generation; }
   async start(sessionId: string | null) {
+    const eligibility = this.state.startEligibility;
+    if (sessionId && (!eligibility?.canStartCurrent || eligibility.sessionId !== sessionId)) { this.set({ error: eligibility?.reason === 'context_started' ? 'This stream already has context. Arm the next recording instead.' : 'Refresh recordings before starting this session.' }); return; }
+    if (!sessionId && eligibility && !eligibility.canArmNext) return;
     await this.perform('start', async () => {
       const generation = this.generation;
-      await this.request('/recordings/start', { method: 'POST', body: sessionId ? { sessionId } : {} });
+      try { await this.request('/recordings/start', { method: 'POST', body: sessionId ? { sessionId } : {} }); }
+      catch (error) { if (sessionId && this.current(generation) && (error as { code?: string })?.code === 'recording_prefix_missing') this.set({ startEligibility: { sessionId, canStartCurrent: false, canArmNext: true, reason: 'context_started' } }); throw error; }
       if (!this.current(generation)) return;
       this.set({ notice: sessionId ? 'Private recording started.' : 'Private recording is armed for the next session.' }); await this.load();
     });
@@ -147,13 +167,18 @@ export class RecordingPanelModel {
   async selectMedia(mediaId: string, selected: boolean) {
     const review = this.state.review; if (!review) return;
     await this.perform('media:' + mediaId, async () => {
-      const generation = this.generation;
-      this.set({ review: null, checks: emptyChecks(), receiptId: null });
-      await this.request(pathFor(review.recording.id) + (selected ? '/media' : '/media/' + encodeURIComponent(mediaId)), selected ? { method: 'POST', body: { mediaId } } : { method: 'DELETE' });
-      if (!this.current(generation)) return;
-      const next = await this.request<RecordingReview>(pathFor(review.recording.id) + '/review');
-      if (this.current(generation)) this.set({ review: next, checks: emptyChecks(), receiptId: null, notice: 'Media selection changed. Review this version before exporting.' });
-      if (this.current(generation)) await this.load();
+      const generation = this.generation, checked = this.state.checks;
+      this.readGeneration++;
+      this.set({ receiptId: null });
+      try {
+        await this.request(pathFor(review.recording.id) + (selected ? '/media' : '/media/' + encodeURIComponent(mediaId)), selected ? { method: 'POST', body: { mediaId } } : { method: 'DELETE' });
+        if (!this.current(generation)) return;
+        const next = await this.request<RecordingReview>(pathFor(review.recording.id) + '/review');
+        if (this.current(generation)) this.set({ review: next, checks: retainedChecks(review, next, checked), receiptId: null, items: this.state.items.map(item => item.id === next.recording.id ? { ...item, ...next.recording } : item), notice: 'Media selection updated. Checks for unchanged content were kept. Approve this version before exporting.' });
+      } catch (error) {
+        if (this.current(generation)) this.set({ review: null, checks: emptyChecks(), receiptId: null });
+        throw error;
+      }
     });
   }
   async approve() {
@@ -199,14 +224,15 @@ export class RecordingPanelModel {
   }
 }
 
-export interface RecordingPanelProps { port: RecordingPort; sessionId: string | null; sourceEpoch: number }
+export type RecordingPanelStatus = { activeId: string | null; status: 'armed' | 'recording' | null; pending: boolean; stop: () => void };
+export interface RecordingPanelProps { port: RecordingPort; sessionId: string | null; sourceEpoch: number; onStatusChange?: (status: RecordingPanelStatus) => void }
 const labels: Record<RecordingSummary['status'], string> = { armed: 'Armed for the next session', recording: 'Recording privately', stopped: 'Stopped', interrupted: 'Interrupted', invalidated: 'Removed after a privacy change', failed: 'Recording stopped with an error', exported: 'Private export ready' };
 function publicationLabel(publication: RecordingPublication) {
   return { staged: 'Private export ready', queued: 'Publication pending', published: 'Published online', revoked: publication.revocationPending && publication.removalAllowed !== true ? 'Withdrawn locally, public withdrawal pending' : 'Recording withdrawn', error: 'Publication needs attention' }[publication.state];
 }
 function dateLabel(value: string) { return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)); }
-export function RecordingPanel({ port, sessionId, sourceEpoch }: RecordingPanelProps) {
-  const model = useMemo(() => new RecordingPanelModel(port, sourceEpoch), [port]);
+export function RecordingPanel({ port, sessionId, sourceEpoch, onStatusChange }: RecordingPanelProps) {
+  const model = useMemo(() => new RecordingPanelModel(port, sourceEpoch, sessionId), [port]);
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [withdrawId, setWithdrawId] = useState<string | null>(null);
@@ -217,18 +243,31 @@ export function RecordingPanel({ port, sessionId, sourceEpoch }: RecordingPanelP
   const review = epochMatches ? state.review : null;
   useEffect(() => { model.activate(); void model.load(); const timer = setInterval(() => { if (document.visibilityState === 'visible') void model.load(); }, 5000); return () => { clearInterval(timer); model.dispose(); }; }, [model]);
   useEffect(() => { if (model.getSnapshot().sourceEpoch !== sourceEpoch) { model.invalidate(sourceEpoch); setDownloadId(null); setRemoveId(null); setWithdrawId(null); } }, [model, sourceEpoch]);
-  useEffect(() => { setSourcePage(0); setOutputPage(0); }, [review?.digest]);
+  useEffect(() => { void model.setSession(sessionId); }, [model, sessionId]);
+  useEffect(() => { setSourcePage(0); setOutputPage(0); }, [review?.recording.id]);
+  useEffect(() => { setSourcePage(page => Math.min(page, Math.max(0, Math.ceil((review?.sources.length ?? 0) / 6) - 1))); setOutputPage(page => Math.min(page, Math.max(0, Math.ceil((review?.outputs.length ?? 0) / 6) - 1))); }, [review?.sources.length, review?.outputs.length]);
+  useEffect(() => {
+    const active = epochMatches ? state.items.find(item => item.id === state.activeId && (item.status === 'armed' || item.status === 'recording')) : null;
+    onStatusChange?.({ activeId: active?.id ?? null, status: active?.status === 'armed' || active?.status === 'recording' ? active.status : null, pending: !epochMatches || !!state.pending, stop: () => { if (epochMatches && model.getSnapshot().sourceEpoch === sourceEpoch && active) void model.stop(active.id); } });
+  }, [model, onStatusChange, sourceEpoch, epochMatches, state.activeId, state.items, state.pending]);
   const selected = review && state.items.find(item => item.id === review.recording.id);
   const exported = selected?.status === 'exported' && !!selected.exportId;
   const approval = review ? recordingApproval(review, state.checks) : null;
   const pending = !!state.pending;
+  const eligibility = epochMatches && state.startEligibility?.sessionId === sessionId ? state.startEligibility : null;
+  const startSessionId = eligibility?.canStartCurrent ? sessionId : null;
+  const canStart = !!eligibility && (startSessionId ? eligibility.canStartCurrent : eligibility.canArmNext);
   const download = downloadId && epochMatches && state.items.some(item => item.id === downloadId && item.status === 'exported' && item.publication?.state !== 'revoked') ? recordingAssetUrl(port, downloadId) : null;
   const removing = state.items.find(item => item.id === removeId);
   const withdrawing = state.items.find(item => item.id === withdrawId && item.exportId && (item.publication?.state !== 'revoked' || item.publication.revocationPending));
   return <section className="recording-panel" aria-labelledby="recording-panel-title">
     <h2 id="recording-panel-title">Stream recordings</h2>
-    <p>Save a private recording of this stream’s context and checked wording. Start before the stream collects context so the complete recording can be replayed.</p>
-    <ActionGroup><QuietButton pending={state.pending === 'start'} disabled={!!state.activeId || pending} onClick={() => void model.start(sessionId)}>{sessionId ? 'Start private recording' : 'Arm next recording'}</QuietButton><QuietButton pending={state.loading} disabled={pending} onClick={() => void model.load()}>Refresh recordings</QuietButton></ActionGroup>
+    <p>Record stream context privately. Start before any context is collected.</p>
+    {eligibility?.reason === 'context_started' && <p className="recording-panel__secondary">This stream already has context. Arm the next recording to capture it from the beginning.</p>}
+    {eligibility?.reason === 'session_unavailable' && <p className="recording-panel__secondary">The current session is unavailable. You can arm the next recording.</p>}
+    {eligibility?.reason === 'retention_limit' && <p className="recording-panel__secondary">Remove a private recording before starting another.</p>}
+    <ActionGroup><QuietButton pending={state.pending === 'start'} disabled={!canStart || !!state.activeId || pending} onClick={() => void model.start(startSessionId)}>{!eligibility && state.loading ? 'Checking recording…' : startSessionId ? 'Start private recording' : 'Arm next recording'}</QuietButton><QuietButton pending={state.loading} disabled={pending} onClick={() => void model.load()}>Refresh recordings</QuietButton></ActionGroup>
+    <details className="recording-panel__secondary"><summary>Recording limits</summary><p>A capture stops at 10,000 events or provider results, 100 media entries, or 32 MB. Unchecked or later-redacted wording blocks export because its recorded results cannot be reused for changed inputs.</p></details>
     {state.loading && !state.items.length && <p role="status">Opening private recordings.</p>}
     {!state.loading && !state.items.length && <p className="recording-panel__secondary">No private recordings yet.</p>}
     <ul className="recording-panel__list">{state.items.map(item => <li key={item.id}>

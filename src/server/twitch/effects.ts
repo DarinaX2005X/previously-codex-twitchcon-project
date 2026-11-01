@@ -2,9 +2,11 @@ import type {DispatchResult,Scope,VersionRef} from '../../shared/contracts/index
 import type {SqliteRepository,WorkLease} from '../storage/repository.js';
 import type {ControlStore} from '../auth/control.js';
 import {TwitchAuthError,TwitchRequestCancelled} from '../auth/tokens.js';
-import {HelixError,TwitchHelix,type TwitchClip} from './helix.js';
+import {HelixError,TwitchHelix,type TwitchClip,type TwitchMarker} from './helix.js';
 type Repository=Pick<SqliteRepository,'enqueueOutbox'|'claimOutbox'|'renewOutbox'|'finishOutbox'|'enqueueJob'|'claimJob'|'renewJob'|'finishJob'|'recordRemoteArtifact'>;
 export interface EffectContext {sessionId:string;privacyEpoch:number;dependencyRefs:VersionRef[];captureStartMs?:number;captureEndMs?:number}
+export type MarkerContext=EffectContext&{momentId:string;streamId:string;expiresAtMs:number};
+export type MarkerResult={status:'queued'|'sent'|'unavailable'|'cancelled'|'unknown_outcome';reason?:string;externalId?:string;positionSeconds?:number};
 export interface EffectsOptions {
   scope:Scope;helix:TwitchHelix;repository:Repository;control:ControlStore;now?:()=>number;
   /** Synchronous final fence: epoch, active session, publication, actor ban and dependency revisions. */
@@ -12,6 +14,7 @@ export interface EffectsOptions {
   prepareMedia:(input:EffectContext&{id:string;url:string;kind:'video';mimeType:string;captureStartMs:number;captureEndMs:number})=>Promise<unknown>;
   onClip:(input:EffectContext&{clip:TwitchClip|null;status:'pending'|'ready'|'unavailable'|'revoked';reason?:string;previousSession?:boolean})=>Promise<void>|void;
   onResult?:(id:string,result:DispatchResult)=>void;
+  onMarker?:(input:MarkerContext,result:MarkerResult)=>void;
   previousPermitted?:(clip:TwitchClip)=>boolean;
 }
 type ChatPayload=EffectContext&{message:string;actorId:string;expiresAtMs:number;key:string};
@@ -41,14 +44,15 @@ export class TwitchEffects {
     if(!this.options.control.claim('clip:pending',{key:input.key},this.now()+120000))return null;
     try{return this.options.repository.enqueueOutbox(this.options.scope,{sessionId:input.sessionId,kind:'clip',businessKey:input.key,payload:input,dependencyRefs:input.dependencyRefs});}catch(error){this.options.control.delete('clip:pending');throw error;}
   }
-  enqueueMarker(input:EffectContext&{key:string;description:string;enabled:boolean;vodAvailable:boolean}){if(!input.enabled||!input.vodAvailable||!this.options.allowed({...input,kind:'marker'}))return null;return this.options.repository.enqueueOutbox(this.options.scope,{sessionId:input.sessionId,kind:'marker',businessKey:input.key,payload:input,dependencyRefs:input.dependencyRefs});}
+  enqueueMarker(input:MarkerContext&{key:string;description:string;enabled:boolean}){if(!input.enabled||input.expiresAtMs<=this.now()||!this.options.allowed({...input,kind:'marker'}))return null;return this.options.repository.enqueueOutbox(this.options.scope,{sessionId:input.sessionId,kind:'marker',businessKey:input.key,payload:input,dependencyRefs:input.dependencyRefs});}
   /** One scheduler tick; all retries and polls return to durable jobs, never an in-memory pending array. */
   async tick(){if(this.busy)return;this.busy=true;try{const lease=this.options.repository.claimOutbox(this.options.scope,{kinds:['chat','clip','marker'],leaseMs:30000});if(lease)await this.dispatch(lease);const job=this.options.repository.claimJob(this.options.scope,{kinds:['clip.poll'],leaseMs:30000});if(job)await this.poll(job);}finally{this.busy=false;}}
   private releaseClip(key:string){if(this.options.control.get<{key:string}>('clip:pending')?.key===key)this.options.control.delete('clip:pending');}
-  private finish(lease:WorkLease,result:DispatchResult){this.options.repository.finishOutbox(this.options.scope,lease.id,lease.leaseToken,result.status==='unknown_outcome'?'unknown_outcome':result.status==='sent'?'done':'failed');if(lease.kind==='clip'&&result.status!=='sent'&&result.status!=='unknown_outcome')this.releaseClip((lease.payload as ClipPayload)?.key);this.options.onResult?.(lease.id,result);}
+  private finish(lease:WorkLease,result:DispatchResult,marker?:TwitchMarker){this.options.repository.finishOutbox(this.options.scope,lease.id,lease.leaseToken,result.status==='unknown_outcome'?'unknown_outcome':result.status==='sent'?'done':'failed');if(lease.kind==='clip'&&result.status!=='sent'&&result.status!=='unknown_outcome')this.releaseClip((lease.payload as ClipPayload)?.key);if(lease.kind==='marker')this.options.onMarker?.(lease.payload as MarkerContext,{status:result.status==='sent'?'sent':result.status==='unknown_outcome'?'unknown_outcome':result.status==='cancelled'?'cancelled':'unavailable',...(result.reason?{reason:result.reason}:{}),...(result.externalId?{externalId:result.externalId}:{}),...(marker?{positionSeconds:marker.position_seconds}:{})});this.options.onResult?.(lease.id,result);}
   private async dispatch(lease:WorkLease){
-    const input=lease.payload as ChatPayload&ClipPayload&{description:string};
+    const input=lease.payload as ChatPayload&ClipPayload&MarkerContext&{description:string};
     if(!input||!this.options.allowed({...input,kind:lease.kind})||(lease.kind==='chat'&&input.expiresAtMs<=this.now())){this.finish(lease,{status:'cancelled',reason:'expired_or_revoked'});return;}
+    let markerSendStarted=false;
     try{
       if(lease.kind==='chat'){
         const last=this.options.control.get<number>('chat:last-send')??-Infinity;
@@ -62,12 +66,24 @@ export class TwitchEffects {
         if(!this.options.allowed({...input,kind:'clip'})){this.finish(lease,{status:'cancelled',externalId:created.id,reason:'privacy_changed_cleanup_required'});return;}
         this.options.repository.enqueueJob(this.options.scope,{sessionId:input.sessionId,kind:'clip.poll',businessKey:`clip.poll:${created.id}`,payload:{...input,clipId:created.id,createdAtMs:this.now(),outboxId:lease.id},dependencyRefs:input.dependencyRefs,nextAtMs:this.now()+1000});
         await this.options.onClip({...input,clip:null,status:'pending'});this.finish(lease,{status:'sent',externalId:created.id});
-      }else{await this.options.helix.marker(input.description,()=>this.options.allowed({...input,kind:'marker'}));this.finish(lease,{status:'sent'});}
+      }else{
+        if(input.expiresAtMs<=this.now()){this.finish(lease,{status:'cancelled',reason:'marker_expired'});return;}
+        // Get Streams cannot reveal Store past broadcasts. Twitch validates VOD/rerun eligibility at POST.
+        // Requiring a published archive here would incorrectly suppress valid markers early in a live stream.
+        const stream=await this.options.helix.currentStream();
+        if(!stream||stream.id!==input.streamId||stream.user_id!==this.options.scope.channelId||stream.type!=='live'){this.finish(lease,{status:'dropped',reason:'marker_stream_not_live'});return;}
+        if(input.expiresAtMs<=this.now()||!this.options.allowed({...input,kind:'marker'})){this.finish(lease,{status:'cancelled',reason:'expired_or_revoked'});return;}
+        markerSendStarted=true;
+        const marker=await this.options.helix.marker(input.description,()=>input.expiresAtMs>this.now()&&this.options.allowed({...input,kind:'marker'}));
+        if(typeof marker?.id!=='string'||!marker.id||!Number.isInteger(marker.position_seconds)||marker.position_seconds<0){this.finish(lease,{status:'unknown_outcome',reason:'marker_confirmation_missing'});return;}
+        this.finish(lease,{status:'sent',externalId:marker.id},marker);
+      }
     }catch(error){
       if(error instanceof TwitchRequestCancelled){this.finish(lease,{status:'cancelled',reason:'privacy_changed'});return;}
       if(error instanceof TwitchAuthError){this.finish(lease,{status:'dropped',reason:error.code});return;}
+      if(lease.kind==='marker'&&!markerSendStarted){this.finish(lease,{status:'dropped',reason:'marker_live_check_unavailable'});return;}
       if(lease.kind==='clip')await this.options.onClip({...input,clip:null,status:'unavailable',reason:error instanceof HelixError?error.code:'unknown_outcome'});
-      if(error instanceof HelixError){if(error.status===429&&lease.kind==='chat'&&this.now()+Math.max(error.retryAfterMs,1000)<input.expiresAtMs)this.options.repository.finishOutbox(this.options.scope,lease.id,lease.leaseToken,'failed',this.now()+Math.max(error.retryAfterMs,1000));else this.finish(lease,{status:error.status>=500?'unknown_outcome':'dropped',reason:error.code});}
+      if(error instanceof HelixError){if(error.status===429&&lease.kind==='chat'&&this.now()+Math.max(error.retryAfterMs,1000)<input.expiresAtMs)this.options.repository.finishOutbox(this.options.scope,lease.id,lease.leaseToken,'failed',this.now()+Math.max(error.retryAfterMs,1000));else this.finish(lease,{status:error.status>=500?'unknown_outcome':'dropped',reason:lease.kind==='marker'&&[400,403,404].includes(error.status)?'marker_vod_or_permission_unavailable':error.code});}
       else this.finish(lease,{status:'unknown_outcome',reason:'network_outcome_unknown'});
     }
   }

@@ -7,6 +7,7 @@ import type {SetupPort, SetupDiagnostics} from '../features/setup/ports.js';
 export function ownerPorts(client: OwnerHttpClient): DockOwnerPort {
   const id = encodeURIComponent;
   return {
+    listMarkers: (sessionId, signal) => client.listMarkers(sessionId, signal),
     listHistory(query) {
       const search = new URLSearchParams();
       for (const [key, value] of Object.entries(query)) if (value !== undefined) search.set(key, String(value));

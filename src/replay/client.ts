@@ -1,6 +1,6 @@
-import type {RecapClient,OwnerSnapshot,UpdateEvent,Chapter,Moment,InvalidationReceipt,Settings,PrivacyTarget,PlaybackRef,RecapPlan,ReplayControl,Source} from '../shared/contracts/index.js';
+import type {RecapClient,OwnerSnapshot,UpdateEvent,Chapter,Moment,InvalidationReceipt,Settings,PrivacyTarget,PlaybackRef,RecapPlan,ReplayControl,Source,RecapLanguage} from '../shared/contracts/index.js';
 import type {CaptureBundle} from './contracts.js';
-export type ReplayView={snapshot:OwnerSnapshot;transport:{atMs:number;durationMs:number;playing:boolean;speed:1|2|4;error:string|null;correction:CaptureBundle['correction'];correctionApplied:boolean;milestones:CaptureBundle['milestones'];latestSource:{id:string;text:string;truncated:boolean;kind:Source['kind'];startMs:number;endMs:number}|null}};
+export type ReplayView={snapshot:OwnerSnapshot;transport:{atMs:number;durationMs:number;playing:boolean;speed:1|2|4;error:string|null;correction:CaptureBundle['correction'];correctionApplied:boolean;availableLanguages:RecapLanguage[];milestones:CaptureBundle['milestones'];latestSource:{id:string;text:string;truncated:boolean;kind:Source['kind'];startMs:number;endMs:number}|null}};
 export class ReplayClient implements RecapClient {
   private serial=0;private eventSerial=0;private notifiedSession:string|null=null;private notifiedPrivacy=0;private pending=new Map<number,{resolve:(v:unknown)=>void;reject:(e:Error)=>void}>();private listeners=new Set<(event:UpdateEvent)=>void>();private views=new Set<(view:ReplayView)=>void>();view:ReplayView|null=null;
   constructor(private worker:Worker,onFailure?:()=>void){worker.onmessage=e=>{

@@ -1,6 +1,7 @@
 import {TwitchRequestCancelled,type TwitchTokens} from '../auth/tokens.js';
 export class HelixError extends Error {constructor(public readonly status:number,public readonly code:string,public readonly retryAfterMs=0){super(code);}}
-export type TwitchStream={id:string;user_id:string;started_at:string;title:string;game_name:string};
+export type TwitchStream={id:string;user_id:string;started_at:string;title:string;game_name:string;type?:string};
+export type TwitchMarker={id:string;created_at:string;position_seconds:number;description:string};
 export type BannedUser={user_id:string;created_at:string;expires_at:string};
 export type TwitchClip={id:string;broadcaster_id:string;creator_id:string;created_at:string;duration:number;video_id:string;vod_offset:number|null;url:string;embed_url:string;title:string};
 export class TwitchHelix {
@@ -24,7 +25,7 @@ export class TwitchHelix {
   async createClip(beforeRequest?:()=>boolean){return (await this.request<{data:{id:string;edit_url:string}[]}>(`clips?broadcaster_id=${encodeURIComponent(this.channelId)}`,{method:'POST'},beforeRequest)).data[0];}
   async getClip(id:string){return (await this.request<{data:TwitchClip[]}>(`clips?id=${encodeURIComponent(id)}`)).data[0]??null;}
   async downloadUrl(id:string){const q=new URLSearchParams({broadcaster_id:this.channelId,editor_id:this.channelId,clip_id:id});const value=await this.request<{data:{clip_id:string;landscape_download_url:string|null}[]}>(`clips/downloads?${q}`);return value.data.find(item=>item.clip_id===id)?.landscape_download_url??null;}
-  async marker(description:string,beforeRequest?:()=>boolean){return this.request('streams/markers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:this.channelId,description:[...description].slice(0,140).join('')})},beforeRequest);}
+  async marker(description:string,beforeRequest?:()=>boolean){return (await this.request<{data:TwitchMarker[]}>('streams/markers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:this.channelId,description:[...description].slice(0,140).join('')})},beforeRequest)).data[0]??null;}
   /** Get Clips is popularity ordered. Sort this bounded 30-day sample locally; never call its first item newest. */
   async previousClips(before:string,now=Date.now()):Promise<TwitchClip[]>{
     const query=new URLSearchParams({broadcaster_id:this.channelId,first:'100',started_at:new Date(now-30*86400000).toISOString(),ended_at:new Date(now).toISOString()});

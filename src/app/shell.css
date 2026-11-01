@@ -4,5 +4,6 @@
 .app-preview {min-width:0;display:grid;gap:16px;}
 .app-preview > p {font-size:16px;}
 html[data-broadcast], html[data-broadcast] body, html[data-broadcast] #root {background:transparent!important;overflow:hidden;width:100%;height:100%;}
+html[data-owner-dock], html[data-owner-dock] body, html[data-owner-dock] #root {overflow:hidden;width:100%;height:100%;}
 .app-overlay-error {position:absolute;left:64px;bottom:64px;max-width:700px;padding:24px;background:#e9eae1;color:#293335;border-radius:18px;font-size:24px;}
 @media(max-width:600px) {.app-message{padding-block:48px;}}

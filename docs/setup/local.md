@@ -1,6 +1,6 @@
 # Run Previously on the streaming computer
 
-The supported certificate setup path is Windows with Node.js 22.13 or newer and npm. A modern desktop browser supplies microphone permission and the AudioWorklet capture path. OBS is needed to put the recap scene on stream. FFmpeg and FFprobe must be on `PATH` for downloaded clip validation and prepared audio; the authored text-only replay does not need them.
+The supported certificate setup path is Windows with Node.js 22.13 or newer and npm. A modern desktop browser supplies microphone permission and the AudioWorklet capture path. OBS is needed to put the recap scene on stream. FFmpeg and FFprobe must be on `PATH` for downloaded clip validation and prepared audio. Preparing oversized recording video also requires an FFmpeg build with `h264_nvenc` and a compatible NVIDIA GPU/driver; there is no software encoder fallback. The authored text-only replay needs none of these media tools.
 
 ## Install and try replay
 
@@ -46,14 +46,14 @@ npm start
 
 Open [channel setup](https://localhost:4317/setup), select **Connect Twitch**, and sign in with the configured broadcaster account. OAuth tokens are obtained through that flow and encrypted in SQLite; do not paste tokens into `.env`. Reconnect if the account, token, or required permissions change.
 
-The current authorization requests `user:read:chat`, `user:write:chat`, `clips:edit`, `channel:manage:clips`, `channel:moderate`, and `moderation:read`. These cover chat, clip operations, and moderation state. The runtime uses the broadcaster identity; a separately configured bot account is not part of this connection flow. The optional marker adapter uses `channel:manage:broadcast` only when enabled by its caller.
+The current authorization requests `user:read:chat`, `user:write:chat`, `clips:edit`, `channel:manage:clips`, `channel:moderate`, and `moderation:read`. These cover chat, clip operations, and moderation state. The runtime uses the broadcaster identity; a separately configured bot account is not part of this connection flow. Optional VOD markers are off by default. To enable them, set `TWITCH_MARKERS_ENABLED=true`, restart, and reconnect Twitch to grant `channel:manage:broadcast`.
 
 Start a real stream on Twitch and use **Check configuration** until the active session is available. Connecting the account does not itself start a stream or turn on the microphone.
 
 ## Listen and add the OBS scene
 
 1. Open [the dock](https://localhost:4317/dock) in a normal browser tab. Choose **Start listening** and select the intended microphone in the browser permission dialog. Check the level before speaking private material.
-2. Keep one microphone producer active. If another dock owns the capture lease, use **Take over microphone** deliberately. Pause stops the track and pending local uploads; Forget is the separate action for material already received.
+2. Keep one microphone producer active. If another dock owns the capture lease, use **Take over microphone** deliberately. Pause stops the microphone and queued local audio immediately, then confirms the server pause. If confirmation fails, **Retry pause** resends that control without reopening the microphone; already uploaded speech may still finish until the server confirms. Forget is the separate action for material already received.
 3. In setup, select **Copy OBS overlay URL**. Add that complete private URL as a **1920 × 1080 Browser Source**. Keep it private: its fragment grants access to the published overlay scene. **Rotate link** invalidates previously issued overlay access and requires updating OBS.
 4. Use **Preview recap** locally. Use **Show recap** in the dock to trigger the on-stream destination. If you enable narration or scene sounds, enable OBS audio control for that Browser Source and verify its mixer routing.
 5. Optionally add `https://localhost:4317/dock` through OBS **Docks → Custom Browser Docks**. Use the regular browser tab for microphone capture when the embedded browser cannot grant access. Do not assume an OBS Browser Source can provide microphone permission.
@@ -76,9 +76,13 @@ Before relying on a live setup, verify one short microphone segment, a second ac
 
 Clip download URLs are temporary. The local cache validates the authorized media before making it available to the overlay. A whole-stream VOD is not reconstructed from microphone input, and this app does not promise that every chapter has an available VOD jump or historical clip.
 
+When `TWITCH_MARKERS_ENABLED=true`, newly saved eligible moments can request Twitch stream markers independently of automatic clip creation. [Twitch requires a live broadcast, enabled VOD storage, and the additional authorization scope](https://dev.twitch.tv/docs/api/reference/#create-stream-marker). Requests expire after 60 seconds so a delayed job cannot mark a different live moment. Only a returned marker ID and position confirm success; ambiguous attempts are not blindly retried. An unavailable marker leaves the moment's local timecode intact. The authenticated `GET /api/owner/twitch/markers?sessionId=...` endpoint reports per-moment marker state. Verify the marker path with the intended channel before relying on VOD navigation; fixture coverage does not establish real marker availability.
+
 For public sharing, configure the [Vercel publication service](publication.md), then open the public link shown in setup. A locally saved edit is not a cloud acknowledgement. Keep the collector running during a live session so the public visibility lease can renew.
 
-Read [Replay and recordings](../replay/README.md) before capturing or exporting your own material. A recording must be explicitly started and reviewed; the bundled authored example is not copied into a channel's live history.
+For a replay of your own material, select **Recordings** in the dock header, then **Arm next recording** before context is collected. The header keeps the armed or active status and **Stop recording** available after you close the sheet. After stopping, use **Review contents** to inspect the metadata, source wording, saved fields, and any selected cached media. **Approve reviewed contents** and **Create private export** keep it local. **Publish recording** uploads it separately; **Download offline ZIP** creates a private copy that cannot be recalled. **Withdraw recording** closes local access and reports any public withdrawal still awaiting acknowledgement.
+
+Read [Replay and recordings](../replay/README.md#record-review-and-share-in-the-dock) for source checks, owner review, and deterministic replay requirements. A safe single-language session can export without a raid or an edit. An interrupted or incomplete recording cannot be exported. The bundled authored example is not copied into a channel's live history, and the recorder does not automatically import an OBS screen recording.
 
 ## Restart and troubleshoot
 
@@ -89,12 +93,17 @@ Use **Ctrl+C** for a normal shutdown. Rebuild after code changes before running 
 | Certificate warning or setup failure | Run `npm run setup:local` again, inspect the localhost certificate prompt, and keep the existing PFX passphrase. Use the exact `https://localhost:4317` origin. |
 | Port or instance already in use | Reuse the existing collector or stop that process normally. Do not start another process against the same database. After a crash, `npm run dev` can recover a genuinely stale lock. |
 | Microphone denied or missing | Check browser site permissions and Windows microphone access. Choose the correct device in a normal browser tab, or select **Continue with chat only**. |
+| Microphone stopped but server pause unconfirmed | Choose **Retry pause**. The microphone remains stopped while the app retries; already uploaded speech may still finish until confirmation. A failed retry does not reopen capture. Use Forget separately for material already accepted. |
 | No active session | Start the Twitch stream and check configuration. Signing in alone does not create a live session. |
 | Twitch reconnect required | Reconnect the configured broadcaster through setup. Check that the registered callback matches exactly and required scopes are granted. |
 | New text stays held | Check the safety/provider status and paid-call setting. Unavailable or ambiguous checks do not publish. In authored replay, only stored checked wording can pass. |
 | Clip pending or unavailable | Check Twitch clip permissions, FFmpeg/FFprobe availability, and the official clip link. A saved moment does not guarantee a playable clip. |
 | Public recap unavailable after disconnect | Restore the local collector and cloud connection. Live content is deliberately hidden when its lease expires. |
 | Public edit still pending | Keep the local process running and check public origin, matching publication secret, and private-store availability. Do not mistake local save for cloud sync. |
+| Recording cannot start or export | Arm before the session collects context. Open **Review contents** for missing checked results or events. An interrupted capture needs a new clean session; it cannot be repaired by copying review hashes. |
+| Selected recording media cannot prepare | Check FFmpeg/FFprobe, the 120-second duration bound, and `h264_nvenc` availability for video requiring conversion. The asset stays unselected on failure. A text-only export can omit optional media. |
+| Recording still says public withdrawal pending | Keep the collector running and check publication configuration. Use **Retry withdrawal** if shown. Remove the private capture only after the UI permits it; do not delete its files to bypass the pending acknowledgement. |
+| Offline ZIP too large | The ZIP has its own 32,000,000-byte bound including metadata and archive overhead. Select fewer optional media before creating an export; an existing export cannot be edited in place. |
 | Storage full | Stop new capture, free unrelated disk space, and restart. Keep the SQLite database, encryption key, and privacy tombstones. Do not delete protected media or the database as a routine cache reset. |
 
 The media cache evicts eligible old files within its configured bounds, while active playback remains protected. Privacy revocation overrides that protection. Already downloaded media and copies made outside Previously cannot be remotely erased.

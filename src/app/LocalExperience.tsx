@@ -16,6 +16,11 @@ function LocalPreview({plan}: {plan: RecapPlan}) {
   </div>;
 }
 function OwnerExperience({page}: {page: 'setup'|'dock'}) {
+  useEffect(() => {
+    if (page !== 'dock') return;
+    document.documentElement.dataset.ownerDock = 'true';
+    return () => {delete document.documentElement.dataset.ownerDock;};
+  }, [page]);
   const client = useMemo(() => new OwnerHttpClient(), []);
   const capture = useMemo(() => browserCapture(client), [client]);
   const owner = useMemo(() => ownerPorts(client), [client]), setup = useMemo(() => setupPorts(client), [client]);

@@ -6,6 +6,13 @@ Previously gives late Twitch viewers the context behind the current moment. It t
 
 [Open Previously](https://previously-seven.vercel.app). [Run the example](#try-the-authored-example). [Set up a channel](docs/setup/local.md). [Source repository](https://github.com/DarinaX2005X/previously-codex-twitchcon-project).
 
+<p align="center">
+  <img src="docs/testing/visual/landing-mobile.jpg" width="32%" alt="Authored text example showing the spoken source above the current context" />
+  <img src="docs/testing/visual/replay-correction-mobile.jpg" width="32%" alt="Authored replay after its checked owner correction has been applied" />
+  <img src="docs/testing/visual/recording-review-mobile.jpg" width="32%" alt="Private recording review showing authored fixture metadata and source review checkboxes" />
+</p>
+<p align="center"><sub>Source and context, a checked correction, and private recording review. Captured from the running product with authored text; these images contain no real Twitch stream or recording.</sub></p>
+
 ## Arrive in the middle and understand what changed
 
 The included example follows a developer investigating an empty preview:
@@ -52,6 +59,8 @@ New speech and story checks require a funded OpenAI account and the explicit pai
 
 Automatic Twitch clips are a separate choice. Twitch can create the clip before Previously's publication hold expires. Forget withdraws the material from Previously, but removing an external Twitch clip requires the channel's [clip manager](https://dashboard.twitch.tv/content/clips).
 
+Open **Recordings** in the dock to arm a private recording before the session collects context. After stopping, review the sources, saved wording, metadata, and any selected cached media. **Create private export**, **Download offline ZIP**, and **Publish recording** are separate actions. A public replay link appears after the cloud confirms that export. **Withdraw recording** closes managed local access immediately and reports public withdrawal separately. The [recording guide](docs/replay/README.md#record-review-and-share-in-the-dock) covers review, replay controls, and the limits of downloaded copies.
+
 ## How the story reaches viewers
 
 ```mermaid
@@ -59,18 +68,21 @@ flowchart TD
   subgraph Computer[Streaming computer]
     Mic[Browser microphone] --> Local[Local HTTPS server]
     Twitch[Twitch EventSub and chat] --> Local
-    Local --> Checks[Transcription, evidence and safety checks]
-    Checks --> State[Pure story reducer and SQLite]
+    Local --> State[Pure story reducer and SQLite]
     Dock[Owner dock] -->|Edit, pause, Forget| State
     State --> Gate[Publication delay and current privacy checks]
+    State --> Capture[Explicit private recording and owner review]
   end
+  Local -->|Bounded private requests| OpenAI[OpenAI transcription, proposals and safety]
+  OpenAI -->|Checked outcomes| State
   Gate --> OBS[OBS recap scene]
   Gate --> Cloud[Signed publication to private Blob storage]
-  Cloud --> Viewer[Public recap and gated replay]
-  Replay[Authored or reviewed recording] -->|Recorded clock and outcomes| State
+  Capture -->|Separate publish action| Cloud
+  Cloud --> Viewer[Vercel public recap and gated replay]
+  Replay[Replay adapter with recorded clock and outcomes] -->|Same core rules, simulated effects| State
 ```
 
-The diagram separates private evidence on the streaming computer from published material available to viewers. Replay uses the same domain rules with recorded inputs and simulated external effects. See the [architecture guide](docs/architecture/README.md) for persistence, revision fences, and failure behavior.
+The diagram separates private local evidence, provider processing, and viewer publication. Transcription and story checks send bounded inputs to OpenAI when paid calls are explicitly enabled. Reviewed recordings have a separate publication action. Replay uses recorded outcomes with simulated external effects. See the [architecture guide](docs/architecture/README.md) for persistence, revision fences, and failure behavior.
 
 The interface is English. English and Russian recap presentations are separate checked versions of the same evidence; recognition keeps the source language. A language switch waits for the complete requested presentation instead of mixing versions.
 
@@ -87,6 +99,8 @@ Publication normally waits 75 seconds after the end of its supporting material, 
 | Vercel Functions and private Blob storage | Signed publication, current public snapshots, revocable replay manifests, and gated asset reads |
 
 Codex was used to implement the domain model, server adapters, interfaces, and integration tests, and to investigate failures across those boundaries. VibeMachina supplied planning, design, and review guidance; it is not a runtime dependency. The product uses local [Onest](public/fonts/OFL-Onest.txt) font assets under the SIL Open Font License. The [brand assets](public/brand/) share an outlined SVG source.
+
+The [media handoff](docs/media/README.md) identifies reusable brand files and the scope of the authored interface captures. Real stream footage belongs to a separately reviewed source set.
 
 ## Run checks and operate the app
 

@@ -3,6 +3,7 @@ import {
   type PlaybackRef, type PrivacyTarget, type RecapClient, type RecapPlan, type ReplayControl,
   type Settings, type UpdateEvent,
 } from './contracts/index.js';
+import type { DockMarkerSnapshot } from '../features/dock/ports';
 
 export class ClientError extends Error {
   constructor(readonly status: number, readonly code: string, message: string, readonly retryable = false, readonly details?: unknown) {
@@ -84,6 +85,7 @@ export class HttpClient {
 }
 
 export class OwnerHttpClient extends HttpClient implements RecapClient {
+  listMarkers(sessionId: string, signal?: AbortSignal) {return this.request<DockMarkerSnapshot>(`/twitch/markers?sessionId=${encodeURIComponent(sessionId)}`, {signal});}
   getSnapshot() {return this.request<OwnerSnapshot>('/bootstrap');}
   subscribe(listener: (event: UpdateEvent) => void) {return subscribeUpdates(this.base + '/updates', {onUpdate: listener}, this.fetcher);}
   editChapter(id: string, patch: {title: string; summary: string; baseRevision: number}) {return this.request<Chapter>(`/chapters/${encodeURIComponent(id)}`, {method: 'PATCH', body: patch});}
