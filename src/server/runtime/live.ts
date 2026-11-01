@@ -69,7 +69,7 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     visible: input => twitch?.allowsMedia(input) ?? false,
     onRevoke: () => updates.publish({...scope, event: 'privacy.invalidated', data: {sessionId: engine.activeSessionId(), revision: 0}}),
   });
-  twitch = createTwitchRuntime({config, scope, channel, storage, engine, updates, clock, media});
+  twitch = createTwitchRuntime({config, scope, channel, storage, engine, updates, clock, media, publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : undefined});
   cloud = createCloudRuntime({scope, channel, engine, storage, publicOrigin: config.publicOrigin, sharedSecret: config.publishSharedSecret, clock, updates});
   const audio = new AudioIntakeService({repository: storage.repository, secret: config.sessionSecret, directory: resolve(config.dataDir, 'audio'), transcription: new OpenAITranscriptionProvider(transport), safety, now: clock.now,
     onSource: source => engine.drain(source.sessionId),
@@ -134,7 +134,7 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
   return {
     engine, owner, audio, media, channel, scope, auth: twitch.auth,
     routers: {auth: twitch.authRouter, owner: ownerRouter, overlay: createOverlayRouter({engine, clock}), media: createMediaRouter(media, mediaAuthorization)},
-    setup: () => ({twitch: twitch.status(), openai: {connected: false, configured: Boolean(config.openaiApiKey), paidCallsEnabled: storage.budget.status().enabled}}),
+    setup: () => ({twitch: twitch.status(), openai: {connected: false, configured: Boolean(config.openaiApiKey), paidCallsEnabled: storage.budget.status().enabled}, publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : null}),
     authorizeStream: (principal: {sessionId: string; role: 'owner'|'overlay'|'demo'; channelId: string; runId: string}) => principal.channelId === scope.channelId && principal.runId === 'live' && Boolean(storage.sessions.verify(scope, principal.sessionId, principal.role)),
     async start() {
       await engine.recoverPlayback();

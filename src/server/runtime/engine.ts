@@ -219,13 +219,22 @@ export class StoryEngine {
         }));
         if (phrases.length) {
           // Lore failure does not delay an already accepted chapter or a raid.
+          const showUnknown = async (ids: readonly string[]) => {
+            if (!this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) return;
+            for (const phrase of phrases.filter(value => ids.includes(value.id) && !this.state(job.sessionId).lore.some(lore => lore.id === value.id && lore.originKind !== 'unknown'))) await this.dispatch(job.sessionId, {type: 'lore.propose', ...phrase,
+              explanation: request.ticket.recapLanguage === 'ru' ? 'Фраза повторяется, но её происхождение пока не подтверждено.' : 'The phrase is recurring, but its origin is not confirmed.',
+              originRefs: [], exposureRefs: request.ticket.inputRefs, language: request.ticket.recapLanguage,
+              safety: {...held, reason: 'origin_needs_confirmation'},
+            });
+          };
           try {
             const proposals = await this.options.story.proposeLore(prepared, phrases, this.safety, signal);
             if (this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) for (const proposal of proposals.value.candidates) {
               await this.dispatch(job.sessionId, {type: 'lore.propose', ...proposal, exposureRefs: request.ticket.inputRefs, language: request.ticket.recapLanguage});
-              await this.presentOwnerLore(job.sessionId, proposal.id, signal);
+              try {await this.presentOwnerLore(job.sessionId, proposal.id, signal);} catch {signal.throwIfAborted();}
             }
-          } catch {signal.throwIfAborted();}
+            await showUnknown(proposals.value.heldIds);
+          } catch {signal.throwIfAborted(); await showUnknown(phrases.map(phrase => phrase.id));}
         }
       }
       this.setStatus('story', {state: 'ready', lastObservedAt: this.clock.iso(), message: null, action: null});

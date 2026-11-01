@@ -47,7 +47,7 @@ function eligibleCandidates(s:DomainState,effects:DomainEffect[],clock:Clock):bo
   let changed=false;
   const entities=[...new Set(s.candidates.map(c=>c.entityId))];
   for(const entityId of entities){
-    const eligible=s.candidates.filter(c=>c.entityId===entityId&&c.status==='pending'&&c.language===s.settings.recapLanguage&&c.eligibleAtMs<=clock.now()&&c.privacyEpoch===s.session.privacyEpoch&&c.ownerRevision===(s.ownerRevisions[entityId]??0)&&!s.suppressedIds.includes(entityId)&&safetyAllowsPublication(c.safety)&&c.inputRefs.every(r=>isRefActive(s,r))).sort((a,b)=>b.revision-a.revision);
+    const eligible=s.candidates.filter(c=>c.entityId===entityId&&(c.status==='pending'&&c.privacyEpoch===s.session.privacyEpoch||c.status==='published'&&!s.published?.chapters.some(p=>p.id===entityId&&p.revision===c.revision))&&c.language===s.settings.recapLanguage&&c.eligibleAtMs<=clock.now()&&c.ownerRevision===(s.ownerRevisions[entityId]??0)&&!s.suppressedIds.includes(entityId)&&safetyAllowsPublication(c.safety)&&c.inputRefs.every(r=>isRefActive(s,r))).sort((a,b)=>b.revision-a.revision);
     const next=eligible[0];if(!next)continue;
     const prev=s.published?.chapters.find(c=>c.id===entityId);
     if(prev&&prev.revision>next.revision){next.status='rejected';continue;}
@@ -140,6 +140,8 @@ function prune(s:DomainState){
   s.candidates=s.candidates.filter(c=>c.status!=='rejected');
   s.lorePresentations=s.lorePresentations.filter(p=>s.lore.some(l=>l.id===p.entityId&&l.revision===p.entityRevision)&&s.nodes[p.id]?.active).slice(-100);
   const roots=new Set([...s.chapters.flatMap(c=>[c.id,...c.claimIds]),...s.lore.map(l=>l.id),...s.lorePresentations.map(p=>p.id),...s.moments.map(m=>m.id),...s.media.map(m=>m.id),...s.candidates.flatMap(c=>[c.id,...c.currentNodeId?[c.currentNodeId]:[]]),...s.memory.map(m=>m.id),...s.playbacks.map(p=>p.id),...s.pendingGeneration?.ticket.inputRefs.map(r=>r.id)??[]]);
+  for(const source of s.sources)if(source.kind==='channel_metadata'&&source.endMs===s.session.metadataMaxDependencyEndMs)roots.add(source.id);
+  for(const node of Object.values(s.nodes)){const metadata=(node.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata;if(metadata?.kind==='channel_metadata'&&metadata.endMs===s.session.metadataMaxDependencyEndMs)roots.add(node.id);}
   for(const node of Object.values(s.nodes))if(node.kind==='relation'&&node.body&&typeof node.body==='object'&&'from' in node.body&&roots.has(String(node.body.from)))roots.add(node.id);
   const visit=(id:string)=>{const node=s.nodes[id];if(!node)return;for(const ref of [...node.supports,...node.exposedTo])if(!roots.has(ref.id)){roots.add(ref.id);visit(ref.id);}};
   for(const id of [...roots])visit(id);
@@ -170,7 +172,14 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       if(s.openWindow)s.openWindow.refs=replace(s.openWindow.refs);for(const window of s.windows)window.refs=replace(window.refs);
       for(const phrase of s.phrases){phrase.refs=replace(phrase.refs);phrase.actors=[...new Set(phrase.refs.map(r=>s.sources.find(x=>x.id===r.id)?.actorId).filter((actor):actor is string=>!!actor))];}
       if(sourceAllowed(s,next)&&next.text&&next.text.length<=80)observePhrase(s,next,next.text);
-      for(const m of s.moments)if(m.dependencyRefs.some(r=>r.id===source.id)){m.dependencyRefs=replace(m.dependencyRefs);m.revision++;upsertNode(s,effects,{id:m.id,revision:m.revision,kind:'moment',supports:m.dependencyRefs,exposedTo:m.dependencyRefs,startMs:m.startMs,endMs:m.maxDependencyEndMs,active:true,body:m});}
+      if(!safetyAllowsPublication(event.safety)){
+        const affected=s.moments.filter(m=>m.dependencyRefs.some(r=>r.id===source.id)).map(m=>m.id);
+        for(const id of affected){const node=s.nodes[id];if(node)upsertNode(s,effects,{...node,revision:node.revision+1,active:false,body:null});}
+        s.moments=s.moments.filter(m=>!affected.includes(m.id));if(s.pendingClipId&&affected.includes(s.pendingClipId))s.pendingClipId=null;
+        for(const media of s.media)if(media.momentId&&affected.includes(media.momentId)){media.state='revoked';const node=s.nodes[media.id];if(node)upsertNode(s,effects,{...node,revision:node.revision+1,active:false,body:null});if(media.clipId&&media.manageUrl)effects.push({type:'clip.cleanup',clipId:media.clipId,manageUrl:media.manageUrl});}
+        if(s.openWindow)s.openWindow.refs=s.openWindow.refs.filter(r=>r.id!==source.id);for(const window of s.windows)window.refs=window.refs.filter(r=>r.id!==source.id);
+        if(affected.length)effects.push({type:'cancel',ids:affected});
+      }else for(const m of s.moments)if(m.dependencyRefs.some(r=>r.id===source.id)){m.dependencyRefs=replace(m.dependencyRefs);m.revision++;upsertNode(s,effects,{id:m.id,revision:m.revision,kind:'moment',supports:m.dependencyRefs,exposedTo:m.dependencyRefs,startMs:m.startMs,endMs:m.maxDependencyEndMs,active:true,body:m});}
       break;
     }
     case 'tick':advanceWindows(s,effects,offset(s,clock),clock);advancePlayback(s,effects,clock);break;
@@ -192,7 +201,7 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       if(!ready){effects.push({type:'held',reason:'language_not_ready'});break;}
       const pauseChanged=event.settings.listeningPaused!==s.settings.listeningPaused;s.settings=structuredClone(event.settings);
       if(pauseChanged){s.captureEpoch++;if(s.settings.listeningPaused&&s.pendingGeneration){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}}
-      if(languageChanged){if(s.pendingGeneration){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}for(const c of s.candidates)if(c.language===s.settings.recapLanguage)c.status='pending';if(s.published){s.published.chapters=[];s.published.lore=[];s.published.language=s.settings.recapLanguage;}s.current=null;if(!eligibleCandidates(s,effects,clock)&&s.published)publish(s,effects,clock);}
+      if(languageChanged){if(s.pendingGeneration){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}if(s.published){s.published.chapters=[];s.published.lore=[];s.published.language=s.settings.recapLanguage;}s.current=null;if(!eligibleCandidates(s,effects,clock)&&s.published)publish(s,effects,clock);}
       break;
     }
     case 'chat.clear':{
@@ -242,7 +251,7 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
     case 'language':{
       // Whole projection switch requires every currently published chapter's checked revision.
       const ids=s.published?.chapters??[];
-      if(loreLanguageReady(s,event.language,clock)&&ids.every(c=>s.candidates.some(p=>p.entityId===c.id&&p.revision===c.revision&&p.language===event.language&&safetyAllowsPublication(p.safety)&&(p.status==='published'||p.privacyEpoch===s.session.privacyEpoch)&&p.inputRefs.every(r=>isRefActive(s,r))))){s.settings.recapLanguage=event.language;for(const c of s.candidates)if(c.language===event.language)c.status='pending';if(s.published){s.published.chapters=[];s.published.lore=[];}s.current=null;if(!eligibleCandidates(s,effects,clock)&&s.published)publish(s,effects,clock);}else effects.push({type:'held',reason:'language_not_ready'});break;
+      if(loreLanguageReady(s,event.language,clock)&&ids.every(c=>s.candidates.some(p=>p.entityId===c.id&&p.revision===c.revision&&p.language===event.language&&safetyAllowsPublication(p.safety)&&(p.status==='published'||p.privacyEpoch===s.session.privacyEpoch)&&p.inputRefs.every(r=>isRefActive(s,r))))){s.settings.recapLanguage=event.language;if(s.published){s.published.chapters=[];s.published.lore=[];}s.current=null;if(!eligibleCandidates(s,effects,clock)&&s.published)publish(s,effects,clock);}else effects.push({type:'held',reason:'language_not_ready'});break;
     }
     case 'lore.propose':{
       const term=normalizeTerm(event.term),observation=s.phrases.find(p=>p.term===term||p.aliases.includes(term));
@@ -322,6 +331,7 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
   }
   for(const candidate of reconcilePrivacyEpoch(s,previous.session.privacyEpoch,effects))addCandidate(s,effects,candidate);
   eligibleCandidates(s,effects,clock);
+  if(!s.published&&publishedLore(s,clock).length)publish(s,effects,clock);
   if(s.published&&s.session.status!=='finalized'){
     const matured=(end:number)=>Date.parse(s.session.startedAt)+end+s.settings.publicationDelaySeconds*1000<=clock.now();
     const lore=publishedLore(s,clock);
@@ -360,6 +370,7 @@ export function loreAnswer(state:DomainState,term:string):string {
   const lore=state.published?.lore.find(l=>normalizeTerm(l.term)===normalized||l.id===canonicalLore?.id);
   return lore?.explanation??(state.settings.recapLanguage==='ru'?'Происхождение не подтверждено.':'Its origin is not confirmed.');
 }
+
 
 
 

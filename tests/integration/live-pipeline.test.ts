@@ -7,6 +7,7 @@ import express from 'express';
 import {createStorage} from '../../src/server/storage/index.js';
 import {AudioIntakeService, encodeWav} from '../../src/server/audio/index.js';
 import {SafetyService} from '../../src/server/providers/safety.js';
+import type {OpenAIStoryProvider} from '../../src/server/providers/story.js';
 import {PrivateMediaCache} from '../../src/server/media/cache.js';
 import {createMediaRouter} from '../../src/server/media/router.js';
 import {StoryEngine} from '../../src/server/runtime/engine.js';
@@ -23,7 +24,7 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => {for (const action of cleanup.splice(0).reverse()) await action();});
 
 describe('authored WAV through the assembled live pipeline', () => {
-  it('holds a real accepted WAV, publishes grounded text, then revokes its public and local derivatives', async () => {
+  it('holds a real accepted WAV, publishes grounded bilingual text, then revokes its public and local derivatives', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'previously-pipeline-'));
     cleanup.push(() => rmSync(directory, {recursive: true, force: true}));
     const start = Date.parse('2026-11-02T00:00:00.000Z'); let now = start;
@@ -39,8 +40,14 @@ describe('authored WAV through the assembled live pipeline', () => {
       ], relations: [], currentAttemptId: null, language: 'en', missingContext: []};
       return {value, model: 'authored', requestId: 'authored', usage: {chargedMicroUsd: 0}};
     });
+    const present = vi.fn<OpenAIStoryProvider['present']>(async (claims, input) => {
+      expect(claims[0].id).toMatch(/^claim:/);
+      expect(input.claimRefs).toEqual([{id: claims[0].id, revision: 1}]);
+      const make = (language: 'en'|'ru') => ({id: `${input.entityId}:${language}`, entityId: input.entityId, revision: input.revision, language, title: language === 'en' ? 'Testing the saved note' : 'Проверка сохранения заметки', summary: language === 'en' ? claims[0].text : 'После перезагрузки заметка исчезла.', claimRefs: input.claimRefs!, safety: {moderation: 'allowed' as const, pii: 'allowed' as const, checkedAt: clock.iso(), reason: null}, eligibleAt: input.eligibleAt, current: {goal: null, change: null, now: language === 'en' ? claims[0].text : 'После перезагрузки заметка исчезла.'}});
+      return {en: make('en'), ru: make('ru')};
+    });
     let cloud: CloudRuntime | undefined;
-    const engine = new StoryEngine({scope, channel, storage, clock, updates, safety, story: {propose}, onEffects: (...args) => cloud?.onEffects(...args)});
+    const engine = new StoryEngine({scope, channel, storage, clock, updates, safety, story: {propose, present}, onEffects: (...args) => cloud?.onEffects(...args)});
     storage.repository.createSession(scope, {id: 'stream_fixture', startedAt: new Date(start).toISOString()});
     storage.repository.updateSettings(scope, 0, {listeningPaused: false});
     const cloudService = createPublicationService({store: new MemoryBlobStore(), channelLogin: channel.login, now: clock.now});
@@ -64,6 +71,7 @@ describe('authored WAV through the assembled live pipeline', () => {
     expect(await engine.executeStory(generation, new AbortController().signal)).toEqual({state: 'done'});
     storage.repository.finishJob(scope, generation.id, generation.leaseToken, 'done');
     expect(propose).toHaveBeenCalledOnce();
+    expect(present).toHaveBeenCalledOnce();
     const generated = engine.state('stream_fixture');
     expect(generated.chapters[0].summary).toBe('The note disappeared after a reload.');
     expect(generated.chapters[0].title).toBe('Testing the saved note');
@@ -83,6 +91,10 @@ describe('authored WAV through the assembled live pipeline', () => {
     expect(engine.state('stream_fixture').published?.chapters).toHaveLength(1);
     for (let n = 0; n < 10 && await cloud.tick() !== 'idle'; n++) { /* Drain durable fixture effects. */ }
     expect((await cloudService.readSnapshot(scope.channelId)).chapters[0].summary).toContain('disappeared');
+    const russian = await engine.dispatch('stream_fixture', {type: 'language', language: 'ru'});
+    expect(russian.published?.language).toBe('ru');
+    expect(russian.published?.current?.now).toBe('После перезагрузки заметка исчезла.');
+    expect(russian.published?.chapters[0].summary).toBe('После перезагрузки заметка исчезла.');
     const forgotten = await engine.dispatch('stream_fixture', {type: 'privacy', target: {kind: 'interval', sessionId: 'stream_fixture', fromMs: 0, toMs: 20_000}});
     expect(forgotten.sources.find(source => source.id === accepted.sourceId)?.text).toBeNull();
     expect(forgotten.published?.chapters).toHaveLength(0);
@@ -91,6 +103,7 @@ describe('authored WAV through the assembled live pipeline', () => {
     expect((await cloudService.readSnapshot(scope.channelId)).chapters).toHaveLength(0);
     const recovered = new StoryEngine({scope, channel, storage, clock, updates, safety, story: {propose}}).state('stream_fixture');
     expect(JSON.stringify(recovered)).not.toContain('The note disappeared after a reload.');
+    expect(JSON.stringify(recovered)).not.toContain('После перезагрузки заметка исчезла.');
     expect(storage.budget.status().usedMicroUsd).toBe(0);
   });
 });

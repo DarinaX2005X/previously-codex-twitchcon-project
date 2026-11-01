@@ -1,6 +1,6 @@
 import type { PrivacyTarget, Source } from '../shared/contracts/index.js';
 import type { DomainState, DomainEffect } from './types.js';
-import { normalizeTerm, overlaps, leafRefs, uniqueRefs } from './evidence.js';
+import { normalizeTerm, overlaps, leafRefs, uniqueRefs, canonical } from './evidence.js';
 
 /** Called on a cloned transition state. Storage must commit target + graph + checkpoint atomically. */
 export function invalidateDomain(state:DomainState,target:PrivacyTarget,effects:DomainEffect[],additionalRanges:{startMs:number;endMs:number}[]=[]):void {
@@ -21,12 +21,16 @@ export function invalidateDomain(state:DomainState,target:PrivacyTarget,effects:
   }
   if(target.kind==='session')for(const id of Object.keys(state.nodes))affected.add(id);
   for(const media of state.media)if(ranges.some(r=>overlaps(media.captureStartMs,media.captureEndMs,r.startMs,r.endMs)))affected.add(media.id);
-  if(target.kind==='session'||ranges.some(r=>overlaps(state.session.metadataMaxDependencyEndMs,state.session.metadataMaxDependencyEndMs,r.startMs,r.endMs))&&state.sources.some(source=>source.kind==='channel_metadata'&&affected.has(source.id)&&source.endMs===state.session.metadataMaxDependencyEndMs)){
+  const affectedMetadata=state.sources.some(source=>source.kind==='channel_metadata'&&affected.has(source.id)&&source.endMs===state.session.metadataMaxDependencyEndMs)||Object.values(state.nodes).some(node=>{const metadata=(node.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata;return metadata?.kind==='channel_metadata'&&affected.has(node.id)&&metadata.endMs===state.session.metadataMaxDependencyEndMs;});
+  if(target.kind==='session'||affectedMetadata){
     state.metadataReviewed=false;state.session.title='';state.session.category='';state.session.metadataMaxDependencyEndMs=0;
     if(state.published)state.published.session={...state.published.session,title:'',category:'',metadataMaxDependencyEndMs:0};
   }
   // Both support and exposure edges participate, regardless of pin, language or object kind.
-  let changed=true;while(changed){changed=false;for(const node of Object.values(state.nodes))if(!affected.has(node.id)&&[...node.supports,...node.exposedTo].some(r=>affected.has(r.id))){affected.add(node.id);changed=true;}}
+  let changed=true;while(changed){changed=false;for(const node of Object.values(state.nodes))if(!affected.has(node.id)&&[...node.supports,...node.exposedTo].some(r=>affected.has(r.id))){affected.add(node.id);changed=true;}
+    for(const presentation of [...state.candidates,...state.lorePresentations]){if(affected.has(presentation.id)&&!affected.has(presentation.entityId)){affected.add(presentation.entityId);changed=true;}if(affected.has(presentation.entityId)&&!affected.has(presentation.id)){affected.add(presentation.id);changed=true;}}
+  }
+  const preservedCurrent=state.candidates.some(c=>c.status==='published'&&c.language===state.settings.recapLanguage&&canonical(c.current)===canonical(state.current)&&!affected.has(c.id)&&!affected.has(c.entityId)&&!c.inputRefs.some(ref=>affected.has(ref.id)))?state.current:null;
   for(const node of Object.values(state.nodes))if(affected.has(node.id)){node.active=false;node.body=null;node.revision++;effects.push({type:'entity.upsert',node:{...node}});}
   state.memory=state.memory.filter(m=>!affected.has(m.id)&&!m.refs.some(r=>affected.has(r.id)));
   state.chapters=state.chapters.filter(c=>!affected.has(c.id));
@@ -45,10 +49,10 @@ export function invalidateDomain(state:DomainState,target:PrivacyTarget,effects:
   state.session.privacyEpoch++;
   for(const playback of state.playbacks){if(['queued','preparing','playing'].includes(playback.status)){playback.status='cancelled';playback.plan=null;effects.push({type:'playback.cancel',playback:{...playback}});}}
   state.playbacks=state.playbacks.filter(p=>p.status!=='cancelled');
-  state.current=null;
+  state.current=preservedCurrent;
   if(state.activeChapterId&&affected.has(state.activeChapterId))state.activeChapterId=null;
   if(state.pendingClipId&&affected.has(state.pendingClipId))state.pendingClipId=null;
-  if(state.published){state.published={...state.published,privacyEpoch:state.session.privacyEpoch,current:null,chapters:state.published.chapters.filter(c=>!affected.has(c.id)),lore:state.published.lore.filter(l=>!affected.has(l.id)),moments:state.published.moments.filter(m=>!affected.has(m.id)&&!state.media.some(x=>x.momentId===m.id&&x.state==='revoked'))};}
+  if(state.published){state.published={...state.published,privacyEpoch:state.session.privacyEpoch,current:preservedCurrent,chapters:state.published.chapters.filter(c=>!affected.has(c.id)),lore:state.published.lore.filter(l=>!affected.has(l.id)),moments:state.published.moments.filter(m=>!affected.has(m.id)&&!state.media.some(x=>x.momentId===m.id&&x.state==='revoked'))};}
   if(target.kind==='session'){state.session.title='';state.session.category='';state.session.metadataMaxDependencyEndMs=0;}
   state.lastReceipt={revision:state.session.publicationRevision+1,privacyEpoch:state.session.privacyEpoch,hiddenEntityIds:[...affected].sort(),rebuildStatus:'queued',publicSync:'pending',externalClipActions};
   effects.push({type:'privacy',target,receipt:state.lastReceipt},{type:'cancel',ids:[...affected]});

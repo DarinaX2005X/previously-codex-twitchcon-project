@@ -115,6 +115,29 @@ describe('atomic domain persistence with the real reducer',()=>{
     expect(JSON.stringify(job.payload)).not.toContain('Owner correction');
     expect(state().chapters[0]?.summary).toBe(ownerSource.text);
   });
+  it('commits unrelated Forget despite pending candidates and requeues held owner work at the new epoch',()=>{
+    dispatch({type:'source',source:source()});commitGenerated();
+    expect(state().candidates.some(candidate=>candidate.status==='pending')).toBe(true);
+    dispatch({type:'privacy',target:{kind:'message',sessionId:'s1',externalMessageId:'not-present'}});
+    expect(state().session.privacyEpoch).toBe(1);expect(state().candidates.every(candidate=>candidate.status==='published'||candidate.privacyEpoch===1)).toBe(true);
+    expect(store.repository.getSource(scope,'speech1')?.text).toBe(source().text);
+    const chapter=state().chapters[0]!,ownerSource:Source={...source('owner-pending',now-start,now-start),kind:'owner_statement',moderation:'pending',text:'Owner review survives unrelated deletion.'};
+    dispatch({type:'owner.edit',entityId:chapter.id,baseRevision:chapter.revision,source:ownerSource,title:'Pending edit',summary:ownerSource.text!,safety:{moderation:'pending',pii:'pending',checkedAt:null,reason:null}});
+    const old=store.repository.claimJob(scope,{kinds:['owner.review']})!;expect(old.privacyEpoch).toBe(1);
+    dispatch({type:'privacy',target:{kind:'message',sessionId:'s1',externalMessageId:'also-not-present'}});
+    const fresh=store.repository.claimJob(scope,{kinds:['owner.review']})!;
+    expect(fresh.id).not.toBe(old.id);expect(fresh.privacyEpoch).toBe(2);expect(fresh.payload).toMatchObject({sourceId:ownerSource.id,sourceRevision:1,privacyEpoch:2});
+    expect(store.repository.renewJob(scope,old.id,old.leaseToken)).toBe(false);
+  });
+  it('erases metadata source and materialized session heading through standalone privacy',()=>{
+    dispatch({type:'metadata',title:'Private heading fixture',category:'Development',atMs:15000,safety:safe});
+    expect(store.repository.getSession(scope,'s1').title).toBe('Private heading fixture');
+    store.repository.invalidate(scope,{kind:'interval',sessionId:'s1',fromMs:10000,toMs:20000},{idempotencyKey:'metadata-privacy',reason:'privacy'});
+    expect(store.repository.getSession(scope,'s1')).toMatchObject({title:'',category:''});expect(store.repository.getDomainCheckpoint(scope,'s1').checkpoint).toBeNull();
+    expect(()=>store.repository.updateSession(scope,'s1',{title:'Private heading fixture',metadataMaxDependencyEndMs:15000})).toThrow(/newer observation/);
+    expect(readFileSync(path).includes(Buffer.from('Private heading fixture'))).toBe(false);
+    dispatch({type:'metadata',title:'A later public heading',category:'Development',atMs:30000,safety:safe});expect(store.repository.getSession(scope,'s1').title).toBe('A later public heading');
+  });
   it('quarantines chat.clear context without erasing speech or allowing late old chat',()=>{
     dispatch({type:'source',source:{...source('chat',500,500),kind:'chat',actorId:'viewer',externalMessageId:'chat-message',moderation:'pending',text:'Old chat'}});
     dispatch({type:'source',source:{...source('speech',600,700),moderation:'pending'}});

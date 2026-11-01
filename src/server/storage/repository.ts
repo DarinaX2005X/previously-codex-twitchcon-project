@@ -96,6 +96,8 @@ export class SqliteRepository {
     return this.db.transaction(()=>{
       const current=this.getSession(scope,id),next={...current,...patch};
       if (this.sessionForgotten(scope,id) && (next.title || next.category || next.metadataMaxDependencyEndMs)) throw new StorageError('conflict','Forgotten session metadata cannot be restored.');
+      const metadataFence=this.controlGet<number>(scope,`metadata-fence:${id}`);
+      if(metadataFence!==null && (next.title || next.category) && next.metadataMaxDependencyEndMs<=metadataFence)throw new StorageError('conflict','Forgotten channel metadata requires a newer observation.');
       if ((current.status==='finalized' && next.status!=='finalized') || (current.status==='closing' && next.status==='live')) throw new StorageError('conflict','A closed session cannot be reopened.');
       if (next.status==='finalized' && (!next.endedAt || !next.finalizedAt)) throw new StorageError('invalid_input','Finalization requires end and finalization times.');
       if (next.title.length>200 || next.category.length>100) throw new StorageError('invalid_input','Session metadata exceeds its limit.');
@@ -413,6 +415,11 @@ export class SqliteRepository {
       return true;
     });
   }
+  private clearAffectedMetadata(scope:Scope):void {
+    const rows=this.db.all(`SELECT e.id,e.metadata_end_ms FROM sessions e WHERE e.channel_id=? AND e.run_id=? AND EXISTS(
+      SELECT 1 FROM sources s JOIN affected a ON a.id=s.id WHERE s.channel_id=e.channel_id AND s.run_id=e.run_id AND s.session_id=e.id AND s.kind='channel_metadata' AND s.end_ms=e.metadata_end_ms)`,...this.scope(scope));
+    for(const row of rows){const id=String(row.id),old=this.controlGet<number>(scope,`metadata-fence:${id}`);this.controlPut(scope,`metadata-fence:${id}`,Math.max(old ?? 0,Number(row.metadata_end_ms)));this.db.run("UPDATE sessions SET title='',category='',metadata_end_ms=0 WHERE channel_id=? AND run_id=? AND id=?",...this.scope(scope),id);}
+  }
   /** Invalidates exposed old versions without tombstoning the corrected/quarantined source. */
   invalidateSourceVersions(scope:Scope,sessionId:string,sourceIds:string[],options:PrivacyOptions):InvalidationReceipt {
     return this.db.transaction(()=>{
@@ -427,6 +434,7 @@ export class SqliteRepository {
         AND EXISTS(SELECT 1 FROM sources s JOIN affected a ON a.id=s.id WHERE s.channel_id=e.channel_id AND s.run_id=e.run_id AND ranges_overlap(s.start_ms,s.end_ms,e.start_ms,e.end_ms))`,...this.scope(scope),sessionId);
       this.db.run(`INSERT OR IGNORE INTO affected WITH RECURSIVE descendants(id) AS (SELECT id FROM affected UNION SELECT d.child_id FROM dependencies d JOIN descendants a ON a.id=d.parent_id WHERE d.channel_id=? AND d.run_id=?) SELECT id FROM descendants`,...this.scope(scope));
       for(const table of ['entities','jobs','outbox','generation_jobs'])this.db.run(`INSERT OR IGNORE INTO affected_sessions SELECT session_id FROM ${table} WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)`,...this.scope(scope));
+      this.clearAffectedMetadata(scope);
       const hiddenEntityIds=this.db.all('SELECT id FROM entities WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)',...this.scope(scope)).map(row=>String(row.id));
       const externalClipActions:{clipId:string;manageUrl:string}[]=[];
       for(const row of this.db.all("SELECT body FROM entities WHERE channel_id=? AND run_id=? AND kind IN ('media','moment') AND id IN (SELECT id FROM affected) AND body IS NOT NULL",...this.scope(scope))){const value=JSON.parse(String(row.body)) as {clipId?:unknown};if(typeof value.clipId==='string')externalClipActions.push({clipId:value.clipId,manageUrl:'https://dashboard.twitch.tv/content/clips'});}
@@ -496,6 +504,7 @@ export class SqliteRepository {
         AND (EXISTS (SELECT 1 FROM sources s JOIN affected a ON a.id=s.id WHERE s.channel_id=e.channel_id AND s.run_id=e.run_id AND ranges_overlap(s.start_ms,s.end_ms,e.start_ms,e.end_ms))
         ${target.kind==='interval' ? 'OR ranges_overlap(e.start_ms,e.end_ms,?,?)' : ''})`,...this.scope(scope),target.sessionId,...(target.kind==='interval' ? [target.fromMs,target.toMs] : []));
       this.db.run(`INSERT OR IGNORE INTO affected WITH RECURSIVE descendants(id) AS (SELECT id FROM affected UNION SELECT d.child_id FROM dependencies d JOIN descendants a ON a.id=d.parent_id WHERE d.channel_id=? AND d.run_id=?) SELECT id FROM descendants`,...this.scope(scope));
+      this.clearAffectedMetadata(scope);
       const hiddenEntityIds=this.db.all('SELECT id FROM entities WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)',...this.scope(scope)).map(row=>String(row.id));
       const externalClipActions:{clipId:string;manageUrl:string}[]=[];
       for (const row of this.db.all("SELECT body FROM entities WHERE channel_id=? AND run_id=? AND kind IN ('media','moment') AND id IN (SELECT id FROM affected)",...this.scope(scope))) {

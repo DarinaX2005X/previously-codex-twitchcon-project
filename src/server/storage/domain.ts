@@ -68,6 +68,8 @@ export class DomainPersistence {
   }
   private eventContext(scope:Scope,event:EventEnvelope<unknown>,privacyEpoch:number):VersionRef[]|null {
     const payload=event.payload && typeof event.payload==='object' ? event.payload as Record<string,unknown> : {},type=typeof payload.type==='string' ? payload.type : event.kind;
+    const source=SourceSchema.safeParse(payload.source);
+    if(source.success && this.repository.sourcePolicy(scope,source.data)==='deleted')return null;
     if(type==='generation.result'){
       const ticket=GenerationTicketSchema.safeParse(payload.ticket);if(!ticket.success)return null;
       const value=ticket.data,job=this.db.get('SELECT ticket,status FROM generation_jobs WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),value.jobId);
@@ -182,7 +184,11 @@ export class DomainPersistence {
       const before=this.checkpoint(scope,sessionId),sessionBefore=this.repository.getSession(scope,sessionId);
       if(existingEvent && (existingEvent.domain_processed || existingEvent.payload===null))return {applied:false,duplicate:true,revision:before.revision,privacyEpoch:before.privacyEpoch};
       if(before.revision!==input.expectedRevision || before.privacyEpoch!==input.expectedPrivacyEpoch)throw new StorageError('conflict','Domain checkpoint changed.');
-      const removingBlock=(before.checkpoint?.blockedTerms ?? []).some(term=>!input.transition.state.blockedTerms.includes(term));
+      const eventPayload=event.payload && typeof event.payload==='object' ? event.payload as Record<string,unknown> : {},eventType=typeof eventPayload.type==='string' ? eventPayload.type : event.kind;
+      const requestShape=input.requestBody as {operation?:unknown;input?:{blocked?:unknown}}|undefined;
+      const explicitUnblock=eventType==='term.unblock' || requestShape?.operation==='lore.block' && requestShape.input?.blocked===false;
+      const removedTerms=(before.checkpoint?.blockedTerms ?? (explicitUnblock ? this.repository.listBlockedTerms(scope,sessionId,{limit:500}) : [])).filter(term=>!input.transition.state.blockedTerms.includes(term));
+      const removingBlock=removedTerms.length>0;
       if(input.expectedEntity){const entity=this.repository.getEntity(scope,input.expectedEntity.id),allowHidden=removingBlock && entity?.kind==='lore';if(!entity || entity.sessionId!==sessionId || (entity.status!=='active'&&!allowHidden) || entity.revision!==input.expectedEntity.revision)throw new StorageError('conflict','Entity revision changed.');}
       const state=structuredClone(input.transition.state),effects=input.transition.effects;
       if(state.session.id!==sessionId || state.session.channelId!==scope.channelId || state.session.runId!==scope.runId || state.channel.id!==scope.channelId || !SessionSchema.safeParse(state.session).success || !SettingsSchema.safeParse(state.settings).success || ![before.revision,before.revision+1].includes(state.revision))throw new StorageError('invalid_input','Domain checkpoint does not match its scope or revision.');
@@ -203,7 +209,8 @@ export class DomainPersistence {
       const oldBans=before.checkpoint?.bannedActors ?? [];
       for(const actor of state.bannedActors)this.db.run('INSERT INTO channel_bans VALUES(?,?,?) ON CONFLICT DO NOTHING',...this.scoped(scope),actor);
       for(const actor of oldBans)if(!state.bannedActors.includes(actor))this.db.run('DELETE FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?',...this.scoped(scope),actor);
-      for(const term of before.checkpoint?.blockedTerms ?? [])if(!state.blockedTerms.includes(term))this.repository.unblockTerm(scope,term);
+      if(['unban','channel.unban'].includes(eventType) && typeof eventPayload.actorId==='string')this.db.run('DELETE FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?',...this.scoped(scope),eventPayload.actorId);
+      for(const term of removedTerms)this.repository.unblockTerm(scope,term);
       for(const source of sourceChanges){if(source.sessionId!==sessionId)throw new StorageError('inaccessible','Source belongs to another session.');this.source(scope,eventId,source);}
       const payload=event.payload && typeof event.payload==='object' ? event.payload as {type?:unknown} : {};
       const ownerAction=event.kind.startsWith('owner.') || event.kind.startsWith('lore.') || typeof payload.type==='string' && (payload.type.startsWith('owner.') || payload.type.startsWith('lore.')) || sourceChanges.some(source=>source.kind==='owner_statement') || Object.entries(state.ownerRevisions).some(([id,revision])=>revision>(before.checkpoint?.ownerRevisions[id] ?? 0));

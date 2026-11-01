@@ -131,6 +131,18 @@ describe('bounded identifiers-only updates', () => {
 });
 
 describe('durable bounded scheduler', () => {
+  it('requeues interrupted read-only owner review work on shutdown', async () => {
+    const store = createStorage({path: join(temp(), 'review.sqlite'), now: () => 1000});
+    const scope = {channelId: 'c', runId: 'live'};
+    store.repository.ensureChannel(scope, 'channel'); store.repository.createSession(scope, {id: 's', startedAt: '2026-01-01T00:00:00.000Z'});
+    store.repository.enqueueJob(scope, {id: 'review', sessionId: 's', kind: 'owner.review', businessKey: 'review-once', payload: {}});
+    const scheduler = new BoundedScheduler(store.repository, [{scope, kinds: ['owner.review'], concurrency: 1, retryOnShutdown: true, execute: async (_job, signal) => {
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), {once: true})); return {state: 'done'};
+    }}], undefined, () => 1000);
+    scheduler.tick(); await Promise.resolve(); await scheduler.stop(1); await Promise.resolve();
+    expect(store.repository.claimJob(scope, {kinds: ['owner.review']})?.id).toBe('review');
+    store.close();
+  });
   it('runs only lane capacity and leaves undispatched accepted jobs durable on shutdown', async () => {
     const store = createStorage({path: join(temp(), 'test.sqlite'), now: () => 1000});
     const scope = {channelId: 'c', runId: 'live'};
