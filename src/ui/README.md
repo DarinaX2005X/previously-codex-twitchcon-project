@@ -1,0 +1,23 @@
+# Shared interface API
+
+Import components from `src/ui/index.ts` and import `src/styles/index.css` once at the application root. React is the only runtime dependency. Onest is served from `/fonts/Onest-Variable.ttf` with its OFL license. Preload this exact URL with `as="font" type="font/ttf" crossorigin` in the document head if the first screen uses it.
+
+`Button`, `QuietButton` and `IconButton` accept native button props. `pending` disables activation, sets `aria-busy` and preserves the label and dimensions. `tone` selects primary, quiet or danger. `IconButton` requires a descriptive `label` and an SVG or other icon child. Buttons default to `type="button"`; submit buttons explicitly set `type="submit"`.
+
+`Field` and `Textarea` accept native controlled `value` and `onChange`, a required visible `label`, optional `hint` and text `error`. Their label, help and error IDs are connected automatically. `Select` accepts the same label/error contract and `options: { value, label, disabled? }[]`; its native popup retains platform keyboard behavior while the closed control is fully styled. Never pass a placeholder in place of a label.
+
+`SegmentedControl` takes `label`, `value`, `options`, `onChange(value)` and optional `disabled`. Native radios provide a single tab stop and arrow-key selection. `LanguageControl` takes `value: 'en' | 'ru'` and `onChange`; the interface remains English. `recapMessages` in `src/i18n/index.ts` supplies complete EN/RU labels for the recap presentation. Generated content comes from feature contracts rather than this catalog.
+
+`Dialog` and `Sheet` take `open`, `onOpenChange`, `title`, children, optional `description`, `footer`, `closeLabel`, `dismissible` and `className`. A native modal dialog makes the surrounding document inert and contains keyboard focus. Escape and the close control request `onOpenChange(false)`. Closing or unmounting returns focus to the connected opener. Set `dismissible={false}` only while a real operation requires staying open. The parent owns save/cancel, retained draft data and asynchronous error handling. Backdrop clicks do not dismiss, so a pointer movement cannot discard an edit.
+
+`InlineNotice` takes children, optional `tone` (info/success/warning/danger), `action`, and `live`. Set `live` only for a newly caused result; initial notices should not all announce at page arrival. `SourceStatus` takes a fully meaningful `label`, `state` and required `observation`, such as the last observed time or an explicit absence of observations. It never invents freshness from the current browser clock.
+
+`Timecode` uses `milliseconds`; it becomes a semantic seek button only when `onSeek(milliseconds)` is provided. `formatTimecode` is also exported. `ChapterRow` is a flat article shell with `title`, children, optional `atMs`, `onSeek`, `state`, `sources`, `actions`, `selected` and `className`. `SourceDisclosure` takes `label`, children and optional controlled `open`/`onOpenChange`. Put evidence behind the disclosure, rather than loading private source text into a public surface.
+
+`MomentPlayer` takes `title`, `atMs`, optional real video `src`/`poster`, `sourceText`, `unavailableMessage`, `onRetry` and `muted` (default true). Missing or failed media shows text and the time instead of a pretend playback control. The parent must clear or unmount the component immediately when a source loses eligibility; this presentation shell does not enforce privacy leases.
+
+`DockLayout` takes `header` and children. The fixed top and independently scrolling history fit a 360–480 px column. `ReadingLayout` provides the paper surface up to 880 px. `ActionGroup` wraps actions without horizontal overflow. Material colors inherit from `data-theme="light"` or `data-theme="dark"`; use a light theme on a paper editor nested in a dock. Typography, color, spacing, radii, focus, shadows and response timings live in `src/styles/tokens.css`. Cinematic broadcast motion belongs to its own scene renderer.
+
+`Brand` takes `variant` (wordmark/mark/small-mark), `tone` (background light/dark) and `className`. `/brand/logo-readme.svg` and `.png` preserve the requested white rounded container with thick slate outline. All wordmarks are path outlines. The two-frame small mark is the monochrome version for 16 px use. SVG and PNG share the vector geometry in `/brand/export_brand.py` and do not consult installed fonts.
+
+`FoundationShowcase` is a temporary `/foundation` review component with explicitly authored sample content. Editing changes the sample for the visit only. It is not an application route, a recorded replay or evidence of a live recap. The root application owns routing and access.

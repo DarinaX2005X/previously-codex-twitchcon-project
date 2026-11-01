@@ -1,0 +1,86 @@
+@font-face {
+  font-family: Onest;
+  src: url('/fonts/Onest-Variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --pv-canvas: #e9ebe6;
+  --pv-paper: #f5f4ec;
+  --pv-plane: #d5dad2;
+  --pv-slate: #252b2c;
+  --pv-raised: #3a4440;
+  --pv-action: #f26844;
+  --pv-action-hover: #fa7d5a;
+  --pv-action-text: #252b2c;
+  --pv-border: #66716e;
+  --pv-edge: #c3c9bf;
+  --pv-success: #286345;
+  --pv-warning: #795214;
+  --pv-danger: #a93130;
+  --pv-surface: var(--pv-paper);
+  --pv-text: var(--pv-slate);
+  --pv-secondary: #4c5754;
+  --pv-control: #e3e7df;
+  --pv-control-hover: #d5dad2;
+  --pv-focus: #aa3e24;
+  --pv-font: Onest, Arial, sans-serif;
+  --pv-text-body: 1.0625rem;
+  --pv-text-label: .9375rem;
+  --pv-text-control: 1rem;
+  --pv-text-heading: 1.75rem;
+  --pv-text-result: 2.375rem;
+  --pv-radius-stage: 32px;
+  --pv-radius-sheet: 24px;
+  --pv-radius-chapter: 18px;
+  --pv-radius-control: 14px;
+  --pv-radius-plate: 8px;
+  --pv-space-1: 4px;
+  --pv-space-2: 8px;
+  --pv-space-3: 12px;
+  --pv-space-4: 16px;
+  --pv-space-6: 24px;
+  --pv-space-8: 32px;
+  --pv-space-12: 48px;
+  --pv-space-16: 64px;
+  --pv-shadow-rest: 0 1px 1px #252b2c14, 0 6px 16px -8px #252b2c28;
+  --pv-shadow-raised: 0 2px 2px #252b2c18, 0 20px 30px -14px #252b2c38;
+  --pv-shadow-overlay: 0 2px 4px #252b2c22, 0 24px 56px -16px #252b2c55;
+  --pv-motion-press: 90ms;
+  --pv-motion-recover: 180ms;
+  --pv-motion-edit: 240ms;
+  --pv-motion-reorder: 260ms;
+  --pv-ease: cubic-bezier(.16, 1, .3, 1);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --pv-surface: var(--pv-slate);
+  --pv-text: #f5f4ec;
+  --pv-secondary: #bbc5bd;
+  --pv-control: var(--pv-raised);
+  --pv-control-hover: #46534c;
+  --pv-focus: var(--pv-action);
+  --pv-edge: #56635c;
+  --pv-success: #9ed3af;
+  --pv-warning: #edc47c;
+  --pv-danger: #ffb5aa;
+  --pv-border: #8f9c95;
+}
+
+[data-theme='light'], .pv-dialog {
+  color-scheme: light;
+  --pv-surface: var(--pv-paper);
+  --pv-text: var(--pv-slate);
+  --pv-secondary: #4c5754;
+  --pv-control: #e3e7df;
+  --pv-control-hover: #d5dad2;
+  --pv-focus: #aa3e24;
+  --pv-edge: #c3c9bf;
+  --pv-success: #286345;
+  --pv-warning: #795214;
+  --pv-danger: #a93130;
+  --pv-border: #66716e;
+}

@@ -1,6 +1,8 @@
 # Dependencies and generated builds
 node_modules/
 dist/
+dist-public/
+dist-server/
 build/
 .next/
 .turbo/
