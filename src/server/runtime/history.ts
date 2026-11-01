@@ -42,11 +42,11 @@ export function withHistoryEntity(previous: DomainState, graph: EntityGraph): Do
     };
   }
   if (root.kind === 'chapter') {
-    const value = ChapterSchema.parse(root.body);
+    const parsed = ChapterSchema.safeParse(root.body);if(!parsed.success)throw new ApiError(404,'not_found','This historical chapter is unavailable.');const value=parsed.data;
     if (value.sessionId !== state.session.id) throw new ApiError(404, 'not_found', 'This item is unavailable.');
     state.chapters = includeBounded(state.chapters, {...value, revision: root.revision, ownerEditRevision: root.ownerRevision, pinned: root.pinned}, 300, state.activeChapterId);
   } else if (root.kind === 'lore') {
-    const value = LoreSchema.parse(root.body);
+    const parsed = LoreSchema.safeParse(root.body);if(!parsed.success)throw new ApiError(404,'not_found','This historical origin is unavailable.');const value=parsed.data;
     if (value.sessionId !== state.session.id) throw new ApiError(404, 'not_found', 'This item is unavailable.');
     state.lore = includeBounded(state.lore, {...value, revision: root.revision}, 50);
   } else throw new ApiError(404, 'not_found', 'This item is unavailable.');
@@ -87,6 +87,7 @@ export function historyItem(repository: SqliteRepository, state: Pick<DomainStat
 function projectHistoryItem(state: Pick<DomainState, 'channel'|'session'|'settings'>, graph: EntityGraph,
   filter: NonNullable<OwnerHistoryQuery['filter']>, nowMs: number): Chapter | Lore | null {
   const id=graph.root.id;
+  if(graph.root.kind==='chapter'?!ChapterSchema.safeParse(graph.root.body).success:!LoreSchema.safeParse(graph.root.body).success)return null;
   const context = withHistoryEntity(createDomainState({channel: state.channel, session: state.session, settings: state.settings}), graph);
   if (graph.root.kind === 'chapter') {
     const canonical = context.chapters[0]!;
@@ -125,7 +126,7 @@ export function enrichGenerationHistory(repository:SqliteRepository,transition:D
     const selectedCandidate=isChapter?graph.candidates.find(candidate=>candidate.status==='published'&&candidate.language===state.settings.recapLanguage&&candidate.chapter.title===item.title&&candidate.chapter.summary===item.summary):undefined;
     const presentations=graph.entities.filter(node=>node.kind==='presentation'&&(isChapter?node.id===selectedCandidate?.id:node.body&&typeof node.body==='object'&&'kind' in node.body&&node.body.kind==='lore'&&'language' in node.body&&node.body.language===state.settings.recapLanguage&&'term' in node.body&&node.body.term===item.term&&'explanation' in node.body&&node.body.explanation===item.explanation));
     const refs:VersionRef[]=uniqueRefs([{id,revision:graph.root.revision},...presentations.map(node=>({id:node.id,revision:node.revision}))]);
-    const allRefs=uniqueRefs([...request.ticket.inputRefs,{id:contextId,revision:1},...refs]);if(allRefs.length>100)continue;
+    const allRefs=uniqueRefs([...request.ticket.inputRefs,{id:contextId,revision:1},{id,revision:graph.root.revision}]);if(allRefs.length>100)continue;
     const packet=structuredClone(request.packet);
     let body:PublicChapter|Lore;
     if(isChapter){

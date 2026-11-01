@@ -63,6 +63,8 @@ The limits below are implementation bounds, not measured live capacity claims.
 | Reconnect updates | 1,000 identifier-only update records |
 | Private media cache | 512 MB or 12 files by default; a single download is capped at 80 MB |
 | Replay upload asset | At most 3,000,000 bytes |
+| Recording package | At most 100 assets and 32,000,000 declared bytes, including selected media; larger JSON is split into hashed event/provider chunks |
+| Assembled recording | At most 32,000,000 bytes, 10,000 events, and 10,000 provider outcomes |
 | Cloud snapshot | At most 1,000,000 bytes |
 | Cloud head | At most 100 episode pointers and 10 export manifests |
 

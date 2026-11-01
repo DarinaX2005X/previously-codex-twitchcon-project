@@ -88,6 +88,7 @@ describe('durable owner history',()=>{
     expect(allHistory(h,'chapter').some(item=>item.id==='chapter:000')).toBe(false);
     await expect(h.service.editChapter(h.context('history-deleted-edit'),'chapter:000',{summary:'Must not return.'})).rejects.toMatchObject({status:404});
     expect(()=>h.service.listHistory(h.principal,{sessionId:'session',kind:'chapter',limit:1,cursor:first.nextCursor!})).toThrow('History changed');
+    await expect(h.service.privacy(h.context('history-repeat-removal'),{target:{kind:'entity',sessionId:'session',id:'chapter:000'},reason:'Repeat removal of an unavailable historical item'})).resolves.toHaveProperty('privacyEpoch');
   });
 
   it('fails closed during privacy recovery and rejects foreign or mismatched history cursors',async()=>{
@@ -104,7 +105,9 @@ describe('durable owner history',()=>{
     await h.engine.dispatch('session',{type:'generation.failed',jobId:unrelated.pendingGeneration!.ticket.jobId,reason:'authored_failure'});
     h.set(1_300_000);const mentioned=await h.engine.dispatch('session',{type:'source',source:h.source('mention','The host mentions the wet corner again.',1_300_000)}),request=mentioned.pendingGeneration!;
     expect(request.packet.lore.some(lore=>lore.term==='wet corner'&&lore.explanation==='The owner named a watercolor wash.')).toBe(true);
-    expect(request.ticket.inputRefs).toContainEqual({id:'lore:000',revision:1});expect(request.ticket.inputRefs).toContainEqual({id:'lore-presentation:old:en',revision:1});
+    expect(request.ticket.inputRefs).toContainEqual({id:'lore:000',revision:1});
+    const frozen=request.ticket.inputRefs.find(ref=>ref.id.startsWith('history:'))!;
+    expect(mentioned.nodes[frozen.id]?.exposedTo).toContainEqual({id:'lore-presentation:old:en',revision:1});
     expect(h.engine.allowed({sessionId:'session',privacyEpoch:request.ticket.privacyEpoch,dependencyRefs:request.ticket.inputRefs})).toBe(true);
     await h.service.privacy(h.context('history-forget-lore'),{target:{kind:'source',sessionId:'session',id:'shared'},reason:'Forget original context'});
     expect(h.engine.allowed({sessionId:'session',privacyEpoch:request.ticket.privacyEpoch,dependencyRefs:request.ticket.inputRefs})).toBe(false);

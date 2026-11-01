@@ -42,7 +42,7 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
   async function buildOperation(lease:PublicationLease):Promise<PublicationOperation>{
     const current=sync(),body=payload(lease),common={channelId:scope.channelId,channelLogin:channel.login,publishSeq:lease.publishSeq!,privacyRevision:current.privacyRevision};
     if(lease.kind==='retract'){
-      const sessionIds=[...new Set([lease.sessionId,...strings(body.affectedSessionIds),...strings(body.sessionIds)])];
+      const sessionIds=body.exportOnly===true?[]:[...new Set([lease.sessionId,...strings(body.affectedSessionIds),...strings(body.sessionIds)])];
       const exportIds=[...new Set([...strings(body.exportIds),...strings(body.affectedIds).filter(id=>repository.getEntity(scope,id)?.kind==='export')])];
       return {...common,operation:'retract',sessionIds,exportIds,snapshots:sessionIds.map(publicState).filter((s):s is PublicSnapshot=>s!==null)};
     }

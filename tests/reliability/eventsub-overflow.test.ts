@@ -10,12 +10,13 @@ const flush=async()=>{for(let i=0;i<1200;i++)await Promise.resolve();};
 const wire=(id:string,type='channel.chat.message')=>({metadata:{message_id:id,message_type:'notification',message_timestamp:at},payload:{subscription:{type,version:'1'},event:{broadcaster_user_id:'123',chatter_user_id:'actor',message_id:id,message:{text:'synthetic'}}}});
 describe('EventSub burst privacy boundary',()=>{
   it('bounds ordinary intake at 100 pending notifications and reports a coverage gap instead of claiming a connected stream',async()=>{
-    const socket=new Socket();let release!:()=>void;const blocked=new Promise<void>(resolve=>{release=resolve;});let received=0;
-    const service=new TwitchEventSub({channelId:'123',runId:'live',mock:true,now:()=>Date.parse(at),helix:{subscribe:async()=>{},bannedUsers:async()=>{},currentStream:async()=>null} as unknown as TwitchHelix,control:memoryControl(),ingest:async()=>{received++;if(received===1)await blocked;},onStream:()=>{},resolveSession:()=>({id:'episode',startedAt:at}),bans:{begin:()=>{},page:()=>{},finish:()=>{}},socketFactory:()=>socket as unknown as WebSocket});
-    try{await service.start();socket.emitWire({metadata:{message_id:'welcome',message_type:'session_welcome',message_timestamp:at},payload:{session:{id:'connection',keepalive_timeout_seconds:10}}});await flush();expect(service.status().quotesReady).toBe(true);
+    vi.useFakeTimers();const sockets:Socket[]=[];let release!:()=>void;const blocked=new Promise<void>(resolve=>{release=resolve;});let received=0;
+    const service=new TwitchEventSub({channelId:'123',runId:'live',mock:true,now:()=>Date.parse(at),helix:{subscribe:async()=>{},bannedUsers:async()=>{},currentStream:async()=>null} as unknown as TwitchHelix,control:memoryControl(),ingest:async()=>{received++;if(received===1)await blocked;},onStream:()=>{},resolveSession:()=>({id:'episode',startedAt:at}),bans:{begin:()=>{},page:()=>{},finish:()=>{}},socketFactory:()=>{const socket=new Socket();sockets.push(socket);return socket as unknown as WebSocket;}});
+    try{await service.start();const socket=sockets[0];socket.emitWire({metadata:{message_id:'welcome',message_type:'session_welcome',message_timestamp:at},payload:{session:{id:'connection',keepalive_timeout_seconds:10}}});await flush();expect(service.status().quotesReady).toBe(true);
       socket.emitWire(wire('first'));await flush();for(let i=0;i<199;i++)socket.emitWire(wire(`burst-${i}`));
-      expect(service.status()).toMatchObject({state:'gap',quotesReady:false,gapSince:at});release();await flush();expect(received).toBe(100);
-    }finally{release();await service.stop();}
+      expect(service.status()).toMatchObject({state:'gap',quotesReady:false,gapSince:at});release();await flush();expect(received).toBe(1);expect(service.diagnostics().queuedOrdinary).toBe(99);
+      await vi.advanceTimersByTimeAsync(1000);sockets[1].emitWire({metadata:{message_id:'recovery-welcome',message_type:'session_welcome',message_timestamp:at},payload:{session:{id:'recovered',keepalive_timeout_seconds:10}}});await flush();expect(received).toBe(100);expect(service.diagnostics().queuedOrdinary).toBe(0);
+    }finally{release();await service.stop();vi.useRealTimers();}
   });
   it('delivers an already received deletion even when normal chat has saturated the intake queue',async()=>{
     const socket=new Socket();let release!:()=>void;const blocked=new Promise<void>(resolve=>{release=resolve;});

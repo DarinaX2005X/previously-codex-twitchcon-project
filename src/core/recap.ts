@@ -229,6 +229,7 @@ export function canDispatch(state: DomainState, input: { sessionId: string; priv
   return input.sessionId === state.session.id && input.privacyEpoch === state.session.privacyEpoch && input.dependencyRefs.every(ref => {
     if (!isRefActive(state, ref)) return false;
     const node = state.nodes[ref.id];
+    if (node?.kind === 'provider_cache') return [...node.supports, ...node.exposedTo].every(input => isRefActive(state, input));
     if (node?.kind === 'presentation') {
       const candidate = state.candidates.find(candidate => candidate.id === ref.id);
       if (candidate) return candidate.status === 'published' && candidate.ownerRevision === (state.ownerRevisions[candidate.entityId] ?? 0)

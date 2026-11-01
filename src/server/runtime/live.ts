@@ -81,7 +81,7 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     visible: input => !engine.outputsBlocked() && (input.id.startsWith('narration:') ? narration?.allowsMedia(input) ?? false : twitch?.allowsMedia(input) ?? false),
     onRevoke: () => updates.publish({...scope, event: 'privacy.invalidated', data: {sessionId: engine.activeSessionId(), revision: 0}}),
   });
-  recordingExports = new RecordingExportRegistry({repository: storage.repository, scope, dataDir: config.dataDir, channelLogin: channel.login, outputsBlocked: () => engine.outputsBlocked()});
+  recordingExports = new RecordingExportRegistry({repository: storage.repository, scope, dataDir: config.dataDir, channelLogin: channel.login, publicOrigin: config.publicOrigin, outputsBlocked: () => engine.outputsBlocked()});
   recorder = new RecordingController({dataDir: config.dataDir, scope, clock, state: id => engine.state(id), source: id => storage.repository.getSource(scope, id), providerModel: MODEL, registerExport: recordingExports.register, resolveMedia: id => media.get(id), outputsBlocked: () => engine.outputsBlocked()});
   const suspendPrivacyOutput = (blocked: boolean) => {
     if (blocked) {engine.setOutputsBlocked(true);cloud?.suspend();}

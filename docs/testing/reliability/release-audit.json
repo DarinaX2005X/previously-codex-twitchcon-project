@@ -1,0 +1,68 @@
+{
+  "checkedAt": "2026-11-01T22:12:24.003Z",
+  "scope": "Tracked files plus a fresh public-mode Vite build in a separate temporary directory. Exact comparisons against configured secrets and up to2000 recent nontrivial source strings per top-level private SQLite database. No values or matching lines are emitted. Not a deployed-host or complete historical transcript/audio audit.",
+  "trackedFiles": 285,
+  "publicBuildSucceeded": true,
+  "publicFiles": 30,
+  "configuredSecretValues": 4,
+  "privateDatabaseSamples": 0,
+  "uniquePrivateStrings": 0,
+  "ignoreChecks": [
+    {
+      "file": ".env",
+      "ignored": true
+    },
+    {
+      "file": ".env.production",
+      "ignored": true
+    },
+    {
+      "file": ".data/previously.sqlite",
+      "ignored": true
+    },
+    {
+      "file": ".data/audio-tmp/private.wav",
+      "ignored": true
+    },
+    {
+      "file": ".data/certs/local-cert.pem",
+      "ignored": true
+    },
+    {
+      "file": "local.pem",
+      "ignored": true
+    },
+    {
+      "file": "local.key",
+      "ignored": true
+    },
+    {
+      "file": "local.pfx",
+      "ignored": true
+    }
+  ],
+  "findings": [
+    {
+      "file": "fresh-public/assets/replay-BItPks_f.js",
+      "kind": "local-auth-link"
+    }
+  ],
+  "notes": [
+    {
+      "file": "dist-public/assets/FoundationShowcase-D6RV_9UW.js",
+      "kind": "local-or-dev-chunk-in-existing-artifact-review-fresh-build-before-deploy"
+    },
+    {
+      "file": "dist-public/assets/LocalExperience-B9f5yaHs.js",
+      "kind": "local-or-dev-chunk-in-existing-artifact-review-fresh-build-before-deploy"
+    },
+    {
+      "file": "dist-public/assets/LocalExperience-coygwDTa.css",
+      "kind": "local-or-dev-chunk-in-existing-artifact-review-fresh-build-before-deploy"
+    },
+    {
+      "file": "fresh-public/worklets/pcm-capture.js",
+      "kind": "static-worklet-copied-without-microphone-entrypoint"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "profile": "virtual-full-core",
+  "scope": "Accelerated synthetic pure reducer; functional bounds evidence, not wall-clock throughput",
+  "sharedHost": true,
+  "sharedLoad": "Other project builds, tests, browser fixture and an independent actual-engine profile may run concurrently. Aggregate test timeouts under shared CPU and SQLite setup load led to lowering this stress process priority.",
+  "priorityChange": {
+    "processId": 168236,
+    "from": "Normal",
+    "to": "BelowNormal",
+    "recordedAt": "2026-11-02T03:30:07.8804162+05:00",
+    "latestProgressVirtualSecond": 2400,
+    "latestProgressWallSeconds": 543.9770975,
+    "processWasRestarted": false
+  },
+  "interpretation": "Do not use elapsed wall time to claim isolated maximum capacity or a user-facing latency SLA. Final reducer bounds and completed event count are the primary evidence.",
+  "loadUpdates": [
+    {
+      "recordedAt": "2026-11-02T03:33:32.5191576+05:00",
+      "source": "MAIN",
+      "detail": "Unused task-owned Vite development server on port 4318 was stopped after high accumulated CPU use. Built server 4317 and owner fixture 4320 remain. An unrelated user render workload remains active and was not touched."
+    }
+  ]
+}

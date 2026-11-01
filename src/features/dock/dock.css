@@ -24,6 +24,8 @@
 .dock-current > p { margin:10px 0 0; line-height:1.55; font-size:14px; }.dock-current .dock-current-main + p { color:var(--pv-text); }
 .dock-chronology { margin-top:14px; }.dock-page .pv-chapter { padding:22px 0; }.dock-page .pv-chapter h3 { font-size:17px; line-height:1.4; }.dock-page .pv-chapter__text { font-size:14px; line-height:1.6; }.dock-page .pv-chapter__text p { margin:8px 0 10px; }
 .dock-page .pv-chapter__actions .pv-button,.dock-page .pv-chapter__content > .pv-button { padding:6px; min-height:40px; font-size:14px; background:transparent; border-color:transparent; }
+.dock-page .pv-chapter__actions > .pv-actions { width:100%; }
+.dock-page .pv-chapter__actions > .pv-actions > .pv-button { flex:0 1 auto; min-width:44px; min-height:44px; }
 .dock-page .pv-chapter__actions .pv-button:hover:not(:disabled) { background:var(--pv-control-hover); text-decoration:underline; text-underline-offset:4px; }
 .dock-page .pv-chapter__time { font-size:14px; }.dock-page .pv-chapter__state { font-size:13px; line-height:1.5; }
 .dock-empty { font-size:14px; color:var(--pv-secondary); padding:20px 0; }

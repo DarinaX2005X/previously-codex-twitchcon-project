@@ -3,7 +3,6 @@
 .app-message {padding-block:80px;display:grid;gap:24px;justify-items:start;}
 .app-preview {min-width:0;display:grid;gap:16px;}
 .app-preview > p {font-size:16px;}
-.app-dock-setup {position:fixed;right:16px;bottom:16px;color:var(--pv-text);background:var(--pv-canvas);padding:8px 12px;border-radius:12px;box-shadow:var(--pv-shadow-raised);font-size:14px;}
 html[data-broadcast], html[data-broadcast] body, html[data-broadcast] #root {background:transparent!important;overflow:hidden;width:100%;height:100%;}
 .app-overlay-error {position:absolute;left:64px;bottom:64px;max-width:700px;padding:24px;background:#e9eae1;color:#293335;border-radius:18px;font-size:24px;}
-@media(max-width:600px) {.app-dock-setup {position:static;display:block;margin:12px auto;width:max-content;}.app-message{padding-block:48px;}}
+@media(max-width:600px) {.app-message{padding-block:48px;}}

@@ -1,5 +1,5 @@
 /** Synthetic virtual time: reducer + durable ingress, deliberately not an OBS/live provider run. */
-import {mkdtempSync, statSync, existsSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
+import {mkdtempSync, statSync, existsSync, mkdirSync, writeFileSync, appendFileSync, rmSync} from 'node:fs';
 import {tmpdir, cpus, totalmem, platform, release} from 'node:os';
 import {join, resolve} from 'node:path';
 import {performance} from 'node:perf_hooks';
@@ -13,17 +13,18 @@ const seconds=Number(process.argv[2]??28800),output=resolve(process.argv[3]??'do
 if(!Number.isInteger(seconds)||seconds<1||seconds>28800)throw Error('Duration must be 1..28800 virtual seconds.');
 const dir=mkdtempSync(join(tmpdir(),'previously-stress-')),path=join(dir,'stress.sqlite');
 const epoch=Date.parse('2026-11-02T00:00:00Z'),scope={channelId:'stress-channel',runId:'stress'},sessionId='stress-session';
-let at=0,count=0,commands=0,deletes=0,maxPacket=0,maxSources=0,maxWindows=0,maxActors=0,maxPhrases=0,maxCandidates=0,maxPending=0,providerFails=0;
+let at=0,count=0,commands=0,deletes=0,maxPacket=0,maxSources=0,maxWindows=0,maxActors=0,maxPhrases=0,maxCandidates=0,maxPendingCandidatesPerEntity=0,maxPending=0,providerFails=0;
 const clock={now:()=>epoch+at,iso:()=>new Date(epoch+at).toISOString()};
 const store=createStorage({path,now:clock.now});store.repository.ensureChannel(scope,'synthetic');store.repository.createSession(scope,{id:sessionId,startedAt:new Date(epoch).toISOString()});
 let state=createDomainState({channel:{id:scope.channelId,login:'synthetic',displayName:'Synthetic stress'},session:store.repository.getSession(scope,sessionId),settings:{...defaultSettings,listeningPaused:false}});
 const safe:Safety={moderation:'allowed',pii:'allowed',checkedAt:clock.iso(),reason:null};
 const samples:unknown[]=[],wall=performance.now();
-function send(event:DomainEvent){const result=reduceDomain(state,event,clock);state=result.state;maxSources=Math.max(maxSources,state.sources.length);maxWindows=Math.max(maxWindows,state.windows.length);maxActors=Math.max(maxActors,Object.keys(state.openWindow?.actors??{}).length);maxPhrases=Math.max(maxPhrases,state.phrases.length);maxCandidates=Math.max(maxCandidates,state.candidates.length);maxPending=Math.max(maxPending,Number(!!state.pendingGeneration));return result;}
+mkdirSync(resolve(output,'..'),{recursive:true});writeFileSync(output+'.progress.jsonl',JSON.stringify({scope:durable?'reducer-plus-durable-ingress':'pure-reducer',startedAt:new Date().toISOString(),durationSeconds:seconds,baselineRate,burstRate:200})+'\n');
+function send(event:DomainEvent){const result=reduceDomain(state,event,clock);state=result.state;maxSources=Math.max(maxSources,state.sources.length);maxWindows=Math.max(maxWindows,state.windows.length);maxActors=Math.max(maxActors,Object.keys(state.openWindow?.actors??{}).length);maxPhrases=Math.max(maxPhrases,state.phrases.length);maxCandidates=Math.max(maxCandidates,state.candidates.length);maxPending=Math.max(maxPending,Number(!!state.pendingGeneration));if(event.type!=='source'||event.source.kind!=='chat'){const pending=new Map<string,number>();for(const candidate of state.candidates)if(candidate.status==='pending')pending.set(candidate.entityId,(pending.get(candidate.entityId)??0)+1);maxPendingCandidatesPerEntity=Math.max(maxPendingCandidatesPerEntity,...pending.values());}return result;}
 function source(id:string,text:string,kind:Source['kind']='chat',actor='solo-spammer'):Source{return {...scope,sessionId,id,revision:1,kind,startMs:at,endMs:at,actorId:kind==='chat'?actor:null,languageCodes:['en'],timePrecision:'event',text,status:'active',externalMessageId:id,moderation:kind==='chat'?'pending':'allowed'};}
 function persist(value:Source){if(!durable)return;store.repository.ingest({...scope,schemaVersion:1,eventId:`event:${value.id}`,externalId:value.id,origin:'replay',kind:'synthetic',occurredAt:clock.iso(),receivedAt:clock.iso(),sessionId,sessionOffsetMs:at,payload:null},{sources:[value]});}
 function disk(){return [path,`${path}-wal`,`${path}-shm`].reduce((sum,file)=>sum+(existsSync(file)?statSync(file).size:0),0);}
-function sample(second:number){globalThis.gc?.();const memory=process.memoryUsage();const entry={virtualSecond:second,processedMessages:count,elapsedSeconds:(performance.now()-wall)/1000,heapUsed:memory.heapUsed,rss:memory.rss,diskBytes:disk(),nodes:Object.keys(state.nodes).length,tombstones:state.tombstones.length,chapters:state.chapters.length,packetBytes:evidencePacketBytes(buildEvidencePacket(state))};samples.push(entry);console.log(JSON.stringify(entry));}
+function sample(second:number){globalThis.gc?.();const memory=process.memoryUsage();const entry={virtualSecond:second,processedMessages:count,elapsedSeconds:(performance.now()-wall)/1000,heapUsed:memory.heapUsed,rss:memory.rss,diskBytes:disk(),nodes:Object.keys(state.nodes).length,tombstones:state.tombstones.length,chapters:state.chapters.length,packetBytes:evidencePacketBytes(buildEvidencePacket(state))};samples.push(entry);appendFileSync(output+'.progress.jsonl',JSON.stringify(entry)+'\n');console.log(JSON.stringify(entry));}
 try{
   for(let second=0;second<seconds;second++){
     const sparse=second%3600>=3540,burst=second>=7200&&second<7260,rate=sparse?0:burst?200:baselineRate;
@@ -45,13 +46,15 @@ try{
     }
     if(second>0&&second%600===0){const target={kind:'message' as const,sessionId,externalMessageId:`msg-${String(Math.max(0,count-10)).padStart(8,'0')}`};send({type:'privacy',target});if(durable)store.repository.invalidate(scope,target,{idempotencyKey:`delete-${second}`,reason:'synthetic'});deletes++;}
     if(second%10===0)send({type:'tick'});
-    if(second%1800===0)sample(second);
+    if(second%300===0)sample(second);
   }
   sample(seconds);
   let cursor:{startMs:number;id:string}|undefined,pages=0,rows=0;const paginationStart=performance.now();
   for(;;){const page=store.repository.listSources(scope,sessionId,{limit:500,cursor});rows+=page.length;pages++;if(page.length<500)break;const last=page.at(-1)!;cursor={startMs:last.startMs,id:last.id};}
-  const result={scope:durable?'Synthetic reducer plus SQLite raw ingress; not StoryEngine throughput, actual capture, providers, cloud or a wall-clock eight-hour run.':'Synthetic pure reducer, no durable message writes; not StoryEngine throughput, actual capture, providers, cloud or a wall-clock eight-hour run.',durationSeconds:seconds,baselineRate,burstRate:200,burstSeconds:60,hardware:{platform:platform(),release:release(),cpu:cpus()[0]?.model,logicalCpus:cpus().length,totalMemory:totalmem(),node:process.version},elapsedSeconds:(performance.now()-wall)/1000,messages:count,commands,deletes,providerFails,limits:{maxSources,maxWindows,maxActors,maxPhrases,maxCandidates,maxPending,maxPacket},singleActorFalseMoments:state.moments.length,pagination:{rows,pages,milliseconds:performance.now()-paginationStart,firstSourceRetained:store.repository.getSource(scope,'msg-00000000')!==null},samples};
+  const violations=[maxSources>500?'source_cap':null,maxWindows>30?'reaction_window_cap':null,maxActors>100?'actor_cap':null,maxPendingCandidatesPerEntity>4?'pending_candidate_cap':null,maxPacket>4000?'packet_cap':null,state.moments.length?'single_actor_false_moment':null].filter(Boolean);
+  const result={scope:durable?'Synthetic reducer plus SQLite raw ingress; not StoryEngine throughput, actual capture, providers, cloud or a wall-clock eight-hour run.':'Synthetic pure reducer, no durable message writes; not StoryEngine throughput, actual capture, providers, cloud or a wall-clock eight-hour run.',durationSeconds:seconds,baselineRate,burstRate:200,burstSeconds:60,hardware:{platform:platform(),release:release(),cpu:cpus()[0]?.model,logicalCpus:cpus().length,totalMemory:totalmem(),node:process.version},elapsedSeconds:(performance.now()-wall)/1000,messages:count,commands,deletes,providerFails,limits:{maxSources,maxWindows,maxActors,maxPhrases,maxCandidates,maxPendingCandidatesPerEntity,maxPending,maxPacket},singleActorFalseMoments:state.moments.length,violations,pagination:{rows,pages,milliseconds:performance.now()-paginationStart,firstSourceRetained:store.repository.getSource(scope,'msg-00000000')!==null},samples};
   mkdirSync(resolve(output,'..'),{recursive:true});writeFileSync(output,JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify({done:true,output,elapsedSeconds:result.elapsedSeconds}));
+  if(violations.length)process.exitCode=1;
 }finally{store.close();const resolved=resolve(dir);if(!resolved.startsWith(resolve(tmpdir())+'\\')&&!resolved.startsWith(resolve(tmpdir())+'/'))throw Error('Unsafe cleanup');rmSync(resolved,{recursive:true,force:true});}
 
 

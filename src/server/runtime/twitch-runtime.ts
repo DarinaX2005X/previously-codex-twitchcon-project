@@ -10,7 +10,7 @@ import type {RuntimeStorage,StoryEngine} from './engine.js';
 import {ApiError} from './errors.js';
 import type {RevisionStream} from './updates.js';
 
-type EnginePort=Pick<StoryEngine,'state'|'dispatch'|'ingest'|'observeStream'|'resolveSession'|'activeSessionId'|'allowed'|'setStatus'>;
+type EnginePort=Pick<StoryEngine,'state'|'dispatch'|'ingest'|'observeStream'|'resolveSession'|'activeSessionId'|'allowed'|'setStatus'>&Partial<Pick<StoryEngine,'ingestBatch'>>;
 type EventSubPort=Pick<TwitchEventSub,'start'|'stop'>;
 type ClipContext=EffectContext&{momentId?:string;key?:string;publicationRevision?:number|null;previousApproved?:boolean};
 type PreviousSelection={clip:TwitchClip;status:'candidate'|'preparing'|'ready'|'unavailable'|'rejected';sessionId:string|null;reason?:string};
@@ -39,6 +39,7 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
   const control=bindControlStore(storage.repository,scope),repository=storage.repository;
   let running=false,tickBusy=false,networkStarting:Promise<void>|null=null,previousBusy=false,tickFlight:Promise<void>|null=null;
   const inFlightIngest=new Set<string>();
+  const retryableChatIngest=new Set<string>();
   let connection:{state:ConnectionState;quotesReady:boolean;reason?:string;privacyBlocked:boolean}={state:'disconnected',quotesReady:false,privacyBlocked:false};
   let lastFailure:string|null=null;
   const publicUrl=options.publicUrl??config.publicOrigin;
@@ -171,6 +172,47 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     }
     return {snapshot,refs:unique(refs).slice(0,100),blocked};
   };
+  const chatDecision=(envelope:EventEnvelope,state:DomainState|null)=>{
+    const payload=record(envelope.payload),actor=typeof payload.chatter_user_id==='string'?payload.chatter_user_id:'',text=record(payload.message).text;
+    const echo=typeof payload.message_id==='string'&&effects.isOwnEcho(payload.message_id);
+    const deleted=typeof payload.message_id==='string'&&control.get(`twitch:deleted-message:${digest(payload.message_id)}`)!==null;
+    const cleared=actor&&Date.parse(envelope.occurredAt)<=(control.get<number>(`twitch:actor-cleared:${actor}`)??-Infinity);
+    const contentAllowed=Boolean(state&&!state.settings.listeningPaused&&connection.quotesReady&&bans.ready()&&!echo&&!deleted&&!cleared&&actor&&bans.allows(actor)&&!payload.late);
+    return {actor,text,contentAllowed,accepted:contentAllowed?envelope:{...envelope,payload:{quotesReady:false}}};
+  };
+  const enqueueCommand=(envelope:EventEnvelope,actor:string,text:string)=>{
+    if(!publicUrl||!envelope.sessionId)return;
+    const command=parseCommand(text);if(!command)return;
+    const fresh=engine.state(envelope.sessionId),reply=safeReply(fresh,command);
+    effects.enqueueChat({sessionId:fresh.session.id,privacyEpoch:fresh.session.privacyEpoch,dependencyRefs:reply.refs,publicationRevision:fresh.published?.revision??null,message:composeReply(command,reply.snapshot,fresh.settings.recapLanguage,publicUrl,reply.blocked),actorId:actor,key:`command:${envelope.externalId}`} as EffectContext&{publicationRevision:number|null;message:string;actorId:string;key:string});
+  };
+  async function ingestBatch(envelopes:readonly EventEnvelope[]):Promise<void>{
+    if(!envelopes.length)return;
+    const sessionId=envelopes[0].sessionId;
+    if(envelopes.length>20||!sessionId||envelopes.some(event=>event.origin!=='twitch'||event.runId!=='live'||event.channelId!==channel.id||event.sessionId!==sessionId||event.kind!=='channel.chat.message'))throw new ApiError(400,'invalid_chat_batch','Chat batches contain at most twenty messages from one live stream.');
+    if(!engine.ingestBatch){for(const envelope of envelopes)await ingest(envelope);return;}
+    const claimed:{envelope:EventEnvelope;key:string}[]=[];
+    try{
+      repository.runDomainBatch(()=>{
+        for(const envelope of envelopes){
+          const key=`twitch:ingest:${digest(envelope.externalId)}`;
+          if(retryableChatIngest.has(key)&&!inFlightIngest.has(key)&&control.get(key)==='processing')control.delete(key);
+          if(!control.claim(key,'processing',clock.now()+7*86400000))continue;
+          claimed.push({envelope,key});inFlightIngest.add(key);retryableChatIngest.add(key);
+        }
+      });
+      if(!claimed.length)return;
+      const before=engine.state(sessionId),items=claimed.map(({envelope})=>({envelope,...chatDecision(envelope,before)}));
+      await engine.ingestBatch(items.map(item=>item.accepted));
+      // Command outbox work and callback receipts become durable only after all source events commit.
+      repository.runDomainBatch(()=>{
+        for(const item of items)if(item.contentAllowed&&typeof item.text==='string')enqueueCommand(item.envelope,item.actor,item.text);
+        for(const {key} of claimed)control.put(key,'done',clock.now()+7*86400000);
+      });
+      for(const {key} of claimed)retryableChatIngest.delete(key);
+    }catch(error){repository.runDomainBatch(()=>{for(const {key} of claimed)control.delete(key);});throw error;}
+    finally{for(const {key} of claimed)inFlightIngest.delete(key);}
+  }
   async function ingest(envelope:EventEnvelope):Promise<void>{
     if(envelope.origin!=='twitch'||envelope.runId!=='live'||envelope.channelId!==channel.id)throw new ApiError(403,'live_twitch_scope','Mock and replay events require their own isolated engine.');
     const key=`twitch:ingest:${digest(envelope.externalId)}`;
@@ -200,24 +242,19 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
         await engine.ingest({...envelope,kind:'twitch.moderation.observed',payload:{actorId:actor}});
       }else{
         const state=envelope.sessionId?engine.state(envelope.sessionId):null;
-        const actor=typeof payload.chatter_user_id==='string'?payload.chatter_user_id:'';
-        const text=record(payload.message).text;
-        const echo=typeof payload.message_id==='string'&&effects.isOwnEcho(payload.message_id);
-        const deleted=typeof payload.message_id==='string'&&control.get(`twitch:deleted-message:${digest(payload.message_id)}`)!==null;
-        const cleared=actor&&Date.parse(envelope.occurredAt)<=(control.get<number>(`twitch:actor-cleared:${actor}`)??-Infinity);
-        const contentAllowed=Boolean(state&&!state.settings.listeningPaused&&connection.quotesReady&&bans.ready()&&!echo&&!deleted&&!cleared&&actor&&bans.allows(actor)&&!payload.late);
+        const {actor,text,contentAllowed}=chatDecision(envelope,state);
         const accepted=envelope.kind==='channel.chat.message'&&!contentAllowed?{...envelope,payload:{quotesReady:false}}:envelope;
         if(envelope.kind==='channel.chat.clear')control.put('twitch:chat-cleared-through',Math.max(Date.parse(envelope.occurredAt),control.get<number>('twitch:chat-cleared-through')??0));
         if(envelope.kind==='channel.raid'&&state&&!state.settings.autoRaid)await engine.ingest({...envelope,kind:'twitch.raid.observed',payload:null});else await engine.ingest(accepted);
         if(publicUrl&&state&&envelope.kind==='channel.chat.message'&&contentAllowed&&typeof text==='string'){
-          const command=parseCommand(text);if(command){const fresh=engine.state(state.session.id),reply=safeReply(fresh,command);const input={sessionId:state.session.id,privacyEpoch:fresh.session.privacyEpoch,dependencyRefs:reply.refs,publicationRevision:fresh.published?.revision??null,message:composeReply(command,reply.snapshot,fresh.settings.recapLanguage,publicUrl,reply.blocked),actorId:actor,key:`command:${envelope.externalId}`};effects.enqueueChat(input);}
+          enqueueCommand(envelope,actor,text);
         }
         if(publicUrl&&state&&envelope.kind==='channel.raid'&&state.settings.autoRaid&&!payload.late){const fresh=engine.state(state.session.id),reply=safeReply(fresh,{kind:'previously'});const prefix=fresh.settings.recapLanguage==='ru'?'Добро пожаловать! ':'Welcome, raiders! ';const body=composeReply({kind:'previously'},reply.snapshot,fresh.settings.recapLanguage,publicUrl);const message=[...prefix+body].length<=500?prefix+body:body;effects.enqueueChat({sessionId:state.session.id,privacyEpoch:fresh.session.privacyEpoch,dependencyRefs:reply.refs,publicationRevision:fresh.published?.revision??null,message,actorId:channel.id,key:`raid-welcome:${envelope.externalId}`} as EffectContext&{publicationRevision:number|null;message:string;actorId:string;key:string});}
       }
       control.put(key,'done',clock.now()+7*86400000);
     }catch(error){control.delete(key);throw error;}finally{inFlightIngest.delete(key);}
   }
-  const eventSub=(options.eventSubFactory??(input=>new TwitchEventSub(input)))({channelId:channel.id,runId:'live',helix,control,ingest,resolveSession:engine.resolveSession.bind(engine),onStream:observeStream,bans,status:onStatus,now:clock.now.bind(clock)});
+  const eventSub=(options.eventSubFactory??(input=>new TwitchEventSub(input)))({channelId:channel.id,runId:'live',helix,control,ingest,...(engine.ingestBatch?{ingestBatch}:{}),resolveSession:engine.resolveSession.bind(engine),onStream:observeStream,bans,status:onStatus,now:clock.now.bind(clock)});
   const queueRevoke=(sessionId:string,id:string,clipId?:string)=>{if(clipId)revokePermission(clipId);repository.enqueueJob(scope,{sessionId,kind:'twitch.media.revoke',businessKey:`twitch-media-revoke:${id}`,payload:{id,clipId},priority:1000});};
   const onEffects=(sessionId:string,domainEffects:readonly DomainEffect[],state:DomainState)=>{
     // clip.request is persisted atomically by storage as twitch.clip.intent; tick converts it once.

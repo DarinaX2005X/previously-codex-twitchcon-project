@@ -36,7 +36,7 @@ function OwnerExperience({page}: {page: 'setup'|'dock'}) {
     return () => {closed = true; unsubscribe(); window.removeEventListener('pagehide', leaving); void capture.dispose();};
   }, [client, capture]);
   const renderPreview = (plan: RecapPlan, _close: () => void) => <LocalPreview plan={plan}/>;
-  return page === 'setup' ? <SetupPage client={client} setup={setup} capture={capture} renderPreview={renderPreview}/> : <><DockPage client={client} owner={owner} capture={capture} renderPreview={renderPreview}/><a className="app-dock-setup" href="/setup">Channel setup</a></>;
+  return page === 'setup' ? <SetupPage client={client} setup={setup} capture={capture} renderPreview={renderPreview}/> : <DockPage client={client} owner={owner} capture={capture} recordingPort={client} renderPreview={renderPreview}/>;
 }
 function BroadcastSource() {
   const client = useMemo(() => new OverlayHttpClient(), []);

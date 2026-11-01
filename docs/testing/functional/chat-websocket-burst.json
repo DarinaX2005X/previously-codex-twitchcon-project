@@ -1,0 +1,113 @@
+{
+  "scope": "Independent authored producer thread over actual loopback WebSocket into real EventSub/runtime/engine/file SQLite; no live Twitch or providers.",
+  "plannedRate": 200,
+  "plannedWindowMs": 60000,
+  "producer": {
+    "type": "done",
+    "started": 1793572266208,
+    "ended": 1793572326212,
+    "offered": 12000,
+    "withPeer": 7140,
+    "withoutPeer": 4860,
+    "producerDriftMs": {
+      "p50": 9,
+      "p95": 104,
+      "max": 405
+    }
+  },
+  "receivedFrames": 813,
+  "receivedUnique": 813,
+  "committedUnique": 801,
+  "duplicateCommits": 0,
+  "rejectedReceived": 12,
+  "maxQueuedOrdinary": 100,
+  "remainingOrdinary": 0,
+  "gaps": 12,
+  "receiveToCommitMs": {
+    "samples": 801,
+    "p50": 4647,
+    "p95": 19842,
+    "max": 22602
+  },
+  "offeredToCommitMs": {
+    "samples": 801,
+    "p50": 8416,
+    "p95": 25042,
+    "max": 27596
+  },
+  "plannedToCommitMs": {
+    "samples": 801,
+    "p50": 8429,
+    "p95": 25042,
+    "max": 27603
+  },
+  "batchSizes": {
+    "1": 1,
+    "20": 40
+  },
+  "privacy": {
+    "requested": 8,
+    "received": 2,
+    "missedDuringGap": 6,
+    "applied": 2,
+    "allReceivedTargetsWithdrawn": true
+  },
+  "stateBounds": {
+    "retainedSources": 500,
+    "nodes": 0,
+    "candidates": 0
+  },
+  "memory": [
+    {
+      "at": 1793572266206,
+      "committed": 0,
+      "queued": 0,
+      "heapUsed": 17373928,
+      "rss": 120983552
+    },
+    {
+      "at": 1793572278808,
+      "committed": 201,
+      "queued": 100,
+      "heapUsed": 19066336,
+      "rss": 134197248
+    },
+    {
+      "at": 1793572289564,
+      "committed": 401,
+      "queued": 100,
+      "heapUsed": 19464712,
+      "rss": 157892608
+    },
+    {
+      "at": 1793572299572,
+      "committed": 501,
+      "queued": 100,
+      "heapUsed": 19754840,
+      "rss": 159727616
+    },
+    {
+      "at": 1793572309568,
+      "committed": 501,
+      "queued": 100,
+      "heapUsed": 19752080,
+      "rss": 159453184
+    },
+    {
+      "at": 1793572319579,
+      "committed": 601,
+      "queued": 100,
+      "heapUsed": 19906280,
+      "rss": 163872768
+    },
+    {
+      "at": 1793572334824,
+      "committed": 801,
+      "queued": 0,
+      "heapUsed": 20243096,
+      "rss": 164966400
+    }
+  ],
+  "ended": 1793572334845,
+  "paidMicroUsd": 0
+}

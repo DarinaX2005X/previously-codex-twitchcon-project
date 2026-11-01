@@ -9,6 +9,7 @@ if (!['--all', '--fixtures', '--cli'].includes(mode)) throw new Error('Use --all
 const files = [
   'tests/integration/acceptance-speech.test.ts', 'tests/integration/acceptance-restart.test.ts',
   'tests/integration/acceptance-eventsub-privacy.test.ts', 'tests/integration/acceptance-runtime-privacy.test.ts',
+  'tests/integration/acceptance-chat-batch.test.ts',
   'tests/integration/live-pipeline.test.ts', 'tests/integration/owner-service.test.ts',
   'tests/integration/owner-routes.test.ts', 'tests/integration/overlay-routes.test.ts',
   'tests/integration/twitch-runtime.test.ts', 'tests/twitch/effects.test.ts', 'tests/twitch/eventsub.test.ts',

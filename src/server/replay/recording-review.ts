@@ -8,7 +8,7 @@ import type {RecordingRecord,RecordingReview,RecordingSummary} from './recording
 export const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export const sourceHash=(source:Source)=>digest({id:source.id,revision:source.revision,text:source.text,startMs:source.startMs,endMs:source.endMs,kind:source.kind});
 export function summary(record:RecordingRecord):RecordingSummary{return {id:record.id,status:record.status,revision:record.revision,sessionId:record.sessionId,startedAt:record.startedAt,stoppedAt:record.stoppedAt,eventCount:record.events.length,providerCount:record.providers.length,message:record.message,exportId:record.exportId};}
-const textKeys=new Set(['text','title','summary','explanation','term','label','goal','change','now','category','channelContext']);
+const textKeys=new Set(['text','title','summary','explanation','term','label','goal','change','now','category','channelContext','script']);
 export function textFields(value:unknown):{hash:string;text:string}[]{const values=new Set<string>();const visit=(item:unknown,key='')=>{if(typeof item==='string'&&textKeys.has(key)&&item)values.add(item);else if(Array.isArray(item))item.forEach(x=>visit(x,key));else if(item&&typeof item==='object')Object.entries(item).forEach(([k,v])=>visit(v,k));};visit(value);return [...values].map(text=>({hash:digest(text),text}));}
 export function reviewOf(record:RecordingRecord):RecordingReview {
   const blockedReasons:string[]=[];
@@ -35,7 +35,7 @@ export function exportBundle(record:RecordingRecord):CaptureBundle {
     if(Array.isArray(value))return value.map(v=>clean(v,key));if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,clean(v,k)]));return value;
   };
   const initial=clean(record.initial) as CaptureBundle['initial'];initial.channel.id='recorded-channel';
-  // Screen/audio assets are not accepted by this text export path. No raw paths or media bytes enter it.
+  // Only selected, reviewed media descriptors enter replay. Raw paths and clip management URLs stay private.
   const events=[...record.events.filter(e=>e.event.type!=='media'),...(record.selectedMedia??[]).map(m=>({atMs:m.atMs,event:{type:'media' as const,media:m.media,privacyEpoch:record.privacyEpoch}}))].sort((a,b)=>a.atMs-b.atMs).map(e=>clean(e) as CaptureBundle['events'][number]);
   const providers=clean(record.providers) as RecordedOutcome[];
   const bundle:CaptureBundle={schemaVersion:1,origin:'own-stream',id:`recording-${record.id}`,revision:1,tickMode:'recorded',durationMs:Math.max(...record.events.map(e=>e.atMs),Math.floor(Date.parse(record.stoppedAt)-Date.parse(record.initial.session.startedAt))),initial,events,providers,media:(record.selectedMedia??[]).map(m=>({id:m.id,assetId:m.assetId,sourceRefs:m.media.refs,startMs:m.media.captureStartMs,endMs:m.media.captureEndMs})),milestones:record.milestones,correction:record.correction,assertions:[{atMs:Math.max(...record.events.map(e=>e.atMs)),kind:'no-live-effects',value:true}]};

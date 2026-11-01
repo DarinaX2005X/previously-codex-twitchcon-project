@@ -4,7 +4,7 @@ import {
   type DomainState, type DomainEvent, type DomainEffect, type GenerationRequest,
 } from '../../core/index.js';
 import { GroundedClaimSchema, safetyAllowsPublication, type Channel, type Clock, type EventEnvelope, type OwnerSnapshot, type Scope, type Settings, type Source, type SourceStatus, type StoryProvider, type Safety } from '../../shared/contracts/index.js';
-import { createStorage, type WorkLease } from '../storage/index.js';
+import { createStorage, StorageError, type WorkLease } from '../storage/index.js';
 import type { SafetyService } from '../providers/safety.js';
 import type { OpenAIStoryProvider } from '../providers/story.js';
 import type { TwitchStream } from '../twitch/helix.js';
@@ -105,8 +105,10 @@ export class StoryEngine {
   }
   private commit(sessionId:string,event:DomainEvent,options:DispatchOptions,previous:DomainState):CommittedDispatch {
       const target = historyEventEntity(event) ?? options.expectedEntity?.id;
-      if (target && ['chapter','lore'].includes(this.repository.getEntity(this.scope, target)?.kind ?? '')) {
-        previous = loadHistoryEntity(this.repository, previous.session, previous, target);
+      const targetRow=target?this.repository.getEntity(this.scope,target):null;
+      if (target && targetRow && ['chapter','lore'].includes(targetRow.kind) && (targetRow.status==='active'||event.type==='term.unblock')) {
+        try{previous = loadHistoryEntity(this.repository, previous.session, previous, target);}
+        catch(error){if(event.type!=='privacy'||!(error instanceof ApiError&&error.status===404||error instanceof StorageError&&error.code==='capacity'))throw error;}
       }
       const input: DomainEvent = options.settingsPatch ? {type: 'settings', baseRevision: options.settingsPatch.baseRevision, settings: {...previous.settings, ...options.settingsPatch.patch, revision: options.settingsPatch.baseRevision + 1}} : event;
       const transition = reduceDomain(previous, input, this.clock);

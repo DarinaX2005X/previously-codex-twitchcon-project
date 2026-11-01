@@ -17,6 +17,7 @@ playwright-report/
 !.env.sample
 *.pem
 *.key
+*.pfx
 .vercel/
 
 # Private stream data, OAuth tokens, transient audio and local caches
@@ -27,6 +28,7 @@ data/
 *.db
 *.db-*
 *.log
+docs/testing/reliability/*.progress.jsonl
 
 # Local editor and operating-system files
 .DS_Store

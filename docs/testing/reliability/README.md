@@ -21,6 +21,15 @@ The original privacy failure was reproduced before the repair and reported to MA
 
 The independent `engine-throughput-optimized.json` run, after checkpoint-first hydration and source-fence repairs, took 58.101 seconds for the same 1,000 messages: 4.84 times faster overall. Its four segments measured 23.96, 15.32, 14.36 and 17.93 events/s. Final retained heap was 14,380,112 bytes, RSS 120,877,056 bytes and database footprint 2,813,952 bytes. The separate reducer stress had ended before this run, though other project workers were still active. **The warm segments did not sustain 20 events/s on this shared machine.** MAIN and the runtime owner were notified; further performance work is in progress. A previous intermediate 35.49-second run is not this final sample and must not be substituted for it.
 
+The subsequent `ingestBatch` repair keeps per-event durable receipts and commits already-queued events together. Separate measurements preserve their scope:
+
+| Actual engine path | 1,000-event wall time | Last warm segment | Atomic call mean / p95 / max |
+| --- | ---: | ---: | ---: |
+| Batch of 2 | 14.606 s | 49.26 events/s | 29.11 / 43.22 / 112.00 ms |
+| Batch of 20 | 7.164 s | 112.13 events/s | 142.63 / 204.64 / 214.79 ms |
+
+Artifacts are `engine-throughput-batch2.json` and `engine-throughput-batch20.json`. Both retain 500 sources and a 2,813,952-byte database footprint; final retained heap/RSS are 14,114,736/118,185,984 bytes for size 2 and 13,040,616/156,770,304 bytes for size 20. These measurements exceed the normal 20/s rate for already-queued processing. They do not include waiting in an intake queue, an intentional wait to fill a batch, actual socket delivery, providers, or the specified long run. The batch-20 warm rate remains below 200/s; overflow must retain the tested explicit gap and privacy behavior. Twitch queue integration and measured intake latency require the runtime/Twitch evidence.
+
 `calibration.json` is a smaller raw-ingress/reducer calibration: 1,200 messages at 20/s virtual input, 12.082 seconds wall time, 1,712,128 bytes database footprint. It does not include the complete StoryEngine hydration path and is not interchangeable with the baseline above. Its provider-delay path was not exercised within the 60-second calibration interval.
 
 The corrected `virtual-boundaries.json` spans eight virtual hours with **1 chat/s baseline**, a full **200 chat/s burst for 60 virtual seconds**, hourly quiet windows, metadata changes and delayed synthetic provider results. It processed 40,260 chat messages, including 2,368 commands, 47 message deletions and 415 synthetic provider failure/hold outcomes; 81 chapters were retained. Wall time was 705.064 seconds. The source window reached 500, reaction windows 30, simultaneous generation 1 and evidence-packet maximum 2,147 UTF-8 bytes. One actor produced zero false moments. The 82 maximum candidate records include published records across chapters; this is not a count of 82 pending jobs or a violation of the per-entity candidate cap.
@@ -32,6 +41,8 @@ The required eight-hour **20 chat/s baseline** profile remains outstanding. Exac
 ```powershell
 # Representative actual runtime; use separate paths to retain before/after results.
 node --expose-gc --import tsx scripts/stress/engine-throughput.mts docs/testing/reliability/engine-throughput-optimized.json
+node --expose-gc --import tsx scripts/stress/engine-throughput.mts docs/testing/reliability/engine-throughput-batch2.json 2
+node --expose-gc --import tsx scripts/stress/engine-throughput.mts docs/testing/reliability/engine-throughput-batch20.json 20
 
 # Full baseline load, pure reducer. Long-running; not a live broadcast.
 node --expose-gc --import tsx scripts/stress/virtual-stream.mts 28800 docs/testing/reliability/virtual-full-core.json core 20
@@ -49,8 +60,11 @@ node --expose-gc --import tsx scripts/stress/virtual-stream.mts 28800 docs/testi
 
 `public-audit.json` inspected 90 files (2,368,328 bytes) across `public/`, `dist-public/`, and `dist/`; compared four configured secret values without printing them; and checked private-file extensions, high-confidence key patterns and literal capability URLs. No findings. The output records Vite/Vercel input hashes. This is a filesystem artifact check, not a tracked-file audit, semantic review of transcript content, fresh deployment verification, or proof that later builds remain clean. Re-run after the final public build:
 
+The follow-up `release-audit.json` scans 285 tracked files and a fresh isolated public-mode build (30 files), and checks ignore rules without revealing configured values. Four configured secret comparisons found no match; no tracked private database, credentials or raw audio was found. All eight ignore probes now pass, including `.pfx` after MAIN repaired that omission. The private-database sample contained zero nontrivial source strings, so no transcript-leak conclusion follows from that comparison. Fresh public mode excludes the local experience, development showcase, owner HTTP client, microphone acquisition and server/SQLite code. The existing `dist-public` still held older local/dev chunks at inspection and must be regenerated before deployment. A local OAuth link in shared dock code was found and its replay rendering was guarded; strict removal of that literal from the public bundle is tracked by MAIN. A static PCM worklet is copied from `public/` but has no public microphone entrypoint. Environment-variable names in local setup instructions were reviewed as documentation, not leaked values.
+
 ```powershell
 node --import tsx scripts/stress/audit-public.mts
+node --import tsx scripts/stress/audit-release.mts
 npx vitest run tests/reliability tests/twitch/eventsub.test.ts
 ```
 

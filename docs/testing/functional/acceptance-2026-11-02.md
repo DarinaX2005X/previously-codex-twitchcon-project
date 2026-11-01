@@ -16,6 +16,8 @@ The runner defaults to both phases when no flag is supplied. It resolves the ins
 
 Observed results: the selected 12-file fixture suite passed 78 tests at 02:53 local test-run time. After the final runtime recovery adjustments, the affected runtime/restart group passed 13 tests and lifecycle/privacy group passed 9 tests. The actual CLI acceptance passed in 18.17 seconds after receiver-bound changes. Type checking of the acceptance files succeeded; a subsequent whole-project check encountered a concurrently edited `DockOwnerPort.listHistory` mismatch, reported to MAIN for the final project check.
 
+After bounded chat batching was integrated, the acceptance runner passed **83 tests across 13 files**; the CLI test passed again in **20.24 seconds**. The later gap-drain correction passed **10 focused batch, cap, privacy and lifecycle tests**. The [intake report](chat-intake-2026-11-02.md) records the paced 20/second and independent-producer 200/second measurements and their different load conditions.
+
 ## Boundary matrix
 
 | Scenario | Evidence and result | Scope |
@@ -76,5 +78,7 @@ The runtime integration test injects simultaneous privacy-inbox and ban-status p
 MAIN connected that immediate callback to the output gate: local published/source/preview responses and overlay state are withheld, media visibility and effect authorization are denied, cloud requests are aborted, and heartbeats stop. Recovery cancels interrupted scene plans before resuming. MAIN reports 40 focused cloud/owner/overlay tests passing for those gates. Existing remote cloud content expires at its last 30-second lease deadline; a broken local SQLite store cannot promise instantaneous remote retraction. The acceptance agent did not perform a new deployed cloud or browser inspection of this fault path.
 
 ## Still requires live evidence
+
+The later [chat batching/intake report](chat-intake-2026-11-02.md) records the bounded FIFO adapter integration, rollback/reconnect regressions and a 1,000-message paced 20/second measurement through the real local runtime and file-backed SQLite.
 
 Real microphone speech and paid provider semantic behavior, real music/noise recognition, Twitch OAuth/scopes, second-account commands and incoming raid, actual clip download/alignment, visible/sounded OBS playback, deployed edit/Forget latency after cloud ACK, and owned EN/RU recording remain live-work dependencies. No synthetic or authored fixture is labelled as a recording of the user, and this report does not mark the entire live stage complete.

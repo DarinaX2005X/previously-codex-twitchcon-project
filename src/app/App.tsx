@@ -20,7 +20,10 @@ export function App({local}: {local: boolean}) {
   const match = /^\/c\/([a-z0-9_]{1,25})(?:\/episodes\/([^/]+))?\/?$/.exec(path);
   let page: ReactNode;
   if (path === '/') page = <Landing/>;
-  else if (path === '/replay') page = <Replay/>;
+  else if (path === '/replay') {
+    const recording = new URLSearchParams(location.search).get('recording');
+    page = <Replay manifestUrl={recording ? `/api/public/replays/${/^[-a-zA-Z0-9_]{1,120}$/.test(recording) ? encodeURIComponent(recording) : 'invalid-recording'}` : undefined}/>;
+  }
   else if (path === '/setup/local' || !local && ['/setup', '/dock', '/overlay'].includes(path)) page = <Instructions/>;
   else if (local && LocalExperience && ['/setup', '/dock', '/overlay'].includes(path)) page = <LocalExperience page={path.slice(1) as 'setup'|'dock'|'overlay'}/>;
   else if (local && Foundation && path === '/foundation') page = <Foundation/>;

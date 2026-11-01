@@ -11,6 +11,7 @@ import type {EntityGraph,EntityHistoryCursor,EntityHistoryPage} from './domain-t
 
 export type WorkInput = {id?: string; sessionId: string; kind: string; businessKey: string; payload: unknown; priority?: number; nextAtMs?: number; dependencyRefs?: VersionRef[]};
 export type WorkLease = {id: string; sessionId: string; kind: string; payload: unknown; privacyEpoch: number; leaseToken: string; leaseUntilMs: number; attempts: number; publishSeq: number|null;frozenPublication?:{body:string;bodyHash:string}};
+export type PublicationWorkStatus={id:string;sessionId:string;kind:string;state:string;publishSeq:number;privacyEpoch:number;frozenHash:string|null;frozenPrivacyRevision:number|null;acknowledged:boolean;attempts:number};
 export type EntityInput = {id: string; sessionId: string; kind: 'claim'|'relation'|'chapter'|'current_state'|'presentation'|'lore'|'moment'|'media'|'playback'|'provider_cache'|'export'; body: unknown; refs: VersionRef[]; startMs?: number; endMs?: number};
 export type PrivacyOptions = {idempotencyKey: string; reason: string};
 export type AcceptedAudio={sessionId:string;actorId:string;leaseEpoch:number;captureEpoch:number;sequence:number;sha256:string;startMs:number;endMs:number;sampleRate:number;rawPath:string;receivedAtMs:number;privacyEpoch:number};
@@ -619,6 +620,40 @@ export class SqliteRepository {
       const id=this.insertWork('outbox',scope,input);
       const row=this.db.get('SELECT publish_seq FROM outbox WHERE channel_id=? AND run_id=? AND id=?',...this.scope(scope),id)!;
       return {id,publishSeq:row.publish_seq == null ? this.assignPublicationSequence(scope,id) : Number(row.publish_seq)};
+    });
+  }
+  /** Exact work identity, not a conclusion inferred from a different publication's global ACK. */
+  getPublicationWork(scope:Scope,id:string):PublicationWorkStatus|null {
+    const row=this.db.get("SELECT id,session_id,kind,state,publish_seq,privacy_epoch,frozen_hash,frozen_body,attempts FROM outbox WHERE channel_id=? AND run_id=? AND id=? AND kind IN ('publish','retract','export_manifest')",...this.scope(scope),id);
+    if(!row||row.publish_seq===null)return null;
+    const frozen=row.frozen_body?JSON.parse(String(row.frozen_body)) as {privacyRevision?:unknown}:null;
+    const frozenHash=row.frozen_hash===null?null:String(row.frozen_hash);
+    return {id:String(row.id),sessionId:String(row.session_id),kind:String(row.kind),state:String(row.state),publishSeq:Number(row.publish_seq),privacyEpoch:Number(row.privacy_epoch),frozenHash,frozenPrivacyRevision:Number.isSafeInteger(frozen?.privacyRevision)?Number(frozen!.privacyRevision):null,acknowledged:row.state==='done'&&!!frozenHash,attempts:Number(row.attempts)};
+  }
+  /** Revoke one managed export without forgetting its sources or changing the episode's privacy epoch. */
+  revokeExport(scope:Scope,id:string,businessKey:string,options:{publicationId?:string}={}):{id:string;publishSeq:number} {
+    if(!businessKey||businessKey.length>160)throw new StorageError('invalid_input','Export revoke key exceeds its limit.');
+    return this.runIdempotentControl(scope,`export-revoke:${businessKey}`,{exportId:id,publicationId:options.publicationId??null},()=>{
+      const entity=this.getEntity(scope,id);if(!entity||entity.kind!=='export')throw new StorageError('inaccessible','Export is unavailable in this scope.');
+      if(options.publicationId){
+        const work=this.db.get('SELECT kind,session_id,business_key,payload,frozen_body FROM outbox WHERE channel_id=? AND run_id=? AND id=?',...this.scope(scope),options.publicationId);
+        const data=work?.payload?JSON.parse(String(work.payload)) as {recordingExportId?:string;manifest?:{id?:string}}:work?.frozen_body?JSON.parse(String(work.frozen_body)) as {recordingExportId?:string;manifest?:{id?:string}}:null;
+        if(!work||work.kind!=='export_manifest'||work.session_id!==entity.sessionId||(data?.recordingExportId!==id&&data?.manifest?.id!==id&&work.business_key!==`recording-publish:${id}:1`))throw new StorageError('inaccessible','Publication does not belong to this export.');
+      }
+      const prior=this.controlGet<{id:string;publishSeq:number}>(scope,`export-revocation:${id}`);
+      const previous=prior?this.getPublicationWork(scope,prior.id):null;
+      if(prior&&previous&&(previous.acknowledged||['queued','running'].includes(previous.state)&&previous.privacyEpoch===this.getSession(scope,entity.sessionId).privacyEpoch))return prior;
+      if(previous&&['queued','running'].includes(previous.state))this.db.run("UPDATE outbox SET state='cancelled',payload=NULL,frozen_body=NULL,frozen_hash=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND id=?",...this.scope(scope),previous.id);
+      this.db.run("UPDATE entities SET status='hidden',body=NULL,revision=revision+CASE WHEN status='active' THEN 1 ELSE 0 END WHERE channel_id=? AND run_id=? AND id=?",...this.scope(scope),id);
+      this.db.run('DELETE FROM public_pointers WHERE channel_id=? AND run_id=? AND entity_id=?',...this.scope(scope),id);
+      // Keep completed ACK identity for owner history, but remove retry bodies for every matching manifest.
+      this.db.run(`UPDATE outbox SET state=CASE WHEN state='done' THEN state ELSE 'cancelled' END,payload=NULL,frozen_body=NULL,
+        frozen_hash=CASE WHEN state='done' THEN frozen_hash ELSE NULL END,lease_token=NULL,lease_until_ms=NULL
+        WHERE channel_id=? AND run_id=? AND kind='export_manifest' AND (json_extract(payload,'$.recordingExportId')=? OR json_extract(payload,'$.manifest.id')=? OR json_extract(frozen_body,'$.manifest.id')=? OR business_key=? ${options.publicationId?'OR id=?':''})`,...this.scope(scope),id,id,id,`recording-publish:${id}:1`,...options.publicationId?[options.publicationId]:[]);
+      this.db.run('UPDATE channels SET privacy_revision=privacy_revision+1 WHERE channel_id=? AND run_id=?',...this.scope(scope));
+      this.db.run('UPDATE publication_sync SET pending_privacy=1 WHERE channel_id=? AND run_id=?',...this.scope(scope));
+      const receipt=this.preparePublication(scope,{sessionId:entity.sessionId,kind:'retract',businessKey:`export-only-retract:${id}:${businessKey}`,payload:{exportOnly:true,affectedIds:[id],affectedSessionIds:[]},priority:1000});
+      this.controlPut(scope,`export-revocation:${id}`,receipt);return receipt;
     });
   }
   private assignPublicationSequence(scope:Scope,id:string):number {

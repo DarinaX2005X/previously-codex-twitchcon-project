@@ -7,6 +7,8 @@ export type StreamReference={id:string;startedAt:string};
 export interface EventSubOptions {
   channelId:string;runId:'live'|string;helix:TwitchHelix;control:ControlStore;
   ingest:(event:EventEnvelope)=>Promise<void>|void;
+  /** At most twenty already-queued same-session chat messages. Resolve only after durable commit. */
+  ingestBatch?:(events:readonly EventEnvelope[])=>Promise<void>|void;
   resolveSession:(occurredAt:string,streamId?:string)=>Promise<StreamReference|null>|StreamReference|null;
   onStream:(stream:TwitchStream|null,occurredAt:string,streamId?:string)=>Promise<void>|void;
   /** Each snapshot page must be persisted; finish reconciles without resurrecting old source tombstones. */
@@ -26,15 +28,17 @@ export class TwitchEventSub {
   private sockets=new Set<WebSocket>();private current:WebSocket|null=null;private migrating:WebSocket|null=null;
   private timers=new Map<WebSocket,ReturnType<typeof setTimeout>>();private retry:ReturnType<typeof setTimeout>|null=null;
   private running=false;private backoff=0;private quotesReady=false;private gapSince:string|null=null;private state:ConnectionState='disconnected';
-  private chain:Promise<void>=Promise.resolve();private queued=0;private generation=0;
+  private chain:Promise<void>=Promise.resolve();private generation=0;
+  private ordinary:Wire[]=[];private ordinaryDraining=false;private retryableChatKeys=new Set<string>();
   private privacyDraining=false;private privacyBlocked=false;private unpersistedPrivacy:Wire|null=null;
   private activeKeepaliveMs=10000;
   private readonly now:()=>number;
   constructor(private readonly options:EventSubOptions){this.now=options.now??Date.now;if(!options.mock&&options.runId!=='live')throw new Error('Live EventSub requires live scope');}
   status(){return {state:this.state,quotesReady:this.quotesReady,gapSince:this.gapSince,privacyBlocked:this.privacyBlocked};}
+  diagnostics(){return {queuedOrdinary:this.ordinary.length,ordinaryDraining:this.ordinaryDraining,privacyDraining:this.privacyDraining};}
   private set(state:ConnectionState,reason?:string){this.state=state;try{this.options.status?.(state,{quotesReady:this.quotesReady,gapSince:this.gapSince,reason,privacyBlocked:this.privacyBlocked});}catch{/* Status persistence cannot interrupt socket shutdown or recovery. */}}
-  async start(){if(this.running)return;this.running=true;this.generation++;this.quotesReady=false;this.schedulePrivacy();await this.chain;if(this.running&&!this.privacyBlocked)this.open(this.options.url??'wss://eventsub.wss.twitch.tv/ws',false);}
-  async stop(){this.running=false;this.generation++;if(this.retry)clearTimeout(this.retry);this.retry=null;for(const socket of this.sockets){socket.removeAllListeners('message');this.clearTimer(socket);socket.close();}this.sockets.clear();this.current=null;this.migrating=null;this.quotesReady=false;this.set('disconnected');await this.chain;}
+  async start(){if(this.running)return;this.running=true;this.generation++;this.quotesReady=false;this.schedulePrivacy();await this.chain;if(this.running&&!this.privacyBlocked&&!this.retry)this.open(this.options.url??'wss://eventsub.wss.twitch.tv/ws',false);}
+  async stop(){this.running=false;this.generation++;if(this.retry)clearTimeout(this.retry);this.retry=null;for(const socket of this.sockets){socket.removeAllListeners('message');this.clearTimer(socket);socket.close();}this.sockets.clear();this.current=null;this.migrating=null;this.quotesReady=false;this.set('disconnected');for(;;){const pending=this.chain;await pending;if(pending===this.chain)break;}}
   private clearTimer(socket:WebSocket){const timer=this.timers.get(socket);if(timer)clearTimeout(timer);this.timers.delete(socket);}
   private watchdog(socket:WebSocket,ms:number){this.clearTimer(socket);const timer=setTimeout(()=>{socket.terminate();this.fail('keepalive_timeout');},ms);timer.unref();this.timers.set(socket,timer);}
   private open(url:string,transfer:boolean){
@@ -64,11 +68,65 @@ export class TwitchEventSub {
         }
         this.schedulePrivacy();return;
       }
-      if(++this.queued>100){this.queued--;this.fail('ingest_backpressure');return;}
-      this.chain=this.chain.then(()=>this.notification(wire)).catch(()=>this.fail('ingest_failed')).finally(()=>{this.queued--;});
+      if(this.ordinary.length>=100){this.fail('ingest_backpressure');return;}
+      this.ordinary.push(wire);this.scheduleOrdinary();
     });
     socket.on('error',()=>{if(this.running&&(socket===this.current||socket===this.migrating))this.fail('socket_error');});
     socket.on('close',()=>{this.clearTimer(socket);this.sockets.delete(socket);if(this.running&&(socket===this.current||socket===this.migrating))this.fail('socket_closed');});
+  }
+  private controls<T>(action:()=>T):T{return this.options.control.transaction?this.options.control.transaction(action):action();}
+  /** No collection timer: consume only the FIFO prefix that is already available when this task runs. */
+  private scheduleOrdinary(){
+    if(this.ordinaryDraining||!this.ordinary.length||this.state==='gap')return;this.ordinaryDraining=true;let failed=false,deferred=false;
+    this.chain=this.chain.then(async()=>{
+      // Keep received work intact while reestablishing channel restrictions. Consuming it with
+      // quotesReady=false would turn a transport gap into avoidable rejection of the entire backlog.
+      if(this.state==='gap'){deferred=true;return;}
+      const kind=(wire:Wire)=>wire.payload.subscription?.type??wire.metadata.subscription_type;
+      const batch:Wire[]=[this.ordinary[0]!];
+      if(this.options.ingestBatch&&kind(batch[0])==='channel.chat.message')for(const wire of this.ordinary.slice(1,20)){if(kind(wire)!=='channel.chat.message')break;batch.push(wire);}
+      if(this.options.ingestBatch&&kind(batch[0])==='channel.chat.message')await this.chatBatch(batch);else await this.notification(batch[0]);
+      // A failed transaction leaves this entire FIFO prefix available for reconnect retry.
+      this.ordinary.splice(0,batch.length);
+    }).catch(()=>{failed=true;this.fail('ingest_failed');}).finally(()=>{
+      this.ordinaryDraining=false;
+      // Requeue behind an already-scheduled durable privacy drain, never ahead of it.
+      if(!failed&&!deferred&&this.ordinary.length)this.scheduleOrdinary();
+    });
+  }
+  private async chatBatch(wires:readonly Wire[]){
+    const accepted:{wire:Wire;key:string}[]=[];
+    try{
+      this.controls(()=>{
+        for(const wire of wires){
+          const raw=wire.payload.event;
+          if(!raw||raw.broadcaster_user_id!==this.options.channelId||(wire.payload.subscription?.version??wire.metadata.subscription_version)!=='1')continue;
+          const key=`eventsub:${wire.metadata.message_id}`;
+          if(this.retryableChatKeys.has(key)&&this.options.control.get<{status:string}>(key)?.status==='processing')this.options.control.delete(key);
+          if(!this.options.control.claim(key,{status:'processing'},this.now()+7*86400000))continue;
+          this.retryableChatKeys.add(key);accepted.push({wire,key});
+        }
+      });
+      let group:EventEnvelope[]=[];
+      const flush=async()=>{if(!group.length)return;const items=group;group=[];await this.options.ingestBatch!(items);};
+      for(const {wire,key} of accepted){
+        const raw=wire.payload.event!;
+        if(raw.source_broadcaster_user_id&&raw.source_broadcaster_user_id!==this.options.channelId){await flush();continue;}
+        const occurredAt=new Date(wire.metadata.message_timestamp).toISOString(),receivedAt=new Date(this.now()).toISOString();
+        const ref=await this.options.resolveSession(occurredAt);
+        const envelope:EventEnvelope={schemaVersion:1,channelId:this.options.channelId,runId:this.options.runId,eventId:`twitch:${wire.metadata.message_id}`,externalId:wire.metadata.message_id,origin:this.options.mock?'mock':'twitch',kind:'channel.chat.message',occurredAt,receivedAt,sessionId:ref?.id??null,sessionOffsetMs:ref?Math.max(0,this.nowOffset(occurredAt,ref.startedAt)):null,payload:{...raw,quotesReady:this.quotesReady,late:this.now()-Date.parse(occurredAt)>120000}};
+        EventEnvelopeSchema.parse(envelope);
+        if(!ref){await flush();await this.options.ingest(envelope);continue;}
+        if(group.length&&group[0].sessionId!==ref.id)await flush();
+        group.push(envelope);
+      }
+      await flush();
+      this.controls(()=>{for(const {key} of accepted)this.options.control.put(key,{status:'done'},this.now()+7*86400000);});
+      for(const {key} of accepted)this.retryableChatKeys.delete(key);
+    }catch(error){
+      this.controls(()=>{for(const {key} of accepted)this.options.control.delete(key);});
+      throw error;
+    }
   }
   /** Keep only identifiers and cutoffs, never deleted message text or moderation reasons. */
   private privacyWire(wire:Wire):Wire|null {
@@ -126,7 +184,7 @@ export class TwitchEventSub {
     const stream=await this.options.helix.currentStream();if(version!==this.generation||!this.running)return;await this.options.onStream(stream,new Date(this.now()).toISOString());
     if(version!==this.generation||!this.running)return;
     if(this.privacyBlocked||this.unpersistedPrivacy){this.fail('privacy_recovery_pending');return;}
-    this.quotesReady=true;this.backoff=0;this.set('active');
+    this.quotesReady=true;this.backoff=0;this.set('active');this.scheduleOrdinary();
   }
   private fail(reason:string){
     if(!this.running||this.retry)return;this.generation++;this.quotesReady=false;this.gapSince??=new Date(this.now()).toISOString();

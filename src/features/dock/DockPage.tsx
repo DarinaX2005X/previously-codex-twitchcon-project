@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { Chapter, InvalidationReceipt, Lore, OwnerSnapshot, PrivacyTarget, PublicChapter, RecapClient, RecapPlan } from '../../shared/contracts';
 import { ActionGroup, Brand, Button, ChapterRow, Dialog, DockLayout, Field, InlineNotice, LanguageControl, QuietButton, SegmentedControl, Sheet, SourceDisclosure, SourceStatus, Textarea, Timecode, formatTimecode } from '../../ui';
 import { SettingsSheet } from '../settings/SettingsSheet';
@@ -7,9 +7,12 @@ import type { DockCapturePort, DockOwnerPort, DockPreviewRenderer } from './port
 import { SourceSheet, type SourceContext } from './SourceSheet';
 import { LoreRow } from './LoreRow';
 import { DockHistoryStore, historyKey, mergeHistory, type HistoryContext } from './history';
+import type { RecordingPort } from './RecordingPanel';
 import './dock.css';
 
-export interface DockPageProps { client: RecapClient; capture?: DockCapturePort; owner?: DockOwnerPort; renderPreview?: DockPreviewRenderer; label?: string; clockMode?: DockClockMode; recording?: boolean; }
+const RecordingPanel = import.meta.env.MODE === 'public' ? null : lazy(() => import('./RecordingPanel').then(module => ({ default: module.RecordingPanel })));
+
+export interface DockPageProps { client: RecapClient; capture?: DockCapturePort; owner?: DockOwnerPort; renderPreview?: DockPreviewRenderer; recordingPort?: RecordingPort; label?: string; clockMode?: DockClockMode; recording?: boolean; }
 type Edit = { id: string; title: string; summary: string; baseRevision: number; error: string; conflict: boolean };
 const idleCapture = { status: 'idle' as const, level: 0, message: null, droppedChunks: 0 };
 const idleSubscribe = () => () => {};
@@ -18,7 +21,8 @@ const getIdleCapture = () => idleCapture;
 function statusView(state: OwnerSnapshot['status']['mic']['state']): 'ready' | 'pending' | 'paused' | 'unavailable' | 'error' {
   return state === 'ready' || state === 'listening' ? 'ready' : state === 'paused' ? 'paused' : state === 'error' ? 'error' : state === 'connecting' || state === 'delayed' ? 'pending' : 'unavailable';
 }
-export function DockPage({ client, capture, owner, renderPreview, label, clockMode = 'server', recording = false }: DockPageProps) {
+export function DockPage({ client, capture: providedCapture, owner, renderPreview, recordingPort, label, clockMode = 'server', recording = false }: DockPageProps) {
+  const capture = import.meta.env.MODE === 'public' || recording ? undefined : providedCapture;
   const store = useMemo(() => new DockStore(client), [client]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const captureState = useSyncExternalStore(capture?.subscribe ?? idleSubscribe, capture?.getSnapshot ?? getIdleCapture, getIdleCapture);
@@ -138,16 +142,16 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
       {state.loading && <p role="status">Loading your channel…</p>}
       {(state.error || error) && <InlineNotice tone="danger" live action={<QuietButton onClick={refresh}>Refresh dock</QuietButton>}>{error || state.error}</InlineNotice>}
       {notice && <p className="dock-result" role="status">{notice}</p>}
-      {receipt && <InlineNotice tone={recording || privacyAcknowledged(receipt, snapshot) ? 'success' : 'warning'}><p>{receiptKind === 'chapter' ? 'Chapter removed from the recap and queued scenes. Captured sources are kept.' : 'The source interval and affected chapters, moments, lore and Previously media are removed locally.'}</p><p>{recording ? 'This changes only the recording sandbox. Reset recording restores the original recording; your live channel is unchanged.' : privacyAcknowledged(receipt, snapshot) ? 'Cloud removal acknowledged.' : 'Cloud removal pending. Keep this process running until the cloud acknowledges it.'}</p>{receipt.externalClipActions.length > 0 && <div><p>Delete these clips manually on Twitch:</p>{receipt.externalClipActions.map(action => <a key={action.clipId} href={action.manageUrl} target="_blank" rel="noreferrer">Manage Twitch clip {action.clipId}</a>)}</div>}</InlineNotice>}
+      {receipt && <InlineNotice tone={recording || privacyAcknowledged(receipt, snapshot) ? 'success' : 'warning'}><p>{receiptKind === 'chapter' ? 'Chapter removed from the recap and queued scenes. Captured sources are kept.' : 'The source interval and affected chapters, moments, lore and Previously media are removed locally.'}</p><p>{recording ? 'This changes only the recording sandbox. Reset recording restores the original recording; your live channel is unchanged.' : privacyAcknowledged(receipt, snapshot) ? 'Cloud removal acknowledged.' : 'Cloud removal pending. Keep this process running until the cloud acknowledges it.'}</p>{!recording && receipt.externalClipActions.length > 0 && <div><p>Delete these clips manually on Twitch:</p>{receipt.externalClipActions.map(action => <a key={action.clipId} href={action.manageUrl} target="_blank" rel="noreferrer">Manage Twitch clip {action.clipId}</a>)}</div>}</InlineNotice>}
       {snapshot && <>
         {captureState.status === 'conflict' && <InlineNotice tone="warning" action={<QuietButton onClick={() => snapshot.session && void run('listen', () => capture!.start(snapshot.session!.id, true))}>Take over listening</QuietButton>}>Another dock owns this microphone session. Take over to stop that capture and listen here.</InlineNotice>}
         {captureState.status === 'denied' && <InlineNotice tone="warning">Microphone access is blocked. Allow access in your browser, then Resume listening. In OBS, open <a href="/dock" target="_blank" rel="noreferrer">the dock in a browser tab</a> to use your microphone.</InlineNotice>}
         {captureState.status === 'no_device' && <InlineNotice tone="warning">No microphone found. Connect one and Resume listening, or continue with chat.</InlineNotice>}
         {capture && snapshot.session && !captureEngaged && !snapshot.settings.listeningPaused && <QuietButton pending={pending.has('startMic')} onClick={() => void run('startMic', async () => { await capture.start(snapshot.session!.id); if (['listening', 'delayed'].includes(capture.getSnapshot().status)) setNotice('Microphone listening.'); })}>{['denied', 'no_device', 'device_lost', 'error'].includes(captureState.status) ? 'Retry microphone' : 'Start microphone'}</QuietButton>}
         {['denied', 'no_device'].includes(captureState.status) && snapshot.settings.listeningPaused && <QuietButton pending={pending.has('chatOnly')} onClick={() => void run('chatOnly', async () => { await client.setSettings({ listeningPaused: false, baseRevision: snapshot.settings.revision }); setNotice('Chat-only listening enabled. The microphone remains off.'); await store.refresh(); })}>Continue with chat only</QuietButton>}
-        {snapshot.status.chat.state === 'error' || snapshot.status.chat.state === 'disconnected' ? <InlineNotice tone="warning">{snapshot.status.chat.message ?? 'Chat is disconnected.'} <a href="/api/auth/twitch/start?returnTo=/dock" target="_blank" rel="noreferrer">Reconnect Twitch</a>. Your edit stays open in this tab.</InlineNotice> : null}
+        {snapshot.status.chat.state === 'error' || snapshot.status.chat.state === 'disconnected' ? <InlineNotice tone="warning">{import.meta.env.MODE === 'public' || recording ? 'Recorded chat is unavailable. Use the recording controls to restart.' : <>{snapshot.status.chat.message ?? 'Chat is disconnected.'} <a href="/api/auth/twitch/start?returnTo=/dock" target="_blank" rel="noreferrer">Reconnect Twitch</a>. Your edit stays open in this tab.</>}</InlineNotice> : null}
         {['story', 'transcription', 'moderation'].some(key => ['delayed', 'error'].includes(snapshot.status[key as 'story'].state)) && <InlineNotice tone="warning">Recap updates are delayed. Your published chapters are still available. {snapshot.status.story.action ?? 'Check the connection, then refresh the dock.'}</InlineNotice>}
-        {snapshot.status.overlay.state !== 'ready' && <p className="pv-secondary">{snapshot.status.overlay.message ?? 'The broadcast source is unavailable. Preview works locally.'} <a href="/setup">Set up OBS</a></p>}
+        {snapshot.status.overlay.state !== 'ready' && <p className="pv-secondary">{recording ? 'The recorded scene is unavailable. Try Preview again or restart the recording.' : <>{snapshot.status.overlay.message ?? 'The broadcast source is unavailable. Preview works locally.'} <a href="/setup">Set up OBS</a></>}</p>}
         {!snapshot.session && <InlineNotice>There is no live stream. Start your stream on Twitch, then refresh this dock. Your saved settings remain available.</InlineNotice>}
         {snapshot.session && snapshot.session.status !== 'live' && <InlineNotice>{snapshot.session.status === 'closing' ? 'Finishing the recap. Keep this process running.' : snapshot.session.finalSnapshotAckAt ? 'Episode saved online.' : 'Public update pending. Keep this process running until the final snapshot is acknowledged.'}</InlineNotice>}
         {!recording && snapshot.sync.state === 'unconfigured' && <InlineNotice tone="warning">Cloud sync is not configured. Your recap is saved locally. <a href="/setup">Set up public sharing</a>.</InlineNotice>}
@@ -164,6 +168,7 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
         {filter === 'held' && <>{lore.map(item => <LoreRow key={`${item.id}:${state.sourceEpoch}`} lore={item} owner={owner} onSaved={result => { if (result && 'status' in result && historyContext) historyStore.apply(result, historyContext); else if (result && 'privacyEpoch' in result) store.invalidate(result.hiddenEntityIds); refresh(); }} onSource={() => snapshot.session && setSource({ title: item.term, sessionId: snapshot.session.id, fromMs: Math.max(0, item.firstSeenMs - 30_000), toMs: Math.min(172_800_000, item.firstSeenMs + 30_000) })} />)}{durableHistory && historyContext ? (!history?.loreLoaded || history.loreCursor) && <QuietButton pending={history?.loading === 'lore'} disabled={Boolean(history?.loading)} onClick={() => void historyStore.load('lore', historyContext)}>{history?.loreLoaded || localLore.length > 20 ? 'Earlier lore' : 'Browse lore history'}</QuietButton> : localLore.length > loreLimit && <QuietButton onClick={() => setLoreLimit(value => value + 20)}>Show more lore</QuietButton>}</>}
         {snapshot.moments.length > 0 && <section className="dock-moments"><h2>Saved moments</h2>{snapshot.moments.slice(-10).reverse().map(moment => <div key={moment.id}><Timecode milliseconds={moment.startMs} /><span>{moment.label}</span><small>{moment.mediaState === 'ready' ? 'Clip ready' : moment.mediaState === 'pending' ? 'Clip pending' : 'Clip unavailable'}</small></div>)}</section>}
       </>}
+      {!recording && recordingPort && RecordingPanel && <Suspense fallback={<p role="status">Opening recording controls…</p>}><RecordingPanel port={recordingPort} sessionId={snapshot?.session?.status === 'live' ? snapshot.session.id : null} sourceEpoch={state.sourceEpoch} /></Suspense>}
     </DockLayout>
     <Sheet open={!!edit} onOpenChange={open => { if (!open) closeEdit(); }} title="Edit chapter" className="dock-paper" description="Your saved wording is kept when new audio arrives. Publication still requires a safety check." footer={<ActionGroup><Button pending={pending.has('edit')} disabled={!edit?.title.trim() || !edit?.summary.trim() || edit.conflict} onClick={() => void saveEdit()}>Save chapter</Button><QuietButton onClick={closeEdit}>Cancel</QuietButton></ActionGroup>}>
       {edit && <><Field label="Chapter title" disabled={pending.has('edit')} value={edit.title} maxLength={120} onChange={event => setEdit({ ...edit, title: event.target.value })} /><Textarea label="Chapter summary" disabled={pending.has('edit')} value={edit.summary} maxLength={700} onChange={event => setEdit({ ...edit, summary: event.target.value })} />{edit.error && <InlineNotice tone="danger" live>{edit.error}</InlineNotice>}{edit.conflict && <section className="dock-comparison"><h3>Latest saved version</h3>{comparison ? <><strong>{comparison.title}</strong><p>{comparison.summary}</p><QuietButton onClick={() => setEdit({ ...edit, baseRevision: comparison.revision, conflict: false, error: '' })}>Keep my edit against this version</QuietButton></> : <p>This chapter is no longer available. Copy any wording you want to keep before closing.</p>}</section>}<p className="pv-secondary">Delete chapter removes the chapter from the recap. Use Forget from Source to remove captured material and its derived stories.</p></>}
@@ -178,6 +183,7 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
     </Sheet>
   </main>;
 }
+
 
 
 

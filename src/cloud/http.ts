@@ -42,6 +42,16 @@ export function createCloudHandler(options:{service:PublicationService;secret:st
       const cutoff=url.searchParams.has('untilMs')?Number(url.searchParams.get('untilMs')):undefined;
       if(parts[2]==='channels'&&parts.length===4){if(parts[3]!==options.channelLogin)throw new PublicationError(404,'not_found');return json(await options.service.readSnapshot(channelId,undefined,cutoff));}
       if(parts[2]==='sessions'&&parts.length===4)return json(await options.service.readSnapshot(channelId,Key.parse(parts[3]),cutoff));
+      if(parts[2]==='replays'&&parts.length===3){
+        const head=await options.service.getHead(channelId),available=[];
+        for(const pointer of (head?.head.exports??[]).filter(p=>p.status==='active').sort((a,b)=>b.publishSeq-a.publishSeq)){
+          const {manifest}=await options.service.readManifest(channelId,pointer.id,pointer.revision);
+          available.push(manifest);
+        }
+        const selected=available.find(manifest=>manifest.origin==='own-stream')??available[0];
+        if(!selected)throw new PublicationError(410,'recording_unavailable');
+        return json({id:selected.id});
+      }
       if(parts[2]==='replays'&&(parts.length===4||parts.length===6)){
         const id=Key.parse(parts[3]),head=await options.service.getHead(channelId),pointer=head?.head.exports.find(p=>p.id===id);
         const revision=url.searchParams.has('revision')?Number(url.searchParams.get('revision')):pointer?.revision;

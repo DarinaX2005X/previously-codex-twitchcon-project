@@ -1,0 +1,15 @@
+# Experience review
+
+The reviewed material is an explicitly labelled authored text example. It does not establish real stream, microphone, Twitch, video or OBS behavior. These are agent observations, not user approval or measured human comprehension.
+
+At 390 × 844, the landing keeps the main action above the source and derived context. The source and current statement have distinct light and dark reading areas, clear text contrast, and no horizontal clipping. The example disclosure remains beside the demonstration. At 1440 × 900, the source occupies roughly one third of the demonstration and the result has the remaining space; the larger result and its accent plate make the transformation visible without decorative arrows or metadata strips. The first screenshot immediately after viewport resize retained the old capture bounds; the saved desktop image was taken after the viewport settled.
+
+The affected mobile replay states were reviewed after the source and scene-caption repairs. Before publication, the permitted source excerpt is readable with its source time and the actual recorded publication milestone. Transport controls retain separate touch targets and no longer consume most of the first view. During the active scene, the larger companion caption carries the current beat below the animation. This resolves the small scene text at phone width; screenshots alone do not establish perceived motion quality or OBS legibility.
+
+Applying the supplied correction updates the chapter text and changes the action to disabled **Correction applied**. The corrected chapter and its source action remain visible above the review section. The saved screenshot covers that confirmed result, not an optimistic click state.
+
+The separate loopback owner fixture uses the real engine, SQLite, owner routes and recording review with authored text and one second of silent WAV audio. Its history expands from 20 to 30 editable rows through the explicit history action; the cursor action disappears after exhaustion. At 360 px, Source, Edit, Pin and Delete now share one row with separate touch targets. The initial nested action group had stacked those controls in four rows; that defect was repaired.
+
+The private review dialog was inspected at desktop width and 360 px. Its metadata, source wording, checkboxes, text paging and audio controls remain inside the reading surface. A doubled mobile inset was removed; the description and body now align and the source has more reading width. The media block distinguishes visual and audio review, and approval remains unavailable until the required checks are complete. This inspection did not approve or publish a real recording. A separate outer setup link caused document scrolling around the dock and was moved into Settings.
+
+Evidence: `landing-mobile.jpg`, `landing-desktop.jpg`, `replay-correction-mobile.jpg`, `recording-review-mobile.jpg`. Existing foundation evidence continues to cover the unchanged shared fields and dialogs. Cloud ACK, withdrawal, archive integrity and privacy races are covered by separate functional tests, not inferred from these images.

@@ -53,6 +53,7 @@ export function SettingsSheet({ settings, client, onClose, onSaved, recording = 
       <label className="dock-check"><input type="checkbox" checked={draft.autoClips} onChange={event => patch({ autoClips: event.target.checked })} />Allow automatic Twitch clips</label>
       {!recording && <p className="pv-secondary">Clips are published on Twitch. Forget removes them from Previously; delete the Twitch clip separately.</p>}
       <Textarea label="Context for an early welcome" maxLength={500} value={draft.channelContext} hint="Optional context to use before the stream has published chapters." onChange={event => patch({ channelContext: event.target.value })} />
+      {import.meta.env.MODE !== 'public' && !recording && <a href="/setup">Channel setup</a>}
     </div>
   </Sheet>;
 }

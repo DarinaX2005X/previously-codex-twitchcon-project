@@ -1,14 +1,48 @@
-import { describe,it,expect,vi } from 'vitest';
-import { mkdtempSync,rmSync,writeFileSync,readdirSync } from 'node:fs';
+import { afterEach,describe,it,expect,vi } from 'vitest';
+import { mkdtempSync,rmSync,writeFileSync,readdirSync,readFileSync } from 'node:fs';
+import { rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import express from 'express';
 import { PrivateMediaCache,createFFmpegProbe,createMediaRouter,parseByteRange,type MediaInput,type MediaDescriptor } from '../../src/server/media/index.js';
 import { encodeWav } from '../../src/server/audio/wav.js';
 import { createStorage } from '../../src/server/storage/index.js';
+vi.mock('node:fs/promises',async importOriginal=>{const actual=await importOriginal<typeof import('node:fs/promises')>();return {...actual,rename:vi.fn(actual.rename)};});
+const nativeFs=await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+afterEach(()=>{vi.mocked(rename).mockReset().mockImplementation(nativeFs.rename);});
 const input:MediaInput={id:'asset',url:'https://clips.example/authorized',kind:'audio',sessionId:'s',privacyEpoch:0,dependencyRefs:[],captureStartMs:0,captureEndMs:1000};
 const temp=()=>mkdtempSync(join(process.cwd(),'tests/audio/media-'));
 const bytes=encodeWav(new Float32Array(8000).fill(0.1),8000);
 describe('private media lifecycle',()=>{
+ it.each(['EPERM','EACCES','EBUSY'])('retries a brief %s index replacement lock without removing the old index',async code=>{
+   const dir=temp(),options={directory:dir,allowedHosts:[],visible:()=>true,probe:async()=>({durationMs:1000,mimeType:'audio/wav'})};const cache=new PrivateMediaCache(options),{url:_url,...descriptor}=input;
+   try{await cache.initialize();const prior=readFileSync(join(dir,'index.json'),'utf8');let replacements=0;
+     vi.mocked(rename).mockImplementation(async(from,to)=>{if(String(to).endsWith('index.json')&&++replacements<=2){expect(readFileSync(join(dir,'index.json'),'utf8')).toBe(prior);throw Object.assign(new Error('Authored temporary file lock'),{code});}await nativeFs.rename(from,to);});
+     await cache.storeAudio({...descriptor,kind:'audio'},bytes);expect(replacements).toBe(3);expect(JSON.parse(readFileSync(join(dir,'index.json'),'utf8')).records).toHaveLength(1);
+     vi.mocked(rename).mockImplementation(nativeFs.rename);expect((await new PrivateMediaCache(options).get(input.id)).record.state).toBe('ready');
+   }finally{rmSync(dir,{recursive:true,force:true});}
+ });
+ it('bounds persistent index locks, keeps the prior index, and retries failed initialization later',async()=>{
+   const dir=temp(),options={directory:dir,allowedHosts:[],visible:()=>true};
+   try{await new PrivateMediaCache(options).initialize();const prior=readFileSync(join(dir,'index.json'),'utf8'),cache=new PrivateMediaCache(options);let replacements=0;
+     vi.mocked(rename).mockImplementation(async(from,to)=>{if(String(to).endsWith('index.json')){replacements++;throw Object.assign(new Error('Authored persistent lock'),{code:'EPERM'});}await nativeFs.rename(from,to);});
+     await expect(cache.initialize()).rejects.toMatchObject({code:'EPERM'});expect(replacements).toBe(7);expect(readFileSync(join(dir,'index.json'),'utf8')).toBe(prior);
+     vi.mocked(rename).mockImplementation(async(from,to)=>{if(String(to).endsWith('index.json'))replacements++;await nativeFs.rename(from,to);});await cache.initialize();expect(replacements).toBe(8);
+   }finally{rmSync(dir,{recursive:true,force:true});}
+ });
+ it('does not retry a non-transient index filesystem failure',async()=>{
+   const dir=temp();try{let replacements=0;vi.mocked(rename).mockImplementation(async()=>{replacements++;throw Object.assign(new Error('Authored disk full'),{code:'ENOSPC'});});
+     await expect(new PrivateMediaCache({directory:dir,allowedHosts:[],visible:()=>true}).initialize()).rejects.toMatchObject({code:'ENOSPC'});expect(replacements).toBe(1);
+   }finally{rmSync(dir,{recursive:true,force:true});}
+ });
+ it('keeps concurrent initialization and mutations behind the initial atomic index replacement',async()=>{
+   const dir=temp(),options={directory:dir,allowedHosts:[],visible:()=>true,probe:async()=>({durationMs:1000,mimeType:'audio/wav'})},cache=new PrivateMediaCache(options),{url:_url,...descriptor}=input;
+   let started!:()=>void,release!:()=>void;const entered=new Promise<void>(resolve=>started=resolve),gate=new Promise<void>(resolve=>release=resolve);let first=true;
+   try{vi.mocked(rename).mockImplementation(async(from,to)=>{if(first&&String(to).endsWith('index.json')){first=false;started();await gate;}await nativeFs.rename(from,to);});
+     const initial=cache.initialize();await entered;let initialized=false;const again=cache.initialize().then(()=>{initialized=true;});await Promise.resolve();expect(initialized).toBe(false);
+     const stored=cache.storeAudio({...descriptor,kind:'audio'},bytes);release();await Promise.all([initial,again,stored]);
+     expect(JSON.parse(readFileSync(join(dir,'index.json'),'utf8')).records.map((record:MediaDescriptor)=>record.id)).toEqual([input.id]);expect((await new PrivateMediaCache(options).get(input.id)).record.state).toBe('ready');
+   }finally{release?.();rmSync(dir,{recursive:true,force:true});}
+ });
  it('stores generated PCM privately without fetch and reloads its exact authorization binding',async()=>{
    const dir=temp();let permitted=true;const fetcher=vi.fn();const {url:_url,...descriptor}=input;
    try{const options={directory:dir,allowedHosts:[],visible:()=>permitted,fetch:fetcher};const cache=new PrivateMediaCache(options);

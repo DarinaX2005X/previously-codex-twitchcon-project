@@ -1,0 +1,58 @@
+{
+  "scope": "Actual StoryEngine.ingestBatch of already queued synthetic pending-safety chat, preserving per-event durable receipts and atomic batch commit. No providers/OBS/network, intentional batch-fill wait or real-time socket arrival; processing duration excludes time waiting in an intake queue.",
+  "batchSize": 2,
+  "dispatchCalls": 500,
+  "callMilliseconds": {
+    "mean": 29.11407499999998,
+    "p95": 43.21589999999924,
+    "max": 111.9984000000004
+  },
+  "hardware": {
+    "cpu": "12th Gen Intel(R) Core(TM) i7-1260P",
+    "logicalCpus": 16,
+    "totalMemory": 34071896064,
+    "node": "v22.13.0"
+  },
+  "samples": [
+    {
+      "processed": 250,
+      "elapsedSeconds": 2.3470226000000003,
+      "segmentSeconds": 2.3470226000000003,
+      "segmentEventsPerSecond": 106.51793468030516,
+      "heapUsed": 13716688,
+      "rss": 119463936,
+      "diskBytes": 1036288,
+      "retainedSources": 250
+    },
+    {
+      "processed": 500,
+      "elapsedSeconds": 5.2932702,
+      "segmentSeconds": 2.9462476,
+      "segmentEventsPerSecond": 84.85369661395735,
+      "heapUsed": 13877112,
+      "rss": 123764736,
+      "diskBytes": 1728512,
+      "retainedSources": 500
+    },
+    {
+      "processed": 750,
+      "elapsedSeconds": 9.5307845,
+      "segmentSeconds": 4.2375143,
+      "segmentEventsPerSecond": 58.99685105487432,
+      "heapUsed": 14024448,
+      "rss": 117800960,
+      "diskBytes": 2256896,
+      "retainedSources": 500
+    },
+    {
+      "processed": 1000,
+      "elapsedSeconds": 14.6059899,
+      "segmentSeconds": 5.075205400000001,
+      "segmentEventsPerSecond": 49.25909008529979,
+      "heapUsed": 14114736,
+      "rss": 118185984,
+      "diskBytes": 2813952,
+      "retainedSources": 500
+    }
+  ]
+}

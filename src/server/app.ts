@@ -42,6 +42,9 @@ export function createApp(options: AppOptions) {
   });
   app.use((req, _res, next) => {if (status.phase === 'stopping' && !['GET', 'HEAD'].includes(req.method)) next(new ApiError(503, 'shutting_down', 'The application is stopping.', true)); else next();});
   app.use(mutationRateLimit(now));
+  // A reviewed recording may contain thousands of exact source/output hashes.
+  // Authenticate before accepting its larger, still bounded approval receipt.
+  app.post('/api/owner/recordings/:id/review', requireRole('owner', auth, config.sessionSecret, now), express.json({limit: '4mb', strict: true}));
   app.use(express.json({limit: '64kb', strict: true}));
   if (options.routers?.auth) app.use(options.routers.auth);
   if (options.routers?.public) app.use('/api/public', options.routers.public);

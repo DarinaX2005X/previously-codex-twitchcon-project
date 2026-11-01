@@ -14,5 +14,5 @@ export default defineConfig(({ mode }) => ({
     sourcemap: false,
     target: 'es2022',
   },
-  server: { port: 4318, strictPort: true },
+  server: { port: 4318, strictPort: true, watch: { ignored: ['**/.data/**', '**/dist/**', '**/dist-public/**', '**/dist-server/**', '**/docs/testing/reliability/*.json*'] } },
 }));

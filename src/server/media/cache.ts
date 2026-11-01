@@ -4,9 +4,20 @@ import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { VersionRef } from '../../shared/contracts/index.js';
 import { parseWav } from '../audio/wav.js';
 const execute=promisify(execFile);
+async function replaceIndex(temporary:string,target:string):Promise<void>{
+  // Windows scanners/readers can briefly deny atomic replacement. Preserve the old index throughout.
+  for(let attempt=0;;attempt++){
+    try{await rename(temporary,target);return;}
+    catch(error){
+      if(attempt>=6||!['EPERM','EACCES','EBUSY'].includes((error as NodeJS.ErrnoException).code??''))throw error;
+      await delay(Math.min(20*2**attempt,500));
+    }
+  }
+}
 export type ChannelMediaApproval={channelId:string;id:string;revision:number};
 export type MediaBinding=
   | {sessionId:string;privacyEpoch:number;dependencyRefs:VersionRef[];channelApproval?:never}
@@ -40,8 +51,11 @@ export class PrivateMediaCache {
   initialize():Promise<void>{if(this.loaded)return Promise.resolve();if(!this.initialization)this.initialization=this.initializeFiles().catch(error=>{this.initialization=null;throw error;});return this.initialization;}
   private async initializeFiles(){await mkdir(this.directory,{recursive:true,mode:0o700});try {const parsed=JSON.parse(await readFile(path.join(this.directory,'index.json'),'utf8'));if(!Array.isArray(parsed.records)||!Array.isArray(parsed.revoked))throw new Error();for(const id of parsed.revoked)if(typeof id==='string')this.revoked.add(id);for(const record of parsed.records as MediaRecord[]){if(typeof record.id!=='string'||record.file!==this.filename(record.id)||record.state!=='ready'||this.revoked.has(record.id))continue;const stats=await stat(this.location(record.file)).catch(()=>null);if(stats&&stats.size===record.size)this.records.set(record.id,record);}}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT'){this.records.clear();}}
     // Unknown/partial files are unusable after restart; discard only generated cache filenames.
-    const known=new Set([...this.records.values()].map(record=>record.file));for(const file of await readdir(this.directory)){if((/^[a-f0-9-]+\.part$/.test(file)||/^[a-f0-9]{64}\.media$/.test(file))&&!known.has(file))await unlink(path.join(this.directory,file)).catch(()=>{});}this.loaded=true;await this.persist();}
-  private async persist(){await writeFile(path.join(this.directory,'index.tmp'),JSON.stringify({records:[...this.records.values()],revoked:[...this.revoked]}),{mode:0o600});await rename(path.join(this.directory,'index.tmp'),path.join(this.directory,'index.json'));}
+    const known=new Set([...this.records.values()].map(record=>record.file));for(const file of await readdir(this.directory)){if((/^[a-f0-9-]+\.part$/.test(file)||/^[a-f0-9]{64}\.media$/.test(file))&&!known.has(file))await unlink(path.join(this.directory,file)).catch(()=>{});}
+    // Mutations are serialized, but initialize/get can be called independently. Do not let them
+    // pass initialization while its first index write is still using the shared staging filename.
+    await this.persist();this.loaded=true;}
+  private async persist(){await writeFile(path.join(this.directory,'index.tmp'),JSON.stringify({records:[...this.records.values()],revoked:[...this.revoked]}),{mode:0o600});await replaceIndex(path.join(this.directory,'index.tmp'),path.join(this.directory,'index.json'));}
   private allowed(value:string){let url:URL;try{url=new URL(value);}catch{throw new MediaError('invalid');}if(url.protocol!=='https:'||url.username||url.password||(url.port&&url.port!=='443')||!this.options.allowedHosts.includes(url.hostname.toLowerCase()))throw new MediaError('invalid');return url;}
   private async visible(input:MediaDescriptor){if(this.revoked.has(input.id)||!(await this.options.visible(input)))throw new MediaError('revoked');}
   private serialize<T>(fn:()=>Promise<T>):Promise<T>{const next=this.pending.then(fn,fn);this.pending=next.catch(()=>{});return next;}
