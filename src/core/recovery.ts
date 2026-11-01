@@ -1,8 +1,9 @@
 import { ChapterSchema, LoreSchema, MomentSchema, GroundedClaimSchema, safetyAllowsPublication } from '../shared/contracts/index.js';
-import type { Channel, Session, Settings, Source, PrivacyTarget, PublicSnapshot, Lore } from '../shared/contracts/index.js';
+import type { Channel, Session, Settings, Source, PrivacyTarget, PublicSnapshot, Lore, Clock } from '../shared/contracts/index.js';
 import type { DomainState, DerivedNode, StoryCandidate, DomainMedia, LorePresentation } from './types.js';
 import { createDomainState, hydrateDomainState } from './reducer.js';
 import { isRefActive, leafRefs, uniqueRefs, sourceTombstoned, blockedPhrase } from './evidence.js';
+import { publishedLore } from './lore-presentations.js';
 
 /** Structural port: the SQLite adapter returns this without importing server code into the browser. */
 export type DomainHydrationInput={
@@ -14,7 +15,7 @@ export type DomainHydrationInput={
 };
 
 /** Reconstructs only surviving authoritative records. It never revives queued playback after restart. */
-export function recoverDomainState(input:DomainHydrationInput,options:{resumePlayback?:boolean}={}):DomainState {
+export function recoverDomainState(input:DomainHydrationInput,options:{resumePlayback?:boolean;clock?:Clock}={}):DomainState {
   if(input.checkpoint){
     try {
       const restored=hydrateDomainState(input.checkpoint,{privacyEpoch:input.privacyEpoch,blockedTerms:input.blockedTerms,bannedActors:input.bannedActors,tombstones:input.tombstones});
@@ -60,5 +61,6 @@ export function recoverDomainState(input:DomainHydrationInput,options:{resumePla
   state.sequence=Math.max(input.revision*1000,...input.entities.flatMap(n=>[...n.id.matchAll(/:(\d+)(?=:|$)/g)].map(m=>Number(m[1]))),0);
   state.sourceRevision=state.sources.length;state.processedSourceRevision=0;
   if(state.session.status==='closing'&&state.session.endedAt){const endedAtMs=Date.parse(state.session.endedAt);state.closing={endedAtMs,intakeUntilMs:endedAtMs+90000,deadlineMs:endedAtMs+240000,tailDrained:false,finalProcessedRevision:0,failed:false};}
+  if(state.published){const recoveryTime=state.session.finalSnapshotAckAt??state.session.finalizedAt??state.published.publishedAt;state.published.lore=publishedLore(state,options.clock??{now:()=>Date.parse(recoveryTime),iso:()=>recoveryTime});}
   return state;
 }

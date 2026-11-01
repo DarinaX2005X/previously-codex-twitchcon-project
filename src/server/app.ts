@@ -16,7 +16,7 @@ export interface AppOptions {
   authorizeStream?: (principal: Principal) => boolean | Promise<boolean>;
   now?: () => number;
   setupStatus?: (request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>;
-  routers?: {auth?: Router; owner?: Router; overlay?: Router; demo?: Router; media?: Router};
+  routers?: {auth?: Router; owner?: Router; overlay?: Router; demo?: Router; media?: Router; public?: Router};
 }
 /** The route registry is the only place feature routers are mounted. */
 export function createApp(options: AppOptions) {
@@ -28,7 +28,7 @@ export function createApp(options: AppOptions) {
   app.disable('x-powered-by'); app.set('trust proxy', false);
   app.use(requestIdentity);
   app.use((_req, res, next) => {
-    res.set({'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Resource-Policy': 'same-origin', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'"});
+    res.set({'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Resource-Policy': 'same-origin', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; media-src 'self' blob:; frame-src https://clips.twitch.tv https://player.twitch.tv; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'"});
     next();
   });
   app.use(originGuard(config.origin));
@@ -38,12 +38,13 @@ export function createApp(options: AppOptions) {
     res.status(ready ? 200 : 503).json({ready, phase: status.phase, storage: status.storage, configuration: config.missing.length ? 'incomplete' : 'complete'});
   });
   app.get('/api/setup/status', async (req, res, next) => {
-    try {res.json({mode: status.mode, runtime: status.phase, storage: status.storage, missing: config.missing, configured: config.missing.length === 0, twitch: {connected: false}, openai: {connected: false, paidCallsEnabled: false}, auth: {available: Boolean(options.routers?.auth), authenticated: false}, ...await options.setupStatus?.(req)});} catch (error) {next(error);}
+    try {res.json({mode: status.mode, runtime: status.phase, storage: status.storage, missing: config.missing, configured: config.missing.length === 0, callbackUrl: config.twitch.redirectUri, localOrigin: config.origin, twitch: {connected: false}, openai: {connected: false, paidCallsEnabled: false}, auth: {available: Boolean(options.routers?.auth), authenticated: false}, ...await options.setupStatus?.(req)});} catch (error) {next(error);}
   });
   app.use((req, _res, next) => {if (status.phase === 'stopping' && !['GET', 'HEAD'].includes(req.method)) next(new ApiError(503, 'shutting_down', 'The application is stopping.', true)); else next();});
   app.use(mutationRateLimit(now));
   app.use(express.json({limit: '64kb', strict: true}));
   if (options.routers?.auth) app.use(options.routers.auth);
+  if (options.routers?.public) app.use('/api/public', options.routers.public);
   app.use('/api/owner', requireRole('owner', auth, config.sessionSecret, now));
   app.get('/api/owner/csrf', (_req, res, next) => {
     if (!config.sessionSecret) {next(new ApiError(503, 'setup_required', 'Complete local setup before continuing.')); return;}
@@ -52,6 +53,10 @@ export function createApp(options: AppOptions) {
   app.get('/api/owner/updates', updates.handler(options.authorizeStream));
   if (options.routers?.owner) app.use('/api/owner', options.routers.owner);
   app.use('/api/overlay', requireRole('overlay', auth, config.sessionSecret, now));
+  app.get('/api/overlay/csrf', (_req, res, next) => {
+    if (!config.sessionSecret) {next(new ApiError(503, 'setup_required', 'Complete local setup before continuing.')); return;}
+    res.json({csrfToken: csrfToken(config.sessionSecret, (res.locals.principal as Principal).sessionId)});
+  });
   app.get('/api/overlay/updates', updates.handler(options.authorizeStream));
   if (options.routers?.overlay) app.use('/api/overlay', options.routers.overlay);
   app.use('/api/demo', requireRole('demo', auth, config.sessionSecret, now));
@@ -59,7 +64,7 @@ export function createApp(options: AppOptions) {
   if (options.routers?.media) app.use('/api/media', options.routers.media);
   const staticDirectory = resolve(options.staticDirectory ?? 'dist');
   app.use(express.static(staticDirectory, {index: false, dotfiles: 'deny', redirect: false, maxAge: 0}));
-  for (const route of ['/', '/setup', '/foundation', '/dock', '/overlay', '/replay']) {
+  for (const route of ['/', '/setup', '/setup/local', '/foundation', '/dock', '/overlay', '/replay', '/c/:login', '/c/:login/episodes/:id']) {
     app.get(route, (_req, res, next) => {
       if (!existsSync(resolve(staticDirectory, 'index.html'))) {next(new ApiError(503, 'build_required', 'Build the local application before starting it.')); return;}
       res.sendFile(resolve(staticDirectory, 'index.html'));

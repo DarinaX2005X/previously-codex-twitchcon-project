@@ -1,0 +1,25 @@
+import { createDomainState, reduceDomain, type DomainEvent } from '../src/core/index.js';
+import { defaultSettings, type Safety, type Source, type StoryPatch } from '../src/shared/contracts/index.js';
+import { PROVIDER_VERSIONS, storyInput, type CaptureBundle, type WordingOutcome } from '../src/replay/contracts.js';
+
+/** Authored, sanitized example. This is not a recording of a streamer or a provider call. */
+export function createAuthoredBundle():CaptureBundle {
+  const startedAt='2026-11-02T00:00:00.000Z',allowed:Safety={moderation:'allowed',pii:'allowed',checkedAt:startedAt,reason:null};
+  const initial={channel:{id:'authored-channel',login:'recording',displayName:'Authored recording'},session:{channelId:'authored-channel',runId:'logical',id:'notes-session',twitchStreamId:null,title:'Making notes survive a reload',category:'Software and Game Development',startedAt,endedAt:null,status:'live' as const,privacyEpoch:0,publicationRevision:0,metadataMaxDependencyEndMs:0,finalizedAt:null,finalSnapshotAckAt:null},settings:{...defaultSettings,listeningPaused:false}};
+  const text='I am making notes survive a reload. The saved note is still in storage, but the preview is empty. I am checking the preview renderer.';
+  const source:Source={channelId:initial.channel.id,runId:'logical',sessionId:initial.session.id,id:'speech-1',revision:1,kind:'speech',startMs:0,endMs:1000,actorId:null,languageCodes:['en'],timePrecision:'chunk',text,status:'active',externalMessageId:null,moderation:'allowed'};
+  const events:{atMs:number;event:DomainEvent}[]=[{atMs:1000,event:{type:'source',source}},{atMs:82000,event:{type:'recap.trigger',trigger:{id:'recorded-raid',sessionId:initial.session.id,reason:'raid',occurredAt:new Date(Date.parse(startedAt)+82000).toISOString()}}}];
+  const clock={now:()=>Date.parse(startedAt)+1000,iso:()=>new Date(Date.parse(startedAt)+1000).toISOString()};
+  const transition=reduceDomain(createDomainState(initial),events[0]!.event,clock),request=transition.state.pendingGeneration!;
+  const claim=(id:string,text:string,role:StoryPatch['claims'][number]['role'])=>({id,text,role,support:[{id:'speech-1',revision:1}],attribution:'streamer' as const,epistemic:'explicit' as const});
+  const patch:StoryPatch={sessionId:initial.session.id,baseRevision:0,action:'update',title:'A missing preview',claims:[claim('goal','Making notes survive a reload.','goal'),claim('change','The saved note is still in storage, but the preview is empty.','change'),claim('now','Checking the preview renderer.','state')],relations:[],currentAttemptId:null,language:'en',missingContext:[]};
+  const summary=patch.claims.map(c=>c.text).join(' ');
+  const correction={title:'The note is saved; the preview is missing',summary:'The note survives a reload. The empty preview is a rendering issue. The preview renderer is being checked.'};
+  const english:WordingOutcome={title:patch.title!,summary,safety:allowed,current:{goal:patch.claims[0]!.text,change:patch.claims[1]!.text,now:patch.claims[2]!.text,sourceTimeMs:1000,maxDependencyEndMs:1000}};
+  const russian:WordingOutcome={title:'Пропавшее превью',summary:'Заметки должны сохраняться после перезагрузки. Заметка осталась в хранилище, но превью пустое. Проверяем отрисовку превью.',safety:allowed,current:{goal:'Сохранить заметки после перезагрузки.',change:'Заметка в хранилище, но превью пустое.',now:'Проверяем отрисовку превью.',sourceTimeMs:1000,maxDependencyEndMs:1000}};
+  const corrected:WordingOutcome={...correction,safety:allowed,current:{goal:english.current!.goal,change:'The note survives a reload. Only its preview is missing.',now:'Checking the preview renderer.',sourceTimeMs:1000,maxDependencyEndMs:1000}};
+  const correctedRu:WordingOutcome={title:'Заметка сохранена, но превью пропало',summary:'Заметка сохраняется после перезагрузки. Пустое превью связано с отрисовкой. Проверяем отрисовку превью.',safety:allowed,current:{goal:russian.current!.goal,change:'Заметка сохранилась. Пропало только превью.',now:'Проверяем отрисовку превью.',sourceTimeMs:1000,maxDependencyEndMs:1000}};
+  const providers:CaptureBundle['providers']=[{...PROVIDER_VERSIONS,operation:'story',input:storyInput(request),delayMs:600,output:{patch,safety:allowed,grounding:{acceptedClaimIds:patch.claims.map(c=>c.id),acceptedRelationKeys:[]}}},{...PROVIDER_VERSIONS,operation:'owner_review',input:correction,delayMs:0,output:corrected}];
+  for(const [from,to,language]of [[english,russian,'ru'],[russian,english,'en'],[corrected,correctedRu,'ru'],[correctedRu,corrected,'en']] as const)providers.push({...PROVIDER_VERSIONS,operation:'translation',input:{title:from.title,summary:from.summary,language},delayMs:0,output:to});
+  return {schemaVersion:1,origin:'authored',id:'authored-notes',revision:1,durationMs:100000,initial,events,providers,media:[],milestones:[{id:'published',label:'First published context',atMs:76000},{id:'raid',label:'Incoming raid',atMs:82300}],correction,assertions:[{atMs:76000,kind:'published',value:true},{atMs:100000,kind:'no-live-effects',value:true}]};
+}

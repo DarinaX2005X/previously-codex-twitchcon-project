@@ -1,15 +1,9 @@
-.setup-shell { max-width: 1120px; margin: 0 auto; padding: 48px 32px 80px; }
-.setup-shell__header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 56px; }
-.setup-shell__header .pv-brand { width: 220px; height: auto; }
-.setup-shell h1 { max-width: 20ch; margin: 0 0 16px; font-size: clamp(32px, 4vw, 54px); line-height: 1.08; letter-spacing: -.035em; }
-.setup-shell__lead { max-width: 52ch; font-size: 20px; line-height: 1.5; margin: 0 0 32px; }
-.setup-shell__checks { margin: 0 0 32px; }
-.setup-shell__checks div { display: grid; grid-template-columns: minmax(160px, 1fr) 1.5fr; gap: 24px; padding: 14px 0; border-bottom: 1px solid #c3c9bf; }
-.setup-shell__checks dt { font-weight: 650; }
-.setup-shell__checks dd { margin: 0; }
-.setup-shell__missing { margin: 32px 0; }
-.setup-shell__missing h2 { font-size: 24px; margin: 0 0 12px; }
-.setup-shell__missing code { font-size: 14px; overflow-wrap: anywhere; }
-.setup-shell__missing ul { padding-left: 24px; }
-.setup-shell__connect { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 12px 24px; border-radius: 14px; background: #f26844; color: #252b2c; margin-top: 24px; font-weight: 650; text-decoration: none; }
-@media (max-width: 600px) { .setup-shell { padding: 24px 20px 48px; } .setup-shell__header { align-items: flex-start; margin-bottom: 32px; gap: 12px; } .setup-shell__header .pv-brand { width: 172px; } .setup-shell__header a { font-size: 15px; text-align: right; } .setup-shell__checks div { grid-template-columns: 1fr; gap: 4px; } }
+.app-loading {min-height:60vh;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:24px;max-width:880px;margin:auto;padding:40px 24px;}
+.app-loading .pv-brand {width:180px;}
+.app-message {padding-block:80px;display:grid;gap:24px;justify-items:start;}
+.app-preview {min-width:0;display:grid;gap:16px;}
+.app-preview > p {font-size:16px;}
+.app-dock-setup {position:fixed;right:16px;bottom:16px;color:var(--pv-text);background:var(--pv-canvas);padding:8px 12px;border-radius:12px;box-shadow:var(--pv-shadow-raised);font-size:14px;}
+html[data-broadcast], html[data-broadcast] body, html[data-broadcast] #root {background:transparent!important;overflow:hidden;width:100%;height:100%;}
+.app-overlay-error {position:absolute;left:64px;bottom:64px;max-width:700px;padding:24px;background:#e9eae1;color:#293335;border-radius:18px;font-size:24px;}
+@media(max-width:600px) {.app-dock-setup {position:static;display:block;margin:12px auto;width:max-content;}.app-message{padding-block:48px;}}

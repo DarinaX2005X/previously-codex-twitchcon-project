@@ -1,0 +1,9 @@
+.dock-settings { display:grid; gap:24px; }
+.dock-settings h3 { margin:0 0 8px; }
+.dock-check { display:flex; align-items:flex-start; gap:12px; line-height:1.5; cursor:pointer; }
+.dock-check input { accent-color:var(--pv-action); width:20px; height:20px; flex:none; margin:2px 0 0; }
+.dock-safe-board { position:relative; width:100%; aspect-ratio:16/9; background:var(--pv-control); border:1px solid var(--pv-border); overflow:hidden; margin:16px 0; }
+.dock-safe-rect { position:absolute; touch-action:none; border:2px solid var(--pv-border); background:#66716e30; min-width:10px; min-height:10px; cursor:grab; color:var(--pv-slate); font:inherit; transition:background-color 120ms,border-color 120ms; }
+.dock-safe-rect[data-selected=true] { border-color:var(--pv-action); background:#f2684425; }
+.dock-safe-rect:hover { background:#f2684440; }.dock-safe-rect:active { cursor:grabbing; background:#f2684455; }
+.dock-coordinates { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-bottom:12px; }

@@ -9,6 +9,8 @@ import { acquireInstanceLock, InstanceLockError } from './runtime/instance-lock.
 import { RevisionStream } from './runtime/updates.js';
 import { createLiveRuntime } from './runtime/live.js';
 import { systemClock } from './runtime/clock.js';
+import { createPublicReadRouter } from './runtime/public-routes.js';
+import { createLocalReplayHandler } from './replay/local.js';
 
 export async function startRuntime(options: {config?: RuntimeConfig; cwd?: string; replay?: boolean; recoverStaleLock?: boolean} = {}) {
   const cwd = options.cwd ?? process.cwd();
@@ -28,8 +30,12 @@ export async function startRuntime(options: {config?: RuntimeConfig; cwd?: strin
     try {live = await createLiveRuntime({config, storage, updates, clock: systemClock});}
     catch {integrationError = 'The channel connection could not be prepared. Check Twitch settings and restart Previously.';}
   }
+  let authored: Awaited<ReturnType<typeof createLocalReplayHandler>> | undefined;
+  try {authored = await createLocalReplayHandler(config.dataDir);} catch { /* A local replay failure does not interrupt a live collector. */ }
+  const publicRouter = createPublicReadRouter({cloudOrigin: config.publicOrigin, authored});
   const app = createApp({config, status, updates, staticDirectory: resolve(cwd, 'dist'),
-    ...(live ? {auth: live.auth, routers: live.routers, authorizeStream: live.authorizeStream} : {}),
+    ...(live ? {auth: live.auth, authorizeStream: live.authorizeStream} : {}),
+    routers: {...live?.routers, public: publicRouter},
     setupStatus: async request => ({...(live?.setup() ?? {}), auth: {available: Boolean(live), authenticated: Boolean(live && await live.auth.authenticate(request, 'owner'))}, ...(integrationError ? {integrationError} : {})}),
   });
   let server: ReturnType<typeof createServer>;

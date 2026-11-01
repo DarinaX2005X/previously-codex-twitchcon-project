@@ -64,4 +64,9 @@ describe('whole-language lore publication',()=>{
     const h=confirmedLore();h.send({type:'source',source:source('extra-context','PRIVATE-TRANSLATION-CONTEXT',100000)});h.send({type:'lore.presentation',id:'lore',baseRevision:1,privacyEpoch:0,language:'ru',term:'brick',explanation:'Проверенное русское объяснение.',safety:allowed,inputRefs:[{id:'lore',revision:1},{id:'extra-context',revision:1}]});h.send({type:'language',language:'ru'});expect(h.state.published!.lore).toHaveLength(1);
     h.send({type:'privacy',target:{kind:'source',sessionId:'session',id:'extra-context'}});expect(h.state.lorePresentations).toHaveLength(0);expect(h.state.published!.lore).toHaveLength(0);expect(JSON.stringify(h.state)).not.toContain('PRIVATE-TRANSLATION-CONTEXT');
   });
+  it('does not relabel an English owner review when the selected language changes during moderation',()=>{
+    const h=confirmedLore(),owner=source('editing-owner','A corrected English explanation.',100000,{kind:'owner_statement',moderation:'pending',languageCodes:['en']});h.send({type:'lore.edit',id:'lore',baseRevision:1,source:owner,explanation:owner.text!});h.send({type:'language',language:'ru'});expect(h.state.settings.recapLanguage).toBe('ru');
+    h.send({type:'lore.review',id:'lore',baseRevision:2,sourceId:owner.id,sourceRevision:1,privacyEpoch:0,explanation:'A corrected English explanation.',safety:allowed});expect(h.state.lorePresentations[0]?.language).toBe('en');expect(h.state.published!.language).toBe('ru');expect(h.state.published!.lore).toHaveLength(0);
+    h.send({type:'lore.presentation',id:'lore',baseRevision:3,privacyEpoch:0,language:'ru',term:'brick',explanation:'Исправленное русское объяснение.',safety:allowed,inputRefs:[{id:'lore',revision:3}]});expect(h.state.published!.lore[0]?.explanation).toBe('Исправленное русское объяснение.');
+  });
 });

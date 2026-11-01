@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { VersionRef } from '../../shared/contracts/index.js';
+import { parseWav } from '../audio/wav.js';
 const execute=promisify(execFile);
 export type ChannelMediaApproval={channelId:string;id:string;revision:number};
 export type MediaBinding=
@@ -53,6 +54,19 @@ export class PrivateMediaCache {
     try{file=await open(temporary,'wx',0o600);const reader=response.body.getReader();try{while(true){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>80_000_000)throw new MediaError('capacity');await this.visible(input);await file.write(part.value);}}finally{await reader.cancel().catch(()=>{});}await file.close();file=undefined;if(!size||(declared&&size!==Number(declared)))throw new MediaError('invalid');const probed=await (this.options.probe??createFFmpegProbe())(temporary,input.kind);await this.visible(input);await this.evict(size);const target=this.filename(input.id);await rename(temporary,this.location(target));const {url:_url,...metadata}=input;const record:MediaRecord={...metadata,file:target,size,durationMs:probed.durationMs,mimeType:probed.mimeType,lastUsedAt:this.now(),state:'ready'};this.records.set(input.id,record);try{await this.persist();}catch(error){this.records.delete(input.id);await unlink(this.location(target)).catch(()=>{});throw error;}return structuredClone(record);
     }catch(error){throw error instanceof MediaError?error:new MediaError((error as NodeJS.ErrnoException).code==='ENOSPC'?'capacity':'unavailable');}finally{await file?.close().catch(()=>{});await unlink(temporary).catch(()=>{});}
   }).catch(error=>{throw error instanceof MediaError?error:new MediaError((error as NodeJS.ErrnoException).code==='ENOSPC'?'capacity':'unavailable');});}
+  /** Stores server-generated PCM narration without inventing a download URL or exposing static files. */
+  storeAudio(input:MediaDescriptor & {kind:'audio'},bytes:Uint8Array):Promise<MediaRecord>{
+    input=structuredClone(input);bytes=new Uint8Array(bytes);
+    return this.serialize(async()=>{
+      await this.initialize();await this.visible(input);
+      let wav:ReturnType<typeof parseWav>;try{wav=parseWav(bytes);}catch{throw new MediaError('invalid');}
+      if(wav.durationMs<=0||wav.durationMs>30000||input.captureStartMs<0||input.captureEndMs<input.captureStartMs||input.dependencyRefs.length>100)throw new MediaError('invalid');
+      const existing=this.records.get(input.id);if(existing){await this.visible(existing);if(existing.kind!=='audio')throw new MediaError('invalid');return structuredClone(existing);}
+      const temporary=path.join(this.directory,randomUUID()+'.part');
+      try{await writeFile(temporary,bytes,{flag:'wx',mode:0o600});const probed=await (this.options.probe??createFFmpegProbe())(temporary,'audio');if(probed.mimeType!=='audio/wav'||Math.abs(probed.durationMs-wav.durationMs)>2)throw new MediaError('invalid');await this.visible(input);await this.evict(bytes.length);await this.visible(input);const file=this.filename(input.id);await rename(temporary,this.location(file));const record:MediaRecord={...input,file,size:bytes.length,durationMs:Math.round(wav.durationMs),mimeType:'audio/wav',lastUsedAt:this.now(),state:'ready'};this.records.set(input.id,record);try{await this.persist();}catch(error){this.records.delete(input.id);await unlink(this.location(file)).catch(()=>{});throw error;}return structuredClone(record);}
+      finally{await unlink(temporary).catch(()=>{});}
+    }).catch(error=>{throw error instanceof MediaError?error:new MediaError((error as NodeJS.ErrnoException).code==='ENOSPC'?'capacity':'unavailable');});
+  }
   /** Reuses verified private bytes under another opaque asset ID, without changing its authorization binding. */
   alias(sourceId:string,targetId:string):Promise<MediaRecord>{return this.serialize(async()=>{
     if(!targetId||targetId.length>160)throw new MediaError('invalid');

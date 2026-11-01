@@ -2,9 +2,10 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { canDispatch } from '../../core/recap.js';
 import type { DomainEvent, DomainState } from '../../core/types.js';
-import { IdSchema, IsoTimeSchema, RecapPlanSchema, type Clock, type PlaybackRef, type Scope } from '../../shared/contracts/index.js';
+import { IdSchema, IsoTimeSchema, RecapPlanSchema, type Clock, type PlaybackRef, type Scope, type SourceStatus } from '../../shared/contracts/index.js';
 import { ApiError } from './errors.js';
 import type { Principal } from './security.js';
+import type { RevisionConnectionEvent } from './updates.js';
 
 export interface OverlayEnginePort {
   readonly scope: Scope;
@@ -16,8 +17,57 @@ export interface OverlayEnginePort {
 export type OverlayState = {
   sessionId: string | null; privacyEpoch: number; revision: number; serverNow: string;
   active: PlaybackRef | null; queued: PlaybackRef[];
+  channel?: string; title?: string; soundEnabled?: boolean; volume?: number;
 };
-export type OverlayRouterOptions = {engine: OverlayEnginePort; clock: Clock};
+export type OverlayRouterOptions = {engine: OverlayEnginePort; clock: Clock; presence?: OverlayPresence};
+
+/** A successful authorized poll or stream heartbeat renews a six-second capability lease. */
+export class OverlayPresence {
+  private readonly sessions = new Map<string, {principal: Principal; lastSeenMs: number}>();
+  private interval: ReturnType<typeof setInterval> | undefined;
+  private stopped = false;
+  private lastObservedMs: number | null = null;
+  private lastPublishedMs = -Infinity;
+  private publishedState: 'ready' | 'disconnected' | undefined;
+  constructor(private readonly options: {scope: Scope; clock: Clock; authorized: (principal: Principal) => boolean; onStatus: (status: SourceStatus) => void}) {this.tick();}
+  private authorized(principal: Principal): boolean {
+    if (principal.role !== 'overlay' || principal.channelId !== this.options.scope.channelId || principal.runId !== 'live' || principal.runId !== this.options.scope.runId || principal.expiresAtMs <= this.options.clock.now()) return false;
+    try {return this.options.authorized(principal);} catch {return false;}
+  }
+  touch(principal: Principal): void {
+    if (this.stopped || !this.authorized(principal)) return;
+    const now = this.options.clock.now();
+    if (!this.sessions.has(principal.sessionId) && this.sessions.size >= 32) this.sessions.delete(this.sessions.keys().next().value!);
+    this.sessions.set(principal.sessionId, {principal: {...principal}, lastSeenMs: now});
+    this.lastObservedMs = now;
+    this.tick();
+  }
+  observe(event: RevisionConnectionEvent): void {
+    if (event.type === 'activity') this.touch(event.principal);
+    else if (event.type === 'revoked') {for (const [id, lease] of this.sessions) if (event.matches(lease.principal)) this.sessions.delete(id); this.tick();}
+    else if (event.type === 'closed') this.close();
+    // A normal transport disconnect gets the same six-second grace as missed poll/heartbeat traffic.
+  }
+  tick(): void {
+    const now = this.options.clock.now();
+    for (const [id, lease] of this.sessions) if (now - lease.lastSeenMs >= 6000 || !this.authorized(lease.principal)) this.sessions.delete(id);
+    const state = this.sessions.size ? 'ready' : 'disconnected';
+    // Polls caused by source.status updates must not produce an endless update/refetch loop.
+    if (state === this.publishedState && (state !== 'ready' || (this.lastObservedMs ?? now) - this.lastPublishedMs < 2000)) return;
+    this.publishedState = state; this.lastPublishedMs = this.lastObservedMs ?? now;
+    this.options.onStatus({state, lastObservedAt: this.lastObservedMs === null ? null : new Date(this.lastObservedMs).toISOString(), message: state === 'ready' ? null : this.lastObservedMs === null ? 'Add the overlay as an OBS browser source.' : 'The overlay connection ended. Reconnect its browser source.', action: state === 'ready' ? null : 'Open overlay settings'});
+  }
+  start(): void {
+    if (this.interval || this.stopped) return;
+    this.interval = setInterval(() => this.tick(), 1000); this.interval.unref();
+  }
+  close(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    if (this.interval) clearInterval(this.interval);
+    this.sessions.clear(); this.tick();
+  }
+}
 
 const ackSchema = z.object({state: z.enum(['prepared', 'started', 'ended', 'error']), timestamp: IsoTimeSchema}).strict();
 const noQuery = z.object({}).strict();
@@ -52,7 +102,7 @@ function safePlayback(state: DomainState, playback: PlaybackRef, now: number): P
   return {id: IdSchema.parse(playback.id), status: playback.status, plan: parsed.data, startAt: playback.startAt};
 }
 function snapshot(state: DomainState | null, clock: Clock): OverlayState {
-  const output: OverlayState = {sessionId: state?.session.id ?? null, privacyEpoch: state?.session.privacyEpoch ?? 0, revision: state?.revision ?? 0, serverNow: clock.iso(), active: null, queued: []};
+  const output: OverlayState = {sessionId: state?.session.id ?? null, privacyEpoch: state?.session.privacyEpoch ?? 0, revision: state?.revision ?? 0, serverNow: clock.iso(), active: null, queued: [], ...(state ? {channel: state.published?.channel.displayName, title: state.published?.session.title, soundEnabled: state.settings.broadcastSoundEnabled, volume: state.settings.volume} : {})};
   if (!state) return output;
   for (const playback of state.playbacks) {
     const safe = safePlayback(state, playback, clock.now());
@@ -85,7 +135,11 @@ export function createOverlayRouter(options: OverlayRouterOptions): Router {
     try {authorize(response, options); noQuery.parse(request.query); response.setHeader('Cache-Control', 'no-store'); await action(request, response);}
     catch (error) {next(error instanceof z.ZodError ? new ApiError(400, 'invalid_input', 'The request does not match the expected format.') : error);}
   };
-  router.get('/state', handle((_request, response) => {response.json(snapshot(currentState(options.engine), options.clock));}));
+  router.get('/state', handle((_request, response) => {
+    const state = snapshot(currentState(options.engine), options.clock);
+    options.presence?.touch(authorize(response, options));
+    response.json(state);
+  }));
   router.get('/recaps/:id', handle((request, response) => {
     const {state, playback} = resolvePlayback(currentState(options.engine), IdSchema.parse(request.params.id));
     const safe = safePlayback(state, playback, options.clock.now());

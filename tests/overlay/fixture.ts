@@ -1,0 +1,4 @@
+import type { RecapPlan } from '../../src/shared/contracts/index.js';
+export function planFixture():RecapPlan {
+  return {id:'recap:fixture',sessionId:'session:fixture',revision:2,privacyEpoch:0,language:'en',variant:'compact',durationMs:12000,dependencyRefs:[{id:'chapter:1',revision:1}],layout:{preset:'lower',protectedRects:[{x:760,y:64,width:1096,height:454}]},arrivals:[],overflowArrivals:{channels:0,viewers:0},beats:[{id:'goal',kind:'attempt',text:'Make the live preview work',atMs:0,untilMs:4000,sourceRange:{startMs:10000,endMs:20000},sourceIds:['source:1'],mediaId:null},{id:'change',kind:'change',text:'Reloading froze the preview',atMs:4000,untilMs:8000,sourceRange:{startMs:20000,endMs:30000},sourceIds:['source:2'],mediaId:null},{id:'now',kind:'now',text:'Testing the reconnect fix',atMs:8000,untilMs:12000,sourceRange:{startMs:30000,endMs:40000},sourceIds:['source:3'],mediaId:null}],media:[],audio:null,soundEvents:[],generatedAt:'2026-11-02T10:00:00.000Z'};
+}

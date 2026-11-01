@@ -10,7 +10,7 @@ import { createMediaRouter } from '../media/router.js';
 import { resolveConfiguredChannel } from '../twitch/helix.js';
 import { createTwitchRuntime } from './twitch-runtime.js';
 import { createCloudRuntime } from './cloud-runtime.js';
-import { createOverlayRouter } from './overlay-routes.js';
+import { createOverlayRouter, OverlayPresence } from './overlay-routes.js';
 import { StoryEngine, type RuntimeStorage } from './engine.js';
 import { createOwnerService } from './owner-service.js';
 import { createOwnerRouter } from './owner-routes.js';
@@ -76,6 +76,11 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     onGap: async (sessionId, startMs, endMs) => {await engine.dispatch(sessionId, {type: 'gap', startMs, endMs});},
   });
   const owner = createOwnerService(engine);
+  const overlayPresence = new OverlayPresence({scope, clock,
+    authorized: principal => Boolean(storage.sessions.verify(scope, principal.sessionId, 'overlay')),
+    onStatus: status => engine.setStatus('overlay', status),
+  });
+  const stopObservingOverlay = updates.observeConnections(event => overlayPresence.observe(event));
   const ownerRouter = Router();
   ownerRouter.use(twitch.ownerRouter);
   let lastCaptureRenewal: number | null = null;
@@ -133,10 +138,11 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
   const scheduleTick = () => {if (!tickFlight) tickFlight = tick().finally(() => {tickFlight = undefined;});};
   return {
     engine, owner, audio, media, channel, scope, auth: twitch.auth,
-    routers: {auth: twitch.authRouter, owner: ownerRouter, overlay: createOverlayRouter({engine, clock}), media: createMediaRouter(media, mediaAuthorization)},
+    routers: {auth: twitch.authRouter, owner: ownerRouter, overlay: createOverlayRouter({engine, clock, presence: overlayPresence}), media: createMediaRouter(media, mediaAuthorization)},
     setup: () => ({twitch: twitch.status(), openai: {connected: false, configured: Boolean(config.openaiApiKey), paidCallsEnabled: storage.budget.status().enabled}, publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : null}),
     authorizeStream: (principal: {sessionId: string; role: 'owner'|'overlay'|'demo'; channelId: string; runId: string}) => principal.channelId === scope.channelId && principal.runId === 'live' && Boolean(storage.sessions.verify(scope, principal.sessionId, principal.role)),
     async start() {
+      overlayPresence.start();
       await engine.recoverPlayback();
       await media.initialize(); await audio.cleanup();
       await twitch.start();
@@ -146,6 +152,7 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     },
     async close() {
       if (stopped) return; stopped = true;
+      overlayPresence.close(); stopObservingOverlay();
       if (interval) clearInterval(interval);
       await twitch.stop(); await scheduler.stop(); await cloud.close(); await tickFlight; await safetyFlight; await engine.idle();
     },

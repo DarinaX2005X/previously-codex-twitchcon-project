@@ -1,0 +1,11 @@
+import {describe,it,expect,vi,afterEach} from 'vitest';
+import {ReplayGate} from '../../src/replay/gate.js';
+import {buildAuthoredExport} from '../../src/server/replay/export.js';
+
+afterEach(()=>vi.useRealTimers());
+describe('revocable recording reader',()=>{
+  it('loads only the manifest revision and verifies exact bytes',async()=>{const {manifest,assets}=buildAuthoredExport();const fetcher=vi.fn(async(url:RequestInfo|URL)=>String(url).includes('/assets/')?new Response(Buffer.from(assets[0]!.bytes)):Response.json({...manifest,visibilityLeaseMs:6000}));const invalidated=vi.fn(),gate=new ReplayGate('/api/public/replays/authored-notes',invalidated,fetcher as typeof fetch);expect((await gate.load()).origin).toBe('authored');expect(fetcher.mock.calls[1]![0]).toContain('?revision=1');gate.dispose();expect(invalidated).not.toHaveBeenCalled();});
+  it('clears immediately on revoke and fails closed after a six second network lease',async()=>{vi.useFakeTimers();const {manifest,assets}=buildAuthoredExport();let revoke=false,fail=false;const fetcher=vi.fn(async(url:RequestInfo|URL)=>{if(revoke)return new Response(null,{status:410});if(fail)throw new Error('offline');return String(url).includes('/assets/')?new Response(Buffer.from(assets[0]!.bytes)):Response.json({...manifest,visibilityLeaseMs:6000});});const invalidated=vi.fn(),gate=new ReplayGate('/api/public/replays/authored-notes',invalidated,fetcher as typeof fetch);await gate.load();revoke=true;await gate.revalidate();expect(invalidated).toHaveBeenCalledOnce();
+    revoke=false;const lost=vi.fn(),offlineGate=new ReplayGate('/api/public/replays/authored-notes',lost,fetcher as typeof fetch);await offlineGate.load();fail=true;await vi.advanceTimersByTimeAsync(5999);expect(lost).not.toHaveBeenCalled();await vi.advanceTimersByTimeAsync(1);expect(lost).toHaveBeenCalledOnce();offlineGate.dispose();});
+  it('rejects changed bytes and a newer manifest during asset retrieval',async()=>{const {manifest,assets}=buildAuthoredExport();let calls=0;const gate=new ReplayGate('/recording',vi.fn(),(async(url:RequestInfo|URL)=>{calls++;return String(url).includes('/assets/')?new Response(Buffer.from(assets[0]!.bytes)):Response.json({...manifest,revision:calls>2?2:1});}) as typeof fetch);await expect(gate.load()).rejects.toThrow('recording_changed');gate.dispose();});
+});
