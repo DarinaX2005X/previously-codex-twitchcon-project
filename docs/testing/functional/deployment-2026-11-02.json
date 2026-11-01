@@ -1,0 +1,32 @@
+{
+  "checkedAt": "2026-11-01T23:21:01.647Z",
+  "origin": "https://previously-seven.vercel.app",
+  "revision": "fb5cb75",
+  "scope": "Read-only deployed home, replay shell, current authored manifest and asset integrity. No real Twitch, provider, microphone or OBS claim.",
+  "homeStatus": 200,
+  "replayStatus": 200,
+  "manifest": {
+    "id": "authored-notes",
+    "revision": 1,
+    "origin": "authored",
+    "visibilityLeaseMs": 6000,
+    "cacheControl": "private, no-store"
+  },
+  "browser": {
+    "currentManifestLoaded": true,
+    "raidPrefixReplayed": true,
+    "checkedCorrectionPublished": true,
+    "previewActionEnabled": true,
+    "russianPresentationChoiceAvailable": true,
+    "scope": "Agent functional check in the public replay, with authored data. No additional motion or user-comprehension claim."
+  },
+  "assets": [
+    {
+      "id": "bundle",
+      "kind": "bundle",
+      "bytes": 8481,
+      "hashMatches": true,
+      "cacheControl": "private, no-store"
+    }
+  ]
+}

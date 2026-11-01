@@ -1,0 +1,506 @@
+{
+  "scope": "Bounded read-only SQL probes and pure computation on synthetic checkpoints. Five reads per query, ten pure operations per state. Shared machine, warmed connection/cache, no writes, no runtime instrumentation, no isolated throughput conclusion. Current reducer source was used for pure source transitions; owner.edit is not exercised.",
+  "at": "2026-11-01T23:19:17.703Z",
+  "results": [
+    {
+      "name": "calibration-12400",
+      "path": "C:/Users/user/AppData/Local/Temp/previously-engine-full-z3i2as/state.sqlite",
+      "checkpointBytes": 177254,
+      "virtualSecond": 619.95,
+      "counts": {
+        "sources": 500,
+        "nodes": 10,
+        "chapters": 2,
+        "candidates": 2,
+        "tombstones": 1,
+        "controlRows": 12476
+      },
+      "queryResults": [
+        {
+          "label": "checkpoint",
+          "plan": [
+            {
+              "id": 3,
+              "parent": 0,
+              "notused": 39,
+              "detail": "SEARCH domain_checkpoints USING INDEX sqlite_autoindex_domain_checkpoints_1 (channel_id=? AND run_id=? AND session_id=?)"
+            }
+          ],
+          "rows": 1,
+          "milliseconds": [
+            1.2198000000000206,
+            1.1807000000000016,
+            1.0838999999999714,
+            1.0201000000000136,
+            1.068399999999997
+          ],
+          "meanMilliseconds": 1.1145800000000008
+        },
+        {
+          "label": "saved-source-fence",
+          "plan": [
+            {
+              "id": 3,
+              "parent": 0,
+              "notused": 61,
+              "detail": "SEARCH sources USING INDEX sqlite_autoindex_sources_1 (channel_id=? AND run_id=? AND id=?)"
+            },
+            {
+              "id": 11,
+              "parent": 0,
+              "notused": 0,
+              "detail": "LIST SUBQUERY 1"
+            },
+            {
+              "id": 14,
+              "parent": 11,
+              "notused": 0,
+              "detail": "SCAN json_each VIRTUAL TABLE INDEX 1:"
+            },
+            {
+              "id": 23,
+              "parent": 11,
+              "notused": 0,
+              "detail": "CREATE BLOOM FILTER"
+            }
+          ],
+          "rows": 500,
+          "milliseconds": [
+            2.905300000000011,
+            2.2391000000000076,
+            2.550399999999968,
+            2.819000000000017,
+            3.0113999999999805
+          ],
+          "meanMilliseconds": 2.705039999999997
+        },
+        {
+          "label": "pending-events",
+          "plan": [
+            {
+              "id": 7,
+              "parent": 0,
+              "notused": 59,
+              "detail": "SEARCH events USING INDEX events_pending_domain (channel_id=? AND run_id=? AND session_id=? AND domain_processed=?)"
+            }
+          ],
+          "rows": 0,
+          "milliseconds": [
+            0.280399999999986,
+            0.17959999999999354,
+            0.15299999999996317,
+            0.13750000000004547,
+            0.18680000000000518
+          ],
+          "meanMilliseconds": 0.18745999999999868
+        },
+        {
+          "label": "old-blocked-lore",
+          "plan": [
+            {
+              "id": 5,
+              "parent": 0,
+              "notused": 62,
+              "detail": "SEARCH control_state USING INDEX sqlite_autoindex_control_state_1 (channel_id=? AND run_id=?)"
+            }
+          ],
+          "rows": 0,
+          "milliseconds": [
+            7.010200000000054,
+            2.7326000000000477,
+            1.592899999999986,
+            1.6210000000000377,
+            1.6589999999999918
+          ],
+          "meanMilliseconds": 2.9231400000000236
+        },
+        {
+          "label": "range-blocked-lore",
+          "plan": [
+            {
+              "id": 5,
+              "parent": 0,
+              "notused": 49,
+              "detail": "SEARCH control_state USING INDEX sqlite_autoindex_control_state_1 (channel_id=? AND run_id=? AND key>? AND key<?)"
+            }
+          ],
+          "rows": 0,
+          "milliseconds": [
+            0.12360000000001037,
+            0.07999999999998408,
+            0.07269999999999754,
+            0.07540000000000191,
+            0.07529999999997017
+          ],
+          "meanMilliseconds": 0.08539999999999281
+        },
+        {
+          "label": "control-key",
+          "plan": [
+            {
+              "id": 3,
+              "parent": 0,
+              "notused": 39,
+              "detail": "SEARCH control_state USING INDEX sqlite_autoindex_control_state_1 (channel_id=? AND run_id=? AND key=?)"
+            }
+          ],
+          "rows": 0,
+          "milliseconds": [
+            0.10230000000001382,
+            0.07540000000000191,
+            0.07749999999998636,
+            0.07330000000001746,
+            0.07179999999999609
+          ],
+          "meanMilliseconds": 0.08006000000000313
+        },
+        {
+          "label": "tombstones",
+          "plan": [
+            {
+              "id": 5,
+              "parent": 0,
+              "notused": 61,
+              "detail": "SEARCH source_tombstones USING INDEX tombstones_lookup (channel_id=? AND run_id=? AND session_id=?)"
+            },
+            {
+              "id": 34,
+              "parent": 0,
+              "notused": 0,
+              "detail": "USE TEMP B-TREE FOR ORDER BY"
+            }
+          ],
+          "rows": 1,
+          "milliseconds": [
+            0.19819999999998572,
+            0.11060000000003356,
+            0.09929999999997108,
+            0.09940000000000282,
+            0.10069999999996071
+          ],
+          "meanMilliseconds": 0.12163999999999078
+        }
+      ],
+      "compute": [
+        {
+          "label": "parse-checkpoint",
+          "iterations": 10,
+          "milliseconds": [
+            3.851699999999994,
+            0.9610000000000127,
+            0.8599999999999568,
+            0.8469000000000051,
+            0.8591000000000122,
+            0.8431999999999675,
+            0.8675999999999817,
+            0.8659000000000106,
+            0.8770000000000095,
+            0.8589999999999804
+          ],
+          "meanMilliseconds": 1.169139999999993
+        },
+        {
+          "label": "clone-checkpoint",
+          "iterations": 10,
+          "milliseconds": [
+            2.59740000000005,
+            2.295599999999979,
+            2.2443000000000097,
+            2.2583999999999946,
+            2.5767999999999915,
+            2.4593000000000416,
+            2.5960999999999785,
+            2.763300000000015,
+            2.550100000000043,
+            2.4431999999999903
+          ],
+          "meanMilliseconds": 2.4784500000000094
+        },
+        {
+          "label": "hydrate-checkpoint",
+          "iterations": 10,
+          "milliseconds": [
+            4.356100000000026,
+            3.0230999999999995,
+            3.790399999999977,
+            3.095100000000002,
+            2.89670000000001,
+            2.893599999999992,
+            3.168799999999976,
+            3.3385000000000105,
+            2.795500000000004,
+            2.725499999999954
+          ],
+          "meanMilliseconds": 3.2083299999999952
+        },
+        {
+          "label": "pure-source-transition",
+          "iterations": 10,
+          "milliseconds": [
+            11.430200000000013,
+            3.388900000000035,
+            3.254699999999957,
+            3.1914999999999623,
+            3.1580000000000155,
+            3.154200000000003,
+            3.331099999999992,
+            3.3969000000000165,
+            4.377700000000004,
+            2.912300000000016
+          ],
+          "meanMilliseconds": 4.159550000000001
+        }
+      ]
+    },
+    {
+      "name": "active-full",
+      "path": "C:/Users/user/AppData/Local/Temp/previously-engine-full-u01AbH/state.sqlite",
+      "checkpointBytes": 238818,
+      "virtualSecond": 4486.95,
+      "counts": {
+        "sources": 500,
+        "nodes": 37,
+        "chapters": 6,
+        "candidates": 6,
+        "tombstones": 7,
+        "controlRows": 89115
+      },
+      "queryResults": [
+        {
+          "label": "checkpoint",
+          "plan": [
+            {
+              "id": 3,
+              "parent": 0,
+              "notused": 39,
+              "detail": "SEARCH domain_checkpoints USING INDEX sqlite_autoindex_domain_checkpoints_1 (channel_id=? AND run_id=? AND session_id=?)"
+            }
+          ],
+          "rows": 1,
+          "milliseconds": [
+            0.8365999999999758,
+            0.8190000000000168,
+            0.7848999999999933,
+            0.7680000000000291,
+            0.7678999999999974
+          ],
+          "meanMilliseconds": 0.7952800000000024
+        },
+        {
+          "label": "saved-source-fence",
+          "plan": [
+            {
+              "id": 3,
+              "parent": 0,
+              "notused": 61,
+              "detail": "SEARCH sources USING INDEX sqlite_autoindex_sources_1 (channel_id=? AND run_id=? AND id=?)"
+            },
+            {
+              "id": 11,
+              "parent": 0,
+              "notused": 0,
+              "detail": "LIST SUBQUERY 1"
+            },
+            {
+              "id": 14,
+              "parent": 11,
+              "notused": 0,
+              "detail": "SCAN json_each VIRTUAL TABLE INDEX 1:"
+            },
+            {
+              "id": 23,
+              "parent": 11,
+              "notused": 0,
+              "detail": "CREATE BLOOM FILTER"
+            }
+          ],
+          "rows": 500,
+          "milliseconds": [
+            2.52860000000004,
+            1.8690999999999462,
+            1.8725000000000591,
+            1.810799999999972,
+            1.8757999999999129
+          ],
+          "meanMilliseconds": 1.991359999999986
+        },
+        {
+          "label": "pending-events",
+          "plan": [
+            {
+              "id": 7,
+              "parent": 0,
+              "notused": 59,
+              "detail": "SEARCH events USING INDEX events_pending_domain (channel_id=? AND run_id=? AND session_id=? AND domain_processed=?)"
+            }
+          ],
+          "rows": 0,
+          "milliseconds": [
+            0.24869999999998527,
+            0.18680000000006203,
+            0.19449999999994816,
+            0.17660000000000764,
+            0.14260000000001583
+          ],
+          "meanMilliseconds": 0.18984000000000378
+        },
+        {
+          "label": "old-blocked-lore",
+          "plan": [
+            {
+              "id": 5,
+              "parent": 0,
+              "notused": 62,
+              "detail": "SEARCH control_state USING INDEX sqlite_autoindex_control_state_1 (channel_id=? AND run_id=?)"
+            }
+          ],
+          "rows": 0,
+          "milliseconds": [
+            28.10710000000006,
+            27.620000000000005,
+            27.346499999999992,
+            27.0166999999999,
+            27.29099999999994
+          ],
+          "meanMilliseconds": 27.47625999999998
+        },
+        {
+          "label": "range-blocked-lore",
+          "plan": [
+            {
+              "id": 5,
+              "parent": 0,
+              "notused": 49,
+              "detail": "SEARCH control_state USING INDEX sqlite_autoindex_control_state_1 (channel_id=? AND run_id=? AND key>? AND key<?)"
+            }
+          ],
+          "rows": 0,
+          "milliseconds": [
+            0.23429999999996198,
+            0.11389999999994416,
+            0.09900000000004638,
+            0.09510000000000218,
+            0.09209999999995944
+          ],
+          "meanMilliseconds": 0.12687999999998284
+        },
+        {
+          "label": "control-key",
+          "plan": [
+            {
+              "id": 3,
+              "parent": 0,
+              "notused": 39,
+              "detail": "SEARCH control_state USING INDEX sqlite_autoindex_control_state_1 (channel_id=? AND run_id=? AND key=?)"
+            }
+          ],
+          "rows": 0,
+          "milliseconds": [
+            0.11899999999991451,
+            0.09579999999994016,
+            0.09100000000000819,
+            0.08730000000002747,
+            0.08749999999997726
+          ],
+          "meanMilliseconds": 0.09611999999997352
+        },
+        {
+          "label": "tombstones",
+          "plan": [
+            {
+              "id": 5,
+              "parent": 0,
+              "notused": 61,
+              "detail": "SEARCH source_tombstones USING INDEX tombstones_lookup (channel_id=? AND run_id=? AND session_id=?)"
+            },
+            {
+              "id": 34,
+              "parent": 0,
+              "notused": 0,
+              "detail": "USE TEMP B-TREE FOR ORDER BY"
+            }
+          ],
+          "rows": 7,
+          "milliseconds": [
+            0.23719999999991614,
+            0.15049999999996544,
+            0.13679999999999382,
+            0.1331000000000131,
+            0.13170000000002346
+          ],
+          "meanMilliseconds": 0.1578599999999824
+        }
+      ],
+      "compute": [
+        {
+          "label": "parse-checkpoint",
+          "iterations": 10,
+          "milliseconds": [
+            1.2771000000000186,
+            1.2200000000000273,
+            1.2076000000000704,
+            1.197300000000041,
+            1.2136000000000422,
+            1.2124000000000024,
+            1.2659999999999627,
+            1.19399999999996,
+            1.1990000000000691,
+            1.1832000000000562
+          ],
+          "meanMilliseconds": 1.217020000000025
+        },
+        {
+          "label": "clone-checkpoint",
+          "iterations": 10,
+          "milliseconds": [
+            3.734299999999962,
+            3.469400000000064,
+            5.136099999999942,
+            3.6093000000000757,
+            3.5633000000000266,
+            3.565800000000081,
+            3.5190000000000055,
+            3.6457000000000335,
+            3.592200000000048,
+            3.641599999999926
+          ],
+          "meanMilliseconds": 3.7476700000000163
+        },
+        {
+          "label": "hydrate-checkpoint",
+          "iterations": 10,
+          "milliseconds": [
+            4.115699999999947,
+            4.064599999999928,
+            4.125099999999975,
+            4.884799999999927,
+            4.736700000000042,
+            4.8525999999999385,
+            4.795700000000011,
+            4.7724000000000615,
+            4.655799999999999,
+            4.64530000000002
+          ],
+          "meanMilliseconds": 4.564869999999985
+        },
+        {
+          "label": "pure-source-transition",
+          "iterations": 10,
+          "milliseconds": [
+            4.522399999999948,
+            4.416600000000017,
+            5.206999999999994,
+            4.0154999999999745,
+            3.840000000000032,
+            4.0353999999999814,
+            4.189300000000003,
+            3.880700000000047,
+            3.8070999999999913,
+            3.7608000000000175
+          ],
+          "meanMilliseconds": 4.16748
+        }
+      ]
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 {
   "scope": "Current filesystem public/, dist-public/, dist/ artifacts against configured secret values and narrow high-confidence patterns. Not tracked-file, deployed-host or semantic transcript review.",
-  "checkedAt": "2026-11-01T21:47:29.215Z",
-  "files": 90,
-  "totalBytes": 2368328,
+  "checkedAt": "2026-11-01T23:18:12.237Z",
+  "files": 85,
+  "totalBytes": 2390229,
   "configuredSecretsCompared": 4,
   "roots": [
     "public",
@@ -12,7 +12,7 @@
   "inputs": [
     {
       "file": "vite.config.ts",
-      "sha256": "18b76c248d1e68da32dc91dcc731f5f2349180d6a38c8957a91269c2b0bd3d66"
+      "sha256": "4ded075f1d22f570ca70bc6c34a5e50628efd85c4214bba816c2051ffbccf0a0"
     },
     {
       "file": "vercel.json",

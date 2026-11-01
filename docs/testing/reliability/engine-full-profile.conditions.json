@@ -17,5 +17,13 @@
     "returnedRows": 0,
     "limitation": "Single read-only query comparison with cache effects; not an isolated benchmark and not proof of the whole throughput decline cause."
   },
-  "subsequentQueryRepair": "After launch, storage_build changed blocked-lore hydration from LIKE to the indexed binary key range. It reported 31 existing domain/hydration/lore-runtime tests passing. The active full run retains the old LIKE query and does not measure repaired-query long-run throughput."
+  "subsequentQueryRepair": "After launch, storage_build changed blocked-lore hydration from LIKE to the indexed binary key range. It reported 31 existing domain/hydration/lore-runtime tests passing. The active full run retains the old LIKE query and does not measure repaired-query long-run throughput.",
+  "boundedGrowthProbe": "engine-readonly-growth-probe.json compares five read samples per query and ten pure operations on calibration/current checkpoints. Other sampled read plans stayed bounded; this does not measure durable writes or explain total throughput.",
+  "cpuObservation": {
+    "wallSeconds": 10.0189467,
+    "cpuSeconds": 10.78125,
+    "cpuSecondsPerWallSecond": 1.0760861718,
+    "priority": "BelowNormal",
+    "limitation": "One short shared-machine process sample; not an isolated benchmark or attribution of all processing cost."
+  }
 }

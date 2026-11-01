@@ -14,4 +14,6 @@ The final replay review found that an arbitrary edit produced misleading recover
 
 The final public artifact audit found no configured-secret matches or prohibited private files in the inspected tracked files and fresh public-mode build. Its exact scope and counts are in [release-audit.json](../reliability/release-audit.json). It sampled no private transcript text, so it is not a semantic audit of private stream content. New deployment access, the long load profiles, owned recording, live provider behavior and OBS remain separate evidence.
 
+The checked integration revision `fb5cb75` was deployed to Vercel. The current authored manifest and bundle passed deployed HTTP integrity checks with `private, no-store` responses and a six-second visibility lease. In the public browser, the raid prefix loaded and the supplied correction published with Preview available. [Deployment evidence](deployment-2026-11-02.json) records that narrow scope. Real stream behavior remains unverified.
+
 See [visual observations](../visual/experience-review.md), [chat intake measurements](chat-intake-2026-11-02.md), [official CLI acceptance](acceptance-2026-11-02.md), and [reliability scope](../reliability/README.md). No agent walkthrough is presented as user approval or measured human comprehension.
