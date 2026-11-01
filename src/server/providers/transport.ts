@@ -8,8 +8,10 @@ export class ProviderError extends Error {
 export interface BudgetPort { status(): {enabled:boolean}; reserve(id:string, amountMicroUsd:number, runId:string): boolean; settle(id:string, actualMicroUsd:number): void }
 export type ProviderOptions = { apiKey?:string; runId:string; budget:BudgetPort; fetch?:typeof fetch; now?:()=>number; externalCallsEnabled?:boolean };
 export const MODEL = 'gpt-6-luna';
+// At most 8K input tokens including framing, all charged as 30m cache writes, plus 1,024 output:
+// ceil(1.1 * (8000 * 0.125 + 1024 * 0.50)) = 1,664 micro-USD, below the 2,000 reserve.
 export const RESERVATION = {text:2000,transcription:10000,narration:50000} as const;
-export function structuredRequest<T>(name:string,schema:z.ZodType<T>,instructions:string,data:unknown) {return {model:MODEL,store:false,reasoning:{effort:'none'},max_output_tokens:1024,tools:[],input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(data)}],text:{format:{type:'json_schema',name,strict:true,schema:z.toJSONSchema(schema)}}};}
+export function structuredRequest<T>(name:string,schema:z.ZodType<T>,instructions:string,data:unknown) {return {model:MODEL,service_tier:'default',prompt_cache_options:{ttl:'30m'},store:false,reasoning:{effort:'none'},max_output_tokens:1024,tools:[],input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(data)}],text:{format:{type:'json_schema',name,strict:true,schema:z.toJSONSchema(schema)}}};}
 /** The same persistent BudgetStore is shared by every provider. No implicit enable, refund or retry. */
 export class ProviderTransport {
   readonly fetch:typeof fetch;
@@ -49,8 +51,8 @@ export class ProviderTransport {
     let value:T;try {value=schema.parse(JSON.parse(texts[0].text));} catch {throw new ProviderError('invalid');}
     const usage=result.body.usage;
     if(usage && Number.isFinite(usage.input_tokens)&&Number.isFinite(usage.output_tokens)) {
-      // Current Luna standard rates: $0.10/$0.50 per 1M, conservative regional 1.10 uplift.
-      const actual=Math.ceil(1.1*(usage.input_tokens*0.10+usage.output_tokens*0.50));
+      // Count every input token at the higher 30m cache-write rate; never rely on cache savings.
+      const actual=Math.ceil(1.1*(usage.input_tokens*0.125+usage.output_tokens*0.50));
       if(actual>RESERVATION.text) {this.options.budget.settle(result.attemptId,actual);throw new ProviderError('budget');}
     }
     return {value,usage:{inputTokens:usage?.input_tokens,outputTokens:usage?.output_tokens,chargedMicroUsd:null},requestId:result.requestId,model:MODEL};

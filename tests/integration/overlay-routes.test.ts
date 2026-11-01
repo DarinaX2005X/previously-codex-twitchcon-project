@@ -56,6 +56,14 @@ async function harness(fixture: Fixture, principal: Principal | null = overlay) 
 const ack = (fixture: Fixture, state: string) => ({method: 'POST', body: {state, timestamp: fixture.clock.iso()}});
 
 describe('overlay projection and capability boundaries', () => {
+  it('returns no scene or plan while privacy recovery blocks output',async()=>{
+    const fixture=engineFixture(),id=fixture.trigger('privacy-pending');
+    fixture.engine.outputsBlocked=()=>true;
+    const request=await harness(fixture);
+    expect((await request('/state')).body).toMatchObject({active:null,queued:[],sessionId:null});
+    expect((await request(`/recaps/${encodeURIComponent(id)}`)).status).toBe(404);
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+  });
   it('returns an empty valid state without a stream and does not fabricate a recap', async () => {
     const fixture = engineFixture(); fixture.disconnect(); const request = await harness(fixture);
     const result = await request('/state');

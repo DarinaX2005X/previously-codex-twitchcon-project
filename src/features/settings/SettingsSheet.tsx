@@ -4,8 +4,8 @@ import { ActionGroup, Button, Field, InlineNotice, QuietButton, Select, Sheet, T
 import { errorCode } from '../dock/model';
 import './settings.css';
 
-export interface SettingsSheetProps { settings: Settings; client: RecapClient; onClose(): void; onSaved(): void; }
-export function SettingsSheet({ settings, client, onClose, onSaved }: SettingsSheetProps) {
+export interface SettingsSheetProps { settings: Settings; client: RecapClient; onClose(): void; onSaved(): void; recording?: boolean; }
+export function SettingsSheet({ settings, client, onClose, onSaved, recording = false }: SettingsSheetProps) {
   const [draft, setDraft] = useState(() => structuredClone(settings));
   const [selected, setSelected] = useState(0);
   const [error, setError] = useState('');
@@ -33,7 +33,7 @@ export function SettingsSheet({ settings, client, onClose, onSaved }: SettingsSh
     catch (cause) { setError(errorCode(cause) === 'revision_conflict' ? 'Settings changed in another dock. Your choices are still here. Reopen settings to compare before saving.' : 'Could not save settings. Your choices are still here. Try Save settings again.'); }
     finally { busy.current = false; setPending(false); }
   }
-  return <Sheet open onOpenChange={open => { if (!open) onClose(); }} title="Scene settings" className="dock-paper" footer={<ActionGroup><Button pending={pending} onClick={() => void save()}>Save settings</Button><QuietButton onClick={onClose}>Cancel</QuietButton></ActionGroup>}>
+  return <Sheet open onOpenChange={open => { if (!open) onClose(); }} title="Scene settings" description={recording ? 'These choices apply only to this recording.' : undefined} className="dock-paper" footer={<ActionGroup><Button pending={pending} onClick={() => void save()}>Save settings</Button><QuietButton onClick={onClose}>Cancel</QuietButton></ActionGroup>}>
     {error && <InlineNotice tone="danger" live>{error}</InlineNotice>}
     <div className="dock-settings">
       <Select label="Scene position" value={draft.layout.preset} options={['left', 'right', 'lower', 'upper'].map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }))} onChange={event => patch({ layout: { ...draft.layout, preset: event.target.value as Settings['layout']['preset'] } })} />
@@ -51,7 +51,7 @@ export function SettingsSheet({ settings, client, onClose, onSaved }: SettingsSh
       <Field label="Show recap shortcut" value={draft.hotkey} maxLength={40} hint="Works while this dock has focus. If your browser uses these keys, choose another binding. Leave blank to disable." onChange={event => patch({ hotkey: event.target.value })} />
       <label className="dock-check"><input type="checkbox" checked={draft.autoRaid} onChange={event => patch({ autoRaid: event.target.checked })} />Show a recap when a raid arrives</label>
       <label className="dock-check"><input type="checkbox" checked={draft.autoClips} onChange={event => patch({ autoClips: event.target.checked })} />Allow automatic Twitch clips</label>
-      <p className="pv-secondary">Clips are published on Twitch. Forget removes them from Previously; delete the Twitch clip separately.</p>
+      {!recording && <p className="pv-secondary">Clips are published on Twitch. Forget removes them from Previously; delete the Twitch clip separately.</p>}
       <Textarea label="Context for an early welcome" maxLength={500} value={draft.channelContext} hint="Optional context to use before the stream has published chapters." onChange={event => patch({ channelContext: event.target.value })} />
     </div>
   </Sheet>;

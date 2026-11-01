@@ -38,6 +38,16 @@ function harness(options:{deferReview?:boolean;session?:boolean;safeReview?:bool
 }
 
 describe('owner service integration',()=>{
+  it('clears visible output and source access while a received removal awaits storage recovery',async()=>{
+    const h=harness();await h.seed();expect(h.service.bootstrap(h.principal).published).not.toBeNull();
+    h.engine.setOutputsBlocked(true);
+    const snapshot=h.service.bootstrap(h.principal);
+    expect(snapshot.published).toBeNull();expect(snapshot.playback).toEqual([]);expect(snapshot.sync.pendingPrivacy).toBe(true);
+    expect(h.service.previewRecap(h.principal,'session')).toBeNull();
+    expect(()=>h.service.listSources(h.principal,{sessionId:'session',limit:10})).toThrow('pending chat removal');
+    await expect(h.service.triggerRecap(h.context(),{sessionId:'session',reason:'manual'})).rejects.toMatchObject({status:503});
+    h.engine.setOutputsBlocked(false);expect(h.service.bootstrap(h.principal).published).not.toBeNull();
+  });
   it('enforces principal scope and role before exposing private evidence',()=>{
     const h=harness({session:false});expect(()=>h.service.bootstrap({...h.principal,channelId:'other'})).toThrow('cannot access');
     expect(()=>h.service.listSources({...h.principal,role:'overlay'},{sessionId:'session',limit:10})).toThrow('cannot access');

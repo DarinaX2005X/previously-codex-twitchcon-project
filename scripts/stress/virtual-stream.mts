@@ -38,7 +38,7 @@ try{
       send({type:'metadata',title:`Synthetic stage ${Math.floor(second/300)}`,category:'Development',atMs:at,safety:safe});
     }
     // Slow provider accepts nothing for five minutes each hour; retry is represented by the actual reducer backoff.
-    if(state.pendingGeneration&&at-state.pendingGeneration.requestedAtMs>=((second%3600<300)?60000:1000)){
+    if(state.pendingGeneration&&clock.now()-state.pendingGeneration.requestedAtMs>=((second%3600<300)?60000:1000)){
       const request=state.pendingGeneration;maxPacket=Math.max(maxPacket,evidencePacketBytes(request.packet));
       if(second%3600<300){send({type:'generation.failed',jobId:request.ticket.jobId,reason:'synthetic_slow_provider'});providerFails++;}
       else {const src=request.packet.sources.find(s=>s.kind==='speech');if(src){const patch:StoryPatch={sessionId,baseRevision:request.ticket.baseEntityRevision,action:'update',title:'Synthetic development progress',claims:[{id:'progress',text:src.text!,role:'state',support:[{id:src.id,revision:src.revision}],attribution:'streamer',epistemic:'explicit'}],relations:[],currentAttemptId:null,language:'en',missingContext:[]};send({type:'generation.result',ticket:request.ticket,patch,safety:safe,grounding:{acceptedClaimIds:['progress'],acceptedRelationKeys:[]}});}else{send({type:'generation.failed',jobId:request.ticket.jobId,reason:'no_speech'});providerFails++;}}
@@ -53,5 +53,6 @@ try{
   const result={scope:durable?'Synthetic reducer plus SQLite raw ingress; not StoryEngine throughput, actual capture, providers, cloud or a wall-clock eight-hour run.':'Synthetic pure reducer, no durable message writes; not StoryEngine throughput, actual capture, providers, cloud or a wall-clock eight-hour run.',durationSeconds:seconds,baselineRate,burstRate:200,burstSeconds:60,hardware:{platform:platform(),release:release(),cpu:cpus()[0]?.model,logicalCpus:cpus().length,totalMemory:totalmem(),node:process.version},elapsedSeconds:(performance.now()-wall)/1000,messages:count,commands,deletes,providerFails,limits:{maxSources,maxWindows,maxActors,maxPhrases,maxCandidates,maxPending,maxPacket},singleActorFalseMoments:state.moments.length,pagination:{rows,pages,milliseconds:performance.now()-paginationStart,firstSourceRetained:store.repository.getSource(scope,'msg-00000000')!==null},samples};
   mkdirSync(resolve(output,'..'),{recursive:true});writeFileSync(output,JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify({done:true,output,elapsedSeconds:result.elapsedSeconds}));
 }finally{store.close();const resolved=resolve(dir);if(!resolved.startsWith(resolve(tmpdir())+'\\')&&!resolved.startsWith(resolve(tmpdir())+'/'))throw Error('Unsafe cleanup');rmSync(resolved,{recursive:true,force:true});}
+
 
 

@@ -6,6 +6,8 @@ import { ControlPersistence } from './control.js';
 import type { MutationReceipt } from './domain-types.js';
 import type { DomainCommitInput, DomainCommitResult, DomainHydration, DomainCheckpoint } from './domain-types.js';
 import { DomainPersistence } from './domain.js';
+import { HistoryPersistence } from './history.js';
+import type {EntityGraph,EntityHistoryCursor,EntityHistoryPage} from './domain-types.js';
 
 export type WorkInput = {id?: string; sessionId: string; kind: string; businessKey: string; payload: unknown; priority?: number; nextAtMs?: number; dependencyRefs?: VersionRef[]};
 export type WorkLease = {id: string; sessionId: string; kind: string; payload: unknown; privacyEpoch: number; leaseToken: string; leaseUntilMs: number; attempts: number; publishSeq: number|null;frozenPublication?:{body:string;bodyHash:string}};
@@ -23,9 +25,11 @@ function canonical(value: unknown): string {
 export class SqliteRepository {
   private readonly controls:ControlPersistence;
   private readonly domain:DomainPersistence;
+  getEntityGraph(scope:Scope,sessionId:string,id:string):EntityGraph|null{return new HistoryPersistence(this.db,this).graph(scope,sessionId,id);}
+  listEntityHistory(scope:Scope,sessionId:string,options:{kind:'chapter'|'lore';limit?:number;cursor?:EntityHistoryCursor}):EntityHistoryPage{return new HistoryPersistence(this.db,this).page(scope,sessionId,options);}
   constructor(private readonly db: StorageDatabase, private readonly now: () => number) {this.controls=new ControlPersistence(db,now);this.domain=new DomainPersistence(db,now,this);}
   getDomainCheckpoint(scope:Scope,sessionId:string):DomainCheckpoint{return this.domain.checkpoint(scope,sessionId);}
-  getDomainHydration(scope:Scope,sessionId:string):DomainHydration{return this.domain.hydration(scope,sessionId);}
+  getDomainHydration(scope:Scope,sessionId:string,options?:{checkpointOnly?:boolean}):DomainHydration{return this.domain.hydration(scope,sessionId,options);}
   applyDomainTransition(scope:Scope,sessionId:string,input:DomainCommitInput):DomainCommitResult{return this.domain.apply(scope,sessionId,input);}
   controlGet<T=unknown>(scope:Scope,key:string):T|null{return this.controls.get<T>(scope,key);}
   controlPut(scope:Scope,key:string,value:unknown,expiresAtMs?:number):void{this.controls.put(scope,key,value,expiresAtMs);}

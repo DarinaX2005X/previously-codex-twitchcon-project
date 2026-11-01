@@ -18,12 +18,13 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
   const {scope,channel,engine,storage,clock}=options,repository=storage.repository;
   let closed=false,busy=false,lastLease:PublicationLease|null=null;
   const lifetime=new AbortController();
+  let outputWindow=new AbortController();
   const enabled=scope.runId==='live'&&!!options.publicOrigin&&!!options.sharedSecret;
   const sync=()=>repository.getPublicationState(scope);
   const status=(state:SourceStatus['state'],message:string|null,action:string|null=null)=>{
     const last=sync().lastSyncedAtMs;engine.setStatus('cloud',{state,message,action,lastObservedAt:last===null?null:new Date(last).toISOString()});
   };
-  const pending=()=>status('delayed','Saved locally · Public update pending');
+  const pending=()=>status('delayed','Saved locally. Public update pending.');
   const settled=()=>{const state=sync();if(state.pendingPrivacy||state.publishSeq>state.ackSeq)pending();else if(state.ackSeq>0)status('ready',null);else status('disconnected','The public recap will connect when safe content is ready.');};
   function activeForCloud(fallback?:string):string|null{
     const live=engine.activeSessionId();
@@ -55,7 +56,7 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
   }
   function validate(lease:PublicationLease,operation:PublicationOperation):boolean{
     try{
-      if(closed||!enabled||operation.channelId!==scope.channelId||operation.channelLogin!==channel.login||operation.publishSeq!==lease.publishSeq||operation.privacyRevision!==sync().privacyRevision)return false;
+      if(closed||!enabled||engine.outputsBlocked()||operation.channelId!==scope.channelId||operation.channelLogin!==channel.login||operation.publishSeq!==lease.publishSeq||operation.privacyRevision!==sync().privacyRevision)return false;
       const session=repository.getSession(scope,lease.sessionId);if(session.privacyEpoch!==lease.privacyEpoch)return false;
       if(operation.operation==='export_manifest'){
         const entity=repository.getEntity(scope,operation.manifest.id);return !!entity&&entity.kind==='export'&&entity.status==='active'&&entity.sessionId===operation.manifest.sourceSessionId&&entity.revision===operation.manifest.revision;
@@ -97,12 +98,12 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
   };
   let publisher:LocalPublisher|null=null;
   if(enabled){
-    try{publisher=new LocalPublisher({repository:port,scope,publicOrigin:options.publicOrigin!,secret:options.sharedSecret!,now:()=>clock.now(),buildOperation,validate,onAck,fetch:(input,init)=>{const signals=[lifetime.signal,...(init?.signal?[init.signal]:[])];return(options.fetch??fetch)(input,{...init,signal:AbortSignal.any(signals)});}});enqueueHeartbeat();settled();}
+    try{publisher=new LocalPublisher({repository:port,scope,publicOrigin:options.publicOrigin!,secret:options.sharedSecret!,now:()=>clock.now(),buildOperation,validate,onAck,fetch:(input,init)=>{const signals=[lifetime.signal,outputWindow.signal,...(init?.signal?[init.signal]:[])];return(options.fetch??fetch)(input,{...init,signal:AbortSignal.any(signals)});}});enqueueHeartbeat();settled();}
     catch{status('error','Public recap configuration needs attention.','Check public recap setup');}
   }else status('unconfigured',scope.runId==='live'?'Configure the public recap to publish safe updates.':'Replay stays local; cloud publication is disabled.');
 
   function enqueueHeartbeat(force=false){
-    if(!publisher||closed)return;
+    if(!publisher||closed||engine.outputsBlocked())return;
     const current=sync(),marker=repository.controlGet<HeartbeatMarker>(scope,HEARTBEAT),activeSessionId=activeForCloud();
     if(!activeSessionId||current.pendingPrivacy)return;
     // At most one pending heartbeat. A terminal expired heartbeat may be replaced by a new empty-body lease update.
@@ -113,12 +114,14 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
     repository.controlPut(scope,HEARTBEAT,{publishSeq:created.publishSeq,sessionId:activeSessionId,atMs,terminal:false} satisfies HeartbeatMarker);
   }
   return {
+    suspend(){outputWindow.abort();},
+    resume(){if(outputWindow.signal.aborted)outputWindow=new AbortController();},
     onEffects(_sessionId:string,effects:readonly DomainEffect[],_state:DomainState){if(publisher&&!closed&&effects.some(effect=>effect.type==='publication'||effect.type==='privacy'))pending();},
     async tick():Promise<'idle'|'acknowledged'|'retry'|'cancelled'>{
-      if(closed||!publisher||busy)return 'idle';busy=true;
+      if(closed||!publisher||busy||engine.outputsBlocked())return 'idle';busy=true;
       try{
         enqueueHeartbeat();const result=await publisher.tick();
-        if(result==='retry')status('error','Saved locally · Public update pending. The public recap could not be reached.','Check connection');
+        if(result==='retry')status('error','Saved locally. The public recap could not be reached and the update is pending.','Check connection');
         else if(result==='cancelled'){const current=sync();if(current.publishSeq>current.ackSeq)pending();else settled();}
         else if(result==='acknowledged')settled();
         return result;

@@ -4,7 +4,7 @@ import type {ReplayControl} from '../shared/contracts/index.js';
 
 let driver:ReplayDriver|null=null,bundle:CaptureBundle|null=null,run=0,manual=0,virtualPosition=0,last=performance.now();
 const scope=crypto.randomUUID();
-function view(){return driver?{snapshot:driver.snapshot(),transport:{atMs:Math.min(driver.atMs,driver.durationMs),durationMs:driver.durationMs,playing:driver.playing,speed:driver.speed,error:driver.error,correction:driver.correction,milestones:driver.milestones}}:null;}
+function view(){return driver?{snapshot:driver.snapshot(),transport:{atMs:Math.min(driver.atMs,driver.durationMs),durationMs:driver.durationMs,playing:driver.playing,speed:driver.speed,error:driver.error,correction:driver.correction,correctionApplied:driver.correctionApplied,milestones:driver.milestones,latestSource:driver.latestSource}}:null;}
 function notify(){postMessage({kind:'change',view:view()});}
 function fresh(){driver?.revoke();driver=new ReplayDriver(bundle!,`${scope}-${++run}`);manual=0;virtualPosition=0;last=performance.now();}
 setInterval(()=>{const now=performance.now(),delta=now-last;last=now;if(driver?.playing){virtualPosition+=delta*driver.speed;driver.advanceTo(virtualPosition);notify();}},100);

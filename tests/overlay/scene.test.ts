@@ -43,4 +43,14 @@ describe('broadcast footprint and deterministic scene',()=>{
   it('uses only canonical clip bounds and source metadata',()=>{
     const plan=planFixture();plan.media=[{id:'clip:1',kind:'video',inMs:2700,outMs:4300,captureStartMs:10000,captureEndMs:15000,previousSession:false}];expect(desiredVideoTime(plan,'clip:1',2200,2000)).toBe(2.9);expect(desiredVideoTime(plan,'clip:1',12000,2000)).toBe(4.3);expect(desiredVideoTime(plan,'not-permitted',2000,2000)).toBeNull();
   });
+  it('keeps one approved context useful without inventing goal, change or lore phases',()=>{
+    const plan=planFixture();plan.beats=[{...plan.beats[0],kind:'context',text:'The studio is taking listener requests'}];const layout=resolveSceneLayout(plan.layout)!;
+    for(const t of [2500,4500,5500,8500]){const frame=renderAt(t,plan,layout);expect(frame.phase).toBe('context');expect(frame.caption?.kind).toBe('context');expect(frame.caption?.text).toBe(plan.beats[0].text);expect(frame.retainedPlane).toBeNull();expect(frame.edgeOffsets).toHaveLength(1);}
+    expect(sceneSoundEvents(plan).some(event=>event.atMs===5150||event.atMs===5340)).toBe(false);
+  });
+  it('uses only the two supported states and has no compulsory origin stage',()=>{
+    const plan=planFixture();plan.beats=[{...plan.beats[0],kind:'context'},plan.beats[2]];const layout=resolveSceneLayout(plan.layout)!;
+    expect(renderAt(4500,plan,layout).caption?.kind).toBe('context');expect(renderAt(8500,plan,layout).caption?.kind).toBe('now');
+    for(let t=1800;t<9750;t+=100)expect(['attempt','change','origin']).not.toContain(renderAt(t,plan,layout).phase);
+  });
 });

@@ -141,4 +141,22 @@ describe('acceptance: authored audio/provider outcomes across runtime and SQLite
     expect(h.engine.statuses().story.state).toBe('delayed'); expect(fetcher).toHaveBeenCalledTimes(failure === 'malformed' ? 2 : 1);
     expect(h.storage.budget.status().usedMicroUsd).toBe(0);
   });
+
+  it('an owner edit made during a model request wins over the late generated update', async () => {
+    const h = harness(); await h.upload(); await h.run('stt'); await h.run('story'); await h.publish();
+    const chapter = h.engine.state('episode').chapters[0];
+    h.set(100000); await h.engine.dispatch('episode', {type: 'source', source: {...scope, id: 'edit-race-source', sessionId: 'episode', revision: 1, kind: 'speech', startMs: 99000, endMs: 100000, actorId: null, languageCodes: ['en'], timePrecision: 'chunk', text: 'I am checking the note again.', status: 'active', externalMessageId: null, moderation: 'allowed'}});
+    const original = h.propose.getMockImplementation()!; let release!: () => void, began!: () => void;
+    const entered = new Promise<void>(resolve => {began = resolve;});
+    h.propose.mockImplementationOnce(async (...args) => {began(); await new Promise<void>(resolve => {release = resolve;}); return original(...args);});
+    const pending = h.run('story'); await entered;
+    await h.owner.editChapter({principal: h.principal, idempotencyKey: 'acceptance-owner-edit', baseRevision: chapter.revision}, chapter.id, {summary: 'The owner is checking the reload behavior.'});
+    release(); await pending;
+    expect(h.engine.state('episode').chapters[0]).toMatchObject({summary: 'The owner is checking the reload behavior.', edited: true});
+    expect(h.engine.state('episode').published?.chapters).toHaveLength(0);
+    const review = h.storage.repository.claimJob(scope, {kinds: ['owner.review']})!;
+    expect(await h.owner.executeReview(review, new AbortController().signal)).toEqual({state: 'done'});
+    h.storage.repository.finishJob(scope, review.id, review.leaseToken, 'done'); await h.engine.tick();
+    expect(h.engine.state('episode').published?.chapters[0].summary).toBe('The owner is checking the reload behavior.');
+  });
 });

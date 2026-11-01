@@ -32,7 +32,7 @@ describe('topic-neutral authored provider contract; does not measure live model 
     const rendered=await provider.present(proposed.value.claims,{entityId:'chapter',revision:1,eligibleAt:ticket.eligibleAt,claimRefs:[{id:'fact',revision:1}]},safety());
     expect(rendered.en.current.goal).toBeNull();expect(rendered.ru.current.goal).toBeNull();expect(rendered.en.summary).toBe(row.text);expect(rendered.ru.summary).toBe(row.ru);
     if(row.role!=='change')expect(rendered.en.current.change).toBeNull();
-    expect((await provider.proposeLore(packet,[],safety())).value).toEqual({candidates:[],heldIds:[]});expect(fetcher).toHaveBeenCalledTimes(6);
+    expect((await provider.proposeLore(packet,[],safety())).value).toEqual({candidates:[],observations:[],heldIds:[]});expect(fetcher).toHaveBeenCalledTimes(6);
     const request=JSON.parse(fetcher.mock.calls[0][1]!.body as string);expect(request.input[0].content).toContain('never force a goal/problem/fix arc or local joke');expect(JSON.parse(request.input[1].content).packet.sources[0].text).toBe(row.text);
   });
   it('accepts a genuine empty hold and refuses to manufacture a presentation from it',async()=>{

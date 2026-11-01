@@ -19,3 +19,15 @@ it('acceptance: chat/clip business keys and pending clip poll survive two actual
     expect(second).toMatchObject({chat: {queued: false, reason: 'duplicate'}, sends: 0, creates: 0, polls: 1, prepares: 1, clipStates: ['ready'], ownEcho: true, pendingPolls: 0, paidMicroUsd: 0});
   } finally {rmSync(directory, {recursive: true, force: true});}
 }, 20000);
+
+it('acceptance: durable privacy controls replay after a process dies inside the first ingest', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'previously-privacy-restart-'));
+  const worker = fileURLToPath(new URL('../../scripts/verify/eventsub-restart-worker.mts', import.meta.url));
+  const exec = promisify(execFile);
+  try {
+    const run = async (phase: string) => JSON.parse((await exec(process.execPath, ['--import', 'tsx', worker, join(directory, 'state.sqlite'), phase], {windowsHide: true, timeout: 10000})).stdout);
+    const first = await run('crash'); expect(first).toMatchObject({started: ['durable-0'], pending: 3, claim: {status: 'processing'}});
+    const second = await run('recover'); expect(second.pid).not.toBe(first.pid);
+    expect(second).toMatchObject({received: ['durable-0', 'durable-1', 'durable-2'], pending: 0, claim: {status: 'done'}});
+  } finally {rmSync(directory, {recursive: true, force: true});}
+}, 20000);

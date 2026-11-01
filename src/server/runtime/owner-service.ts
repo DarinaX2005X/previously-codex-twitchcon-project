@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canDispatch, compileRecap, recapLineage } from '../../core/recap.js';
 import type { DomainEvent, DomainState } from '../../core/types.js';
-import type { Channel, Chapter, Clock, EventEnvelope, InvalidationReceipt, Lore, Moment, OwnerSnapshot, PlaybackRef, RecapPlan, Safety, Scope, Settings, Source } from '../../shared/contracts/index.js';
+import type { Channel, Chapter, Clock, EventEnvelope, InvalidationReceipt, Lore, Moment, OwnerSnapshot, OwnerHistoryQuery, OwnerHistoryPage, PlaybackRef, RecapPlan, Safety, Scope, Settings, Source } from '../../shared/contracts/index.js';
 import { safetyAllowsPublication, SettingsSchema } from '../../shared/contracts/index.js';
 import type { SafetyService } from '../providers/safety.js';
 import type { createStorage, SqliteRepository, WorkLease } from '../storage/index.js';
@@ -9,6 +9,7 @@ import type { JobResult } from './scheduler.js';
 import { ApiError } from './errors.js';
 import type { ChapterPatch, LorePatch, OwnerMutation, OwnerRevisionMutation, OwnerService, PlaybackAck, SessionQuery, SettingsPatch, SourceQuery } from './owner-routes.js';
 import type { Principal } from './security.js';
+import { historyItem, loadHistoryEntity } from './history.js';
 
 export type OwnerDispatchOptions = {envelope?: EventEnvelope; idempotencyKey?: string; requestBody?: unknown; expectedEntity?: {id: string; revision: number}; settingsPatch?: {baseRevision: number; patch: SettingsPatch}};
 export interface OwnerEnginePort {
@@ -19,7 +20,9 @@ export interface OwnerEnginePort {
   readonly storage: Pick<ReturnType<typeof createStorage>, 'budget'>;
   readonly safety: Pick<SafetyService, 'inspectBatch'>;
   state(sessionId: string): DomainState;
+  entityState?(sessionId: string, entityId: string): DomainState;
   activeSessionId(): string | null;
+  outputsBlocked?(): boolean;
   dispatch(sessionId: string, event: DomainEvent, options?: OwnerDispatchOptions): Promise<DomainState>;
   statuses(): OwnerSnapshot['status'];
   presentOwnerChapter?(sessionId: string, entityId: string): Promise<void>;
@@ -49,16 +52,21 @@ export class RuntimeOwnerService implements OwnerService {
     if (principal.channelId !== scope.channelId || principal.runId !== scope.runId || (scope.runId === 'live' ? principal.role !== 'owner' : principal.role !== 'demo')) throw new ApiError(403, 'role_forbidden', 'This session cannot access that resource.');
   }
   private state(id: string): DomainState {this.engine.repository.getSession(this.engine.scope,id); return this.engine.state(id);}
+  private entityState(sessionId: string, entityId: string): DomainState {
+    return this.engine.entityState?.(sessionId, entityId) ?? loadHistoryEntity(this.engine.repository, this.engine.repository.getSession(this.engine.scope, sessionId), this.state(sessionId), entityId);
+  }
   private entity(id: string, kind: 'chapter'|'lore'|'playback') {
     const row = this.engine.repository.getEntity(this.engine.scope,id);
     if (!row || row.kind !== kind || row.status !== 'active') throw new ApiError(404,'not_found','This item is unavailable.');
-    return {row, state: this.state(row.sessionId)};
+    return {row, state: kind === 'playback' ? this.state(row.sessionId) : this.entityState(row.sessionId,id)};
   }
   private resolve(ref: ResultRef): unknown {
     if (ref.kind === 'void') return undefined;
     if (ref.kind === 'settings') return this.engine.repository.getSettings(this.engine.scope);
     if (ref.kind === 'receipt') return ref.value;
-    const state = this.state(ref.sessionId);
+    let state:DomainState;
+    try{state=ref.kind === 'chapter' || ref.kind === 'lore' ? this.entityState(ref.sessionId,ref.id) : this.state(ref.sessionId);}
+    catch(error){if(error instanceof ApiError&&error.status===404)throw new ApiError(409,'result_withdrawn','The earlier result has been withdrawn.');throw error;}
     const values = ref.kind === 'chapter' ? state.chapters : ref.kind === 'lore' ? state.lore : ref.kind === 'moment' ? state.moments : state.playbacks;
     const result = values.find(value=>value.id===ref.id);
     if (!result) throw new ApiError(409,'result_withdrawn','The earlier result has been withdrawn.');
@@ -111,7 +119,9 @@ export class RuntimeOwnerService implements OwnerService {
     if(job.kind!=='owner.review'||!value||!['chapter','lore'].includes(value.kind??'')||typeof value.entityId!=='string'||typeof value.sourceId!=='string'||!Number.isSafeInteger(value.entityRevision)||!Number.isSafeInteger(value.sourceRevision)||value.privacyEpoch!==job.privacyEpoch)return {state:'failed'};
     const request=value as ReviewRequest;
     const current=()=>{
-      const state=this.state(job.sessionId),source=this.engine.repository.getSource(this.engine.scope,request.sourceId);
+      const row=this.engine.repository.getEntity(this.engine.scope,request.entityId);if(!row||row.status!=='active')return null;
+      let state:DomainState;try{state=this.entityState(job.sessionId,request.entityId);}catch(error){if(error instanceof ApiError&&error.status===404)return null;throw error;}
+      const source=this.engine.repository.getSource(this.engine.scope,request.sourceId);
       if(state.session.privacyEpoch!==request.privacyEpoch||!source||source.sessionId!==job.sessionId||source.kind!=='owner_statement'||source.revision!==request.sourceRevision||source.status!=='active')return null;
       const chapter=request.kind==='chapter'?state.chapters.find(c=>c.id===request.entityId):undefined;
       const lore=request.kind==='lore'?state.lore.find(l=>l.id===request.entityId):undefined;
@@ -146,7 +156,8 @@ export class RuntimeOwnerService implements OwnerService {
   getSession(principal: Principal,id: string): OwnerSnapshot {this.authorize(principal);return this.snapshot(this.state(id));}
   private snapshot(state: DomainState|null): OwnerSnapshot {
     const publication=this.engine.repository.getPublicationState(this.engine.scope),budget=this.engine.storage.budget.status(),status=this.engine.statuses();
-    return structuredClone({channel:this.engine.channel,session:state?.session??null,settings:this.engine.repository.getSettings(this.engine.scope),status,published:state?.published??null,drafts:state?.chapters.filter(c=>c.publicationState==='draft')??[],held:[...state?.chapters.filter(c=>c.publicationState==='held')??[],...state?.lore.filter(l=>l.status==='held')??[]],lore:state?.lore??[],moments:state?.moments??[],playback:state?.playbacks??[],sync:{state:status.cloud.state==='error'?'error':status.cloud.state==='unconfigured'?'unconfigured':publication.pendingPrivacy||publication.publishSeq>publication.ackSeq?'pending':'synced',revision:publication.publishSeq,acknowledgedRevision:publication.ackSeq||null,lastSyncedAt:publication.lastSyncedAtMs===null?null:new Date(publication.lastSyncedAtMs).toISOString(),pendingPrivacy:publication.pendingPrivacy},revision:state?.revision??0,serverNow:this.engine.clock.iso(),budget:{limitUsd:budget.limitMicroUsd/1e6,committedUsd:budget.committedMicroUsd/1e6,reservedUsd:budget.reservedMicroUsd/1e6,paidCallsEnabled:budget.enabled}});
+    const visible = this.engine.outputsBlocked?.() ? null : state;
+    return structuredClone({channel:this.engine.channel,session:state?.session??null,settings:this.engine.repository.getSettings(this.engine.scope),status,published:visible?.published??null,drafts:visible?.chapters.filter(c=>c.publicationState==='draft')??[],held:[...visible?.chapters.filter(c=>c.publicationState==='held')??[],...visible?.lore.filter(l=>l.status==='held')??[]],lore:visible?.lore??[],moments:visible?.moments??[],playback:visible?.playbacks??[],sync:{state:status.cloud.state==='error'?'error':status.cloud.state==='unconfigured'?'unconfigured':publication.pendingPrivacy||publication.publishSeq>publication.ackSeq?'pending':'synced',revision:publication.publishSeq,acknowledgedRevision:publication.ackSeq||null,lastSyncedAt:publication.lastSyncedAtMs===null?null:new Date(publication.lastSyncedAtMs).toISOString(),pendingPrivacy:publication.pendingPrivacy||Boolean(this.engine.outputsBlocked?.())},revision:state?.revision??0,serverNow:this.engine.clock.iso(),budget:{limitUsd:budget.limitMicroUsd/1e6,committedUsd:budget.committedMicroUsd/1e6,reservedUsd:budget.reservedMicroUsd/1e6,paidCallsEnabled:budget.enabled}});
   }
   listSessions(principal: Principal,query: SessionQuery) {
     this.authorize(principal);const cursor=decode(query.cursor),limit=Math.max(1,Math.min(50,Math.floor(query.limit)));
@@ -155,11 +166,27 @@ export class RuntimeOwnerService implements OwnerService {
     return {items:rows.map(row=>this.engine.repository.getSession(this.engine.scope,row.id)),nextCursor:rows.length===limit?encode({startedAt:rows.at(-1)!.startedAt,id:rows.at(-1)!.id}):null};
   }
   listSources(principal: Principal,query: SourceQuery) {
-    this.authorize(principal);this.engine.repository.getSession(this.engine.scope,query.sessionId);
+    this.authorize(principal);if(this.engine.outputsBlocked?.())throw new ApiError(503,'privacy_recovery_pending','Sources are unavailable until the pending chat removal is applied.',true);this.engine.repository.getSession(this.engine.scope,query.sessionId);
     const cursor=decode(query.cursor),limit=Math.max(1,Math.min(100,Math.floor(query.limit)));
     if(cursor&&(typeof cursor.startMs!=='number'||typeof cursor.id!=='string'||cursor.sessionId!==query.sessionId))throw new ApiError(400,'invalid_cursor','The pagination cursor is invalid.');
     const rows=this.engine.repository.listSources(this.engine.scope,query.sessionId,{limit,cursor:cursor as {startMs:number;id:string}|undefined,fromMs:query.fromMs,toMs:query.toMs});
     return {items:rows,nextCursor:rows.length===limit?encode({startMs:rows.at(-1)!.startMs,id:rows.at(-1)!.id,sessionId:query.sessionId}):null};
+  }
+  listHistory(principal: Principal,query: OwnerHistoryQuery): OwnerHistoryPage {
+    this.authorize(principal);
+    if(this.engine.outputsBlocked?.())throw new ApiError(503,'privacy_recovery_pending','History is paused until the pending chat removal is applied.',true);
+    const repository=this.engine.repository,session=repository.getSession(this.engine.scope,query.sessionId),settings=repository.getSettings(this.engine.scope);
+    const filter=query.filter??'all',limit=Math.max(1,Math.min(50,Math.floor(query.limit))),decoded=decode(query.cursor);
+    if(decoded&&(typeof decoded.id!=='string'||!decoded.id||typeof decoded.startMs!=='number'||!Number.isSafeInteger(decoded.startMs)||decoded.startMs<0||decoded.sessionId!==query.sessionId||decoded.kind!==query.kind||decoded.filter!==filter))throw new ApiError(400,'invalid_cursor','The pagination cursor is invalid.');
+    if(decoded&&(decoded.privacyEpoch!==session.privacyEpoch||decoded.language!==settings.recapLanguage))throw new ApiError(409,'history_changed','History changed. Reload it before continuing.');
+    let cursor=decoded?{startMs:decoded.startMs as number,id:decoded.id as string}:undefined,nextCursor:typeof cursor|null=null;
+    const items:OwnerHistoryPage['items']=[];
+    for(let pageCount=0;pageCount<4&&items.length<limit;pageCount++){
+      const page=repository.listEntityHistory(this.engine.scope,session.id,{kind:query.kind,limit:limit-items.length,cursor});
+      for(const row of page.items){const item=historyItem(repository,{channel:this.engine.channel,session,settings},row.id,filter,this.engine.clock.now());if(item)items.push(item);}
+      nextCursor=page.nextCursor;if(!nextCursor)break;cursor=nextCursor;
+    }
+    return {items,nextCursor:nextCursor?encode({...nextCursor,sessionId:session.id,kind:query.kind,filter,privacyEpoch:session.privacyEpoch,language:settings.recapLanguage}):null,privacyEpoch:session.privacyEpoch,language:settings.recapLanguage};
   }
   setSettings(context: OwnerRevisionMutation,patch: SettingsPatch): Promise<Settings> {
     return this.mutate(context,'settings',patch,async()=>{
@@ -203,7 +230,7 @@ export class RuntimeOwnerService implements OwnerService {
   blockLore(context: OwnerRevisionMutation,id: string,blocked: boolean): Promise<Lore> {
     return this.mutate(context,'lore.block',{id,blocked},async()=>{
       const row=this.engine.repository.getEntity(this.engine.scope,id);if(!row||row.kind!=='lore')throw new ApiError(404,'not_found','This item is unavailable.');
-      const state=this.state(row.sessionId),lore=state.lore.find(l=>l.id===id);if(!lore||lore.revision!==context.baseRevision)throw conflict();
+      const state=this.entityState(row.sessionId,id),lore=state.lore.find(l=>l.id===id);if(!lore||lore.revision!==context.baseRevision)throw conflict();
       const event:DomainEvent=blocked?{type:'privacy',target:{kind:'term',sessionId:state.session.id,term:lore.term},reason:'owner_block'}:{type:'term.unblock',term:lore.term};
       await this.engine.dispatch(state.session.id,event,{...this.options(context,{operation:'lore.block',id,blocked,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});
       return {kind:'lore',sessionId:state.session.id,id};
@@ -213,10 +240,11 @@ export class RuntimeOwnerService implements OwnerService {
     return this.mutate(context,'moment.save',input,async()=>{const state=this.state(input.sessionId),id=`moment:${hash(context.idempotencyKey).slice(0,32)}`,atMs=Math.max(0,Math.min(172_800_000,this.engine.clock.now()-Date.parse(state.session.startedAt)));await this.engine.dispatch(input.sessionId,{type:'moment.save',id,atMs},this.options(context,{operation:'moment.save',...input}));return {kind:'moment',sessionId:input.sessionId,id};});
   }
   previewRecap(principal: Principal,sessionId: string): RecapPlan|null {
-    this.authorize(principal);const state=this.state(sessionId);if(!state.published)return null;
+    this.authorize(principal);if(this.engine.outputsBlocked?.())return null;const state=this.state(sessionId);if(!state.published)return null;
     return compileRecap(state.published,state.settings.layout,{id:'owner-preview',sessionId,reason:'manual',occurredAt:this.engine.clock.iso()},{...recapLineage(state),media:state.media.filter(media=>canDispatch(state,{sessionId,privacyEpoch:state.session.privacyEpoch,dependencyRefs:media.refs})),durationMs:state.settings.recapDurationMs,generatedAt:this.engine.clock.iso(),narrationEnabled:state.settings.narrationEnabled});
   }
   triggerRecap(context: OwnerMutation,input: {sessionId: string;reason: 'manual'|'hotkey'}): Promise<PlaybackRef> {
+    if(this.engine.outputsBlocked?.())return Promise.reject(new ApiError(503,'privacy_recovery_pending','Recap output is paused until the pending chat removal is applied.',true));
     return this.mutate(context,'recap.trigger',input,async()=>{this.state(input.sessionId);const triggerId=`owner:${hash(context.idempotencyKey).slice(0,32)}`;const state=await this.engine.dispatch(input.sessionId,{type:'recap.trigger',trigger:{id:triggerId,...input,occurredAt:this.engine.clock.iso()}},this.options(context,{operation:'recap.trigger',...input}));const playback=state.playbacks.find(p=>p.id===`playback:${triggerId}`)??state.playbacks.find(p=>p.status==='queued');if(!playback)throw new ApiError(409,'recap_unavailable','A recap could not be prepared.');return {kind:'playback',sessionId:input.sessionId,id:playback.id};});
   }
   cancelRecap(context: OwnerMutation,id: string): Promise<void> {return this.playback(context,id,'cancel');}

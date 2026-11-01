@@ -2,7 +2,7 @@ import { describe,it,expect,vi } from 'vitest';
 import { mkdtempSync,rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createStorage } from '../../src/server/storage/index.js';
-import { ProviderTransport,OpenAITranscriptionProvider,OpenAIStoryProvider,RecordedStoryProvider,recordedKey,storyRequestBytes,SafetyService,redactPatterns,OpenAIRealtimeNarrationProvider } from '../../src/server/providers/index.js';
+import { ProviderTransport,OpenAITranscriptionProvider,OpenAIStoryProvider,RecordedStoryProvider,recordedKey,storyRequestBytes,SafetyService,redactPatterns,OpenAIRealtimeNarrationProvider,RESERVATION } from '../../src/server/providers/index.js';
 import { encodeWav } from '../../src/server/audio/wav.js';
 import type { EvidencePacket,GenerationTicket,StoryPatch } from '../../src/shared/contracts/index.js';
 
@@ -12,6 +12,14 @@ const patch:StoryPatch={sessionId:'session',baseRevision:0,action:'update',title
 function budget(){let spent=0;return {status:()=>({enabled:true}),reserve:vi.fn((_id:string,amount:number)=>{spent+=amount;return spent<=4500000;}),settle:vi.fn()};}
 const response=(value:unknown)=>new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(value)}]}],usage:{input_tokens:500,output_tokens:200}}),{status:200});
 describe('authored provider adapters: no real calls',()=>{
+  it('pins Standard pricing and short cache TTL, reserves the full cache-write envelope, and catches overage',async()=>{
+    const b=budget(),fetcher=vi.fn().mockResolvedValue(response(patch));const provider=new OpenAIStoryProvider(new ProviderTransport({apiKey:'authored',runId:'live',externalCallsEnabled:true,budget:b,fetch:fetcher}));
+    await provider.propose(packet,ticket);const sent=JSON.parse(fetcher.mock.calls[0][1].body);
+    expect(sent).toMatchObject({service_tier:'default',prompt_cache_options:{ttl:'30m'},max_output_tokens:1024,reasoning:{effort:'none'}});
+    expect(RESERVATION.text).toBeGreaterThanOrEqual(Math.ceil(1.1*(8000*.125+1024*.5)));expect(b.reserve.mock.calls[0][1]).toBe(RESERVATION.text);
+    fetcher.mockResolvedValue(new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(patch)}]}],usage:{input_tokens:16000,output_tokens:0,input_tokens_details:{cache_write_tokens:16000}}})));
+    await expect(provider.propose(packet,ticket)).rejects.toMatchObject({code:'budget'});expect(b.settle).toHaveBeenCalledWith(expect.any(String),2200);
+  });
   it('disables transport even when a key exists, and replay never reaches injected network',async()=>{const fetcher=vi.fn();for(const config of [{runId:'live',externalCallsEnabled:false},{runId:'demo',externalCallsEnabled:true}]){const transport=new ProviderTransport({...config,apiKey:'fake',budget:budget(),fetch:fetcher});await expect(transport.structured('x',await import('zod').then(m=>m.z.object({})), '',{})).rejects.toMatchObject({code:'disabled'});}expect(fetcher).not.toHaveBeenCalled();});
   it('retains reservation on timeout and every schema repair reserves anew',async()=>{const b=budget(),fetcher=vi.fn().mockResolvedValueOnce(response({...patch,claims:[{...patch.claims[0],support:[{id:'unknown',revision:1}]}]})).mockResolvedValueOnce(response(patch));const provider=new OpenAIStoryProvider(new ProviderTransport({apiKey:'fake',runId:'live',externalCallsEnabled:true,budget:b,fetch:fetcher}));expect((await provider.propose(packet,ticket)).value.claims[0].id).toBe('claim');expect(b.reserve).toHaveBeenCalledTimes(2);expect(b.settle).not.toHaveBeenCalled();fetcher.mockRejectedValue(new Error('network private secret'));await expect(provider.propose(packet,ticket)).rejects.toMatchObject({code:'unavailable'});expect(b.reserve).toHaveBeenCalledTimes(3);});
   it('uses durable total cap across restart with no timeout refund',async()=>{const dir=mkdtempSync(join(process.cwd(),'tests/providers/budget-'));const file=join(dir,'budget.sqlite');let store=createStorage({path:file,encryptionKey:Buffer.alloc(32,7)});try{store.budget.setPaidEnabled(true);expect(store.budget.reserve('spent',4499000,'live')).toBe(true);store.close();store=createStorage({path:file,encryptionKey:Buffer.alloc(32,7)});const fetcher=vi.fn(),transport=new ProviderTransport({apiKey:'fake',runId:'live',externalCallsEnabled:true,budget:store.budget,fetch:fetcher});await expect(new OpenAIStoryProvider(transport).propose(packet,ticket)).rejects.toMatchObject({code:'budget'});expect(fetcher).not.toHaveBeenCalled();expect(store.budget.status().usedMicroUsd).toBe(4499000);}finally{store.close();rmSync(dir,{recursive:true,force:true});}});

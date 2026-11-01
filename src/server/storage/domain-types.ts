@@ -3,6 +3,9 @@ import type { Channel, EventEnvelope, InvalidationReceipt, Lore, PrivacyTarget, 
 
 export type DomainCheckpoint={revision:number;privacyEpoch:number;checkpoint:DomainState|null};
 export type DomainEntity=DerivedNode & {ownerRevision:number;ownerLocked:boolean;pinned:boolean};
+export type EntityHistoryCursor={startMs:number;id:string};
+export type EntityHistoryPage={items:DomainEntity[];nextCursor:EntityHistoryCursor|null};
+export type EntityGraph={root:DomainEntity;entities:DomainEntity[];sources:Source[];candidates:StoryCandidate[]};
 export type DomainHydration={
   channel:Channel;session:Session;settings:Settings;revision:number;privacyEpoch:number;checkpoint:DomainState|null;
   sources:Source[];entities:DomainEntity[];candidates:StoryCandidate[];published:PublicSnapshot|null;

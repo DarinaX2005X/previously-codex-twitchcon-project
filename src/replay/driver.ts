@@ -1,5 +1,5 @@
 import { createDomainState, reduceDomain, stateHash, compileRecap, recapLineage, type DomainState, type DomainEvent, type DomainEffect } from '../core/index.js';
-import type { Chapter, Clock, OwnerSnapshot, Source, Settings, PrivacyTarget, ReplayControl } from '../shared/contracts/index.js';
+import type { Chapter, Clock, OwnerSnapshot, Source, Settings, PrivacyTarget, ReplayControl, Safety } from '../shared/contracts/index.js';
 import { validateBundle, storyInput, type CaptureBundle, type StoryOutcome, type WordingOutcome } from './contracts.js';
 import { LogicalIds, RecordedProviders, FixtureMissing } from './providers.js';
 import { SimulationSink } from './simulation.js';
@@ -8,18 +8,22 @@ export class ReplayDriver {
   state:DomainState;atMs=0;playing=false;speed:1|2|4=1;error:string|null=null;
   readonly sink=new SimulationSink();readonly ids:LogicalIds;readonly providers:RecordedProviders;
   private eventIndex=0;private nextTick=0;private queue:{atMs:number;event:DomainEvent}[]=[];private serial=0;
-  private bundle:CaptureBundle;private epoch:number;private revoked=false;
+  private bundle:CaptureBundle;private epoch:number;private revoked=false;private replayingRecorded=false;private correctedOwners=new Map<string,number>();
   readonly clock:Clock;
   constructor(bundle:CaptureBundle,readonly runId:string){
     this.bundle=validateBundle(bundle);this.epoch=Date.parse(bundle.initial.session.startedAt);
-    const identities=[bundle.initial.session.id,...bundle.media.map(m=>m.id),...bundle.events.flatMap(e=>e.event.type==='source'?[e.event.source.id,...e.event.source.actorId?[e.event.source.actorId]:[]]:[])];
+    const identities=[bundle.initial.session.id,...bundle.media.map(m=>m.id),...bundle.events.flatMap(({event})=>'source' in event&&typeof event.source==='object'?[event.source.id,...event.source.actorId?[event.source.actorId]:[]]:[])];
     this.ids=new LogicalIds(runId,identities);this.providers=new RecordedProviders(bundle.providers);
+    this.ids.register(stateHash(bundle.initial.session.id),stateHash(this.ids.map(bundle.initial.session.id,'runtime')));
+    if(bundle.tickMode==='recorded')this.nextTick=Infinity;
     const initial=this.ids.map(bundle.initial,'runtime');initial.session.runId=runId;
     this.state=createDomainState(initial);this.clock={now:()=>this.epoch+this.atMs,iso:()=>new Date(this.epoch+this.atMs).toISOString()};
   }
   get durationMs(){return this.bundle.durationMs;}
-  get correction(){return this.bundle.correction;}
+  get correction(){return this.ids.map(this.bundle.correction,'runtime');}
   get milestones(){return this.bundle.milestones;}
+  get correctionApplied(){const target=this.correction.targetId;return this.state.published?.chapters.some(c=>(!target||c.id===target)&&c.edited&&this.correctedOwners.get(c.id)===this.state.ownerRevisions[c.id])??false;}
+  get latestSource(){const source=[...this.state.sources].reverse().find(s=>s.status==='active'&&['allowed','redacted'].includes(s.moderation)&&!!s.text);return source?{id:source.id,text:source.text!.slice(0,500),truncated:source.text!.length>500,kind:source.kind,startMs:source.startMs,endMs:source.endMs}:null;}
   send(event:DomainEvent){
     if(this.revoked)throw new Error('recording_revoked');
     const result=reduceDomain(this.state,event,this.clock);this.state=result.state;
@@ -30,17 +34,38 @@ export class ReplayDriver {
     if(effect.type==='generation.request'){
       const logicalJob=this.ids.map(effect.request.ticket.jobId,'logical');
       this.ids.register(stateHash(logicalJob),stateHash(effect.request.ticket.jobId));
-      try{const recorded=this.providers.lookup('story',this.ids.map(storyInput(effect.request),'logical'));
+      try{const recorded=this.providers.lookup('story',this.ids.map(storyInput(effect.request),'logical'),logicalJob);
         const output=this.ids.map(recorded.output as StoryOutcome,'runtime');
-        this.queue.push({atMs:this.atMs+recorded.delayMs,event:recorded.error?{type:'generation.failed',jobId:effect.request.ticket.jobId,reason:recorded.error}:{type:'generation.result',ticket:effect.request.ticket,...output}});
+        if(this.bundle.tickMode!=='recorded')this.queue.push({atMs:this.atMs+recorded.delayMs,event:recorded.error?{type:'generation.failed',jobId:effect.request.ticket.jobId,reason:recorded.error}:{type:'generation.result',ticket:effect.request.ticket,...output}});
       }catch{this.error='fixture_missing';this.queue.push({atMs:this.atMs,event:{type:'generation.failed',jobId:effect.request.ticket.jobId,reason:'fixture_missing'}});}
     }
-    if(effect.type==='playback.prepare'&&effect.playback.plan){this.queue.push({atMs:this.atMs,event:{type:'playback',id:effect.playback.id,action:'prepared'}});this.queue.push({atMs:this.atMs+300,event:{type:'playback',id:effect.playback.id,action:'start'}});}
+    if(effect.type==='playback.prepare'&&effect.playback.plan&&!this.replayingRecorded){this.queue.push({atMs:this.atMs,event:{type:'playback',id:effect.playback.id,action:'prepared'}});this.queue.push({atMs:this.atMs+300,event:{type:'playback',id:effect.playback.id,action:'start'}});}
     if(effect.type==='held')this.error=effect.reason;
+  }
+  private recorded(event:DomainEvent){
+    if(this.bundle.tickMode!=='recorded'){this.send(event);return;}
+    this.replayingRecorded=true;
+    try{
+      if(event.type==='generation.result'||event.type==='generation.failed'){
+        const request=this.state.pendingGeneration;if(!request)throw new FixtureMissing();
+        const outcome=this.providers.lookup('story',this.ids.map(storyInput(request),'logical'),this.ids.map(request.ticket.jobId,'logical'));
+        event=outcome.error?{type:'generation.failed',jobId:request.ticket.jobId,reason:outcome.error}:{type:'generation.result',ticket:request.ticket,...this.ids.map(outcome.output as StoryOutcome,'runtime')};
+      }else if(event.type==='source.safety'){
+        const {id,baseRevision}=event;const source=this.state.sources.find(s=>s.id===id&&s.revision===baseRevision);if(!source)throw new FixtureMissing();
+        const outcome=this.providers.lookup('source_safety',this.ids.map(source,'logical'));if(outcome.error)throw new FixtureMissing();event={...event,...this.ids.map(outcome.output as {text:string|null;safety:Safety},'runtime')};
+      }else if(event.type==='owner.review'||event.type==='presentation'){
+        const {entityId}=event;const chapter=this.state.chapters.find(c=>c.id===entityId);if(!chapter)throw new FixtureMissing();
+        const input={title:chapter.title,summary:chapter.summary,...event.type==='presentation'?{language:event.language}:{}};
+        const outcome=this.providers.lookup(event.type==='presentation'?'translation':'owner_review',input);if(outcome.error)throw new FixtureMissing();if(event.type==='owner.review'&&input.title===this.correction.title&&input.summary===this.correction.summary)this.correctedOwners.set(event.entityId,event.ownerRevision);event={...event,...outcome.output as WordingOutcome};
+      }
+      this.send(event);
+    }catch{this.error='fixture_missing';}
+    finally{this.replayingRecorded=false;}
   }
   /** Every seek executes the complete prefix, including hold and scheduler ticks. */
   advanceTo(target:number){
     if(this.revoked)return;
+    if(this.bundle.tickMode==='recorded'&&this.atMs>=this.durationMs&&this.nextTick===Infinity)this.nextTick=Math.ceil(this.atMs/100)*100;
     const playbackEnd=Math.max(0,...this.state.playbacks.filter(p=>p.plan&&['queued','preparing','playing'].includes(p.status)).map(p=>{
       const timing=this.state.playbackTiming[p.id];
       const start=p.startAt?Date.parse(p.startAt)-this.epoch:timing?.prepareAtMs!==null&&timing?.prepareAtMs!==undefined?timing.prepareAtMs-this.epoch+1500:this.atMs+1500;
@@ -54,7 +79,7 @@ export class ReplayDriver {
       this.queue.sort((a,b)=>a.atMs-b.atMs);
       const input=this.bundle.events[this.eventIndex],next=Math.min(input?.atMs??Infinity,this.queue[0]?.atMs??Infinity,this.nextTick);
       if(next>target)break;this.atMs=next;
-      if(input&&input.atMs===next){this.eventIndex++;const event=this.ids.map(input.event,'runtime');if(event.type==='source')event.source.runId=this.runId;this.send(event);}
+      if(input&&input.atMs===next){this.eventIndex++;const event=this.ids.map(input.event,'runtime');if('source' in event&&typeof event.source==='object')event.source.runId=this.runId;this.recorded(event);}
       else if(this.queue[0]?.atMs===next)this.send(this.queue.shift()!.event);
       else {this.nextTick+=100;this.send({type:'tick'});}
     }
@@ -70,7 +95,7 @@ export class ReplayDriver {
     if((this.state.ownerRevisions[id]??0)<=before.ownerEditRevision)throw new Error('This chapter can no longer be edited. Restart the recording to restore the original.');
     try{const record=this.providers.lookup('owner_review',{title:patch.title,summary:patch.summary});if(record.error)throw new FixtureMissing();const out=record.output as WordingOutcome;const c=this.state.chapters.find(x=>x.id===id)!;
       this.send({type:'owner.review',entityId:id,ownerRevision:c.ownerEditRevision,sourceId:source.id,sourceRevision:1,privacyEpoch:this.state.session.privacyEpoch,language:'en',...out});
-      if(this.state.settings.recapLanguage==='ru'){const translated=this.providers.lookup('translation',{title:out.title,summary:out.summary,language:'ru'}).output as WordingOutcome;const updated=this.state.chapters.find(x=>x.id===id)!;this.send({type:'presentation',entityId:id,baseRevision:updated.revision,ownerRevision:updated.ownerEditRevision,language:'ru',inputRefs:updated.dependencyRefs,...translated});}this.error=null;
+      if(this.state.settings.recapLanguage==='ru'){const translated=this.providers.lookup('translation',{title:out.title,summary:out.summary,language:'ru'}).output as WordingOutcome;const updated=this.state.chapters.find(x=>x.id===id)!;this.send({type:'presentation',entityId:id,baseRevision:updated.revision,ownerRevision:updated.ownerEditRevision,language:'ru',inputRefs:updated.dependencyRefs,...translated});}if(patch.title===this.correction.title&&patch.summary===this.correction.summary)this.correctedOwners.set(id,this.state.ownerRevisions[id]!);this.error=null;
     }catch{this.error='fixture_missing';const c=this.state.chapters.find(x=>x.id===id)!;this.send({type:'owner.review',entityId:id,ownerRevision:c.ownerEditRevision,sourceId:source.id,sourceRevision:1,privacyEpoch:this.state.session.privacyEpoch,title:patch.title,summary:patch.summary,safety:{moderation:'unavailable',pii:'review',checkedAt:null,reason:'This recording has no safety check for this edit'}});}
     this.flush();return this.state.chapters.find(c=>c.id===id)!;
   }

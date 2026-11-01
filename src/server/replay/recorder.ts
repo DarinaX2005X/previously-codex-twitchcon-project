@@ -4,12 +4,12 @@ import {SourceSchema,StoryPatchSchema,GenerationTicketSchema,SafetySchema,type P
 import type {DomainEvent} from '../../core/index.js';
 import {validateBundle,type CaptureBundle,type RecordedOutcome} from '../../replay/contracts.js';
 
-const forbidden=/^(authorization|cookie|headers|access_token|refresh_token|client_secret|api_key|capability|captureLease|sessionCookie)$/i;
+const forbidden=/^(authorization|cookie|headers|accesstoken|refreshtoken|clientsecret|apikey|sessionsecret|token|capability|capturelease|sessioncookie|rawaudio|rawpath|filepath)$/i;
 /** Reject secrets rather than silently changing an exact provider request. */
 export function assertNoCredentials(value:unknown):void {
   if(typeof value==='string'&&(/(?:Bearer\s+|sk-proj-|oauth:|#capability=)/i.test(value)))throw new Error('capture_contains_credentials');
   if(Array.isArray(value)){for(const item of value)assertNoCredentials(item);return;}
-  if(value&&typeof value==='object')for(const [key,item]of Object.entries(value)){if(forbidden.test(key))throw new Error('capture_contains_credentials');assertNoCredentials(item);}
+  if(value&&typeof value==='object')for(const [key,item]of Object.entries(value)){if(forbidden.test(key.replace(/[_-]/g,'')))throw new Error('capture_contains_credentials');assertNoCredentials(item);}
 }
 function normalizedEvent(event:DomainEvent):DomainEvent {
   assertNoCredentials(event);

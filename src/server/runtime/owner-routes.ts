@@ -2,7 +2,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { z } from 'zod';
 import {
   IdSchema, IsoTimeSchema, OffsetSchema, PrivacyTargetSchema, RevisionSchema, SettingsSchema,
-  type Chapter, type InvalidationReceipt, type Lore, type Moment, type OwnerSnapshot,
+  type Chapter, type InvalidationReceipt, type Lore, type Moment, type OwnerSnapshot, type OwnerHistoryQuery, type OwnerHistoryPage,
   type PlaybackRef, type PrivacyTarget, type RecapPlan, type Session, type Settings, type Source,
 } from '../../shared/contracts/index.js';
 import { ApiError } from './errors.js';
@@ -25,6 +25,7 @@ export interface OwnerService {
   listSessions(principal: Principal, query: SessionQuery): Awaitable<OwnerPage<Session>>;
   getSession(principal: Principal, id: string): Awaitable<OwnerSnapshot>;
   listSources(principal: Principal, query: SourceQuery): Awaitable<OwnerPage<Source>>;
+  listHistory(principal: Principal, query: OwnerHistoryQuery): Awaitable<OwnerHistoryPage>;
   setSettings(context: OwnerRevisionMutation, patch: SettingsPatch): Awaitable<Settings>;
   editChapter(context: OwnerRevisionMutation, id: string, patch: ChapterPatch): Awaitable<Chapter>;
   deleteChapter(context: OwnerRevisionMutation, id: string): Awaitable<InvalidationReceipt>;
@@ -45,6 +46,7 @@ const revisionBody = z.object({baseRevision: revision.optional()}).strict();
 const cursor = z.string().min(1).max(512);
 const queryInteger = (maximum: number) => z.string().regex(/^(0|[1-9]\d*)$/).transform(Number).pipe(z.number().int().min(0).max(maximum));
 const sessionQuery = z.object({limit: queryInteger(50).pipe(z.number().min(1)).default(25), cursor: cursor.optional()}).strict();
+const historyQuery = z.object({sessionId: IdSchema, kind: z.enum(['chapter','lore']), filter: z.enum(['all','published','draft','held']).default('all'), limit: queryInteger(50).pipe(z.number().min(1)).default(20), cursor: cursor.optional()}).strict();
 const sourceQuery = z.object({
   sessionId: IdSchema, limit: queryInteger(100).pipe(z.number().min(1)).default(50), cursor: cursor.optional(),
   fromMs: queryInteger(172_800_000).optional(), toMs: queryInteger(172_800_000).optional(),
@@ -112,6 +114,7 @@ export function createOwnerRouter(service: OwnerService): Router {
   router.get('/sessions', handle(async (request, response) => {response.json(await service.listSessions(actor(response), sessionQuery.parse(request.query)));}));
   router.get('/sessions/:id', handle(async (request, response) => {emptyInput.parse(request.query); response.json(await service.getSession(actor(response), entityId(request)));}));
   router.get('/sources', handle(async (request, response) => {response.json(await service.listSources(actor(response), sourceQuery.parse(request.query)));}));
+  router.get('/history', handle(async (request, response) => {response.json(await service.listHistory(actor(response), historyQuery.parse(request.query)));}));
   router.patch('/settings', handle(async (request, response) => {
     const {baseRevision, ...patch} = settingsPatch.parse(request.body);
     response.json(await service.setSettings(revisionMutation(request, response, baseRevision), patch));

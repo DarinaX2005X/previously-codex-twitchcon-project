@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  recoverDomainState, reduceDomain, canonical, canDispatch,
+  recoverDomainState, hydrateDomainState, reduceDomain, canonical, canDispatch,
   type DomainState, type DomainEvent, type DomainEffect, type GenerationRequest,
 } from '../../core/index.js';
 import { GroundedClaimSchema, safetyAllowsPublication, type Channel, type Clock, type EventEnvelope, type OwnerSnapshot, type Scope, type Settings, type Source, type SourceStatus, type StoryProvider, type Safety } from '../../shared/contracts/index.js';
@@ -12,6 +12,7 @@ import { ApiError } from './errors.js';
 import type { JobResult } from './scheduler.js';
 import { RevisionStream } from './updates.js';
 import { normalizeInput } from './input.js';
+import { historyEventEntity, loadHistoryEntity } from './history.js';
 
 export type DispatchOptions = {
   envelope?: EventEnvelope; idempotencyKey?: string; requestBody?: unknown;
@@ -19,11 +20,14 @@ export type DispatchOptions = {
   settingsPatch?: {baseRevision: number; patch: Partial<Omit<Settings, 'revision'>>};
 };
 export type RuntimeStorage = ReturnType<typeof createStorage>;
+export type CommittedTransition = {sessionId:string;event:DomainEvent;previous:DomainState;state:DomainState;effects:readonly DomainEffect[];atMs:number};
 export type EngineOptions = {
   channel: Channel; scope: Scope; storage: RuntimeStorage; clock: Clock; updates: RevisionStream;
   safety: SafetyService; story: StoryProvider & Partial<Pick<OpenAIStoryProvider, 'review' | 'present' | 'proposeLore' | 'presentLore'>>;
   isOwnEcho?: (messageId: string) => boolean;
   onEffects?: (sessionId: string, effects: readonly DomainEffect[], state: DomainState) => void;
+  /** Optional owner-armed private recorder. Receives normalized values only after durable commit. */
+  onCommittedTransition?: (transition:CommittedTransition) => void;
 };
 const unavailable = (message: string): SourceStatus => ({state: 'unconfigured', lastObservedAt: null, message, action: null});
 const held: Safety = {moderation: 'pending', pii: 'pending', checkedAt: null, reason: null};
@@ -35,6 +39,7 @@ export class StoryEngine {
   private chain: Promise<unknown> = Promise.resolve();
   private safetyBusy = false;
   private nextSafetyAtMs = 0;
+  private outputPrivacyBlocked = false;
   private readonly sourceStatus: OwnerSnapshot['status'] = {
     mic: {...unavailable('Choose a microphone to start listening.'), state: 'paused'},
     chat: unavailable('Connect Twitch to receive chat.'), transcription: unavailable('Speech processing is not enabled.'),
@@ -46,7 +51,23 @@ export class StoryEngine {
     this.repository = options.storage.repository; this.clock = options.clock; this.safety = options.safety;
     this.repository.ensureChannel(this.scope, this.channel.login);
   }
-  statuses(): OwnerSnapshot['status'] {return structuredClone(this.sourceStatus);}
+  statuses(): OwnerSnapshot['status'] {
+    const status = structuredClone(this.sourceStatus);
+    if (this.outputPrivacyBlocked) {
+      const blocked: SourceStatus = {state: 'error', lastObservedAt: this.clock.iso(), message: 'A received chat removal could not be applied. Recap output is paused until local storage recovers.', action: 'Check local storage'};
+      status.story = {...blocked}; status.cloud = {...blocked};
+    }
+    return status;
+  }
+  outputsBlocked(): boolean {return this.outputPrivacyBlocked;}
+  /** Volatile fail-closed fence also works when SQLite cannot accept the privacy transaction. */
+  setOutputsBlocked(blocked: boolean): void {
+    if (this.outputPrivacyBlocked === blocked) return;
+    this.outputPrivacyBlocked = blocked;
+    let sessionId: string | null = null;
+    try {sessionId = this.activeSessionId();} catch { /* Invalidation cannot depend on a healthy database. */ }
+    this.options.updates.publish({...this.scope, event: blocked ? 'privacy.invalidated' : 'snapshot.changed', data: {sessionId, revision: 0}});
+  }
   setStatus(key: keyof OwnerSnapshot['status'], value: SourceStatus): void {
     if (canonical(this.sourceStatus[key]) === canonical(value)) return;
     this.sourceStatus[key] = value;
@@ -56,11 +77,28 @@ export class StoryEngine {
     return this.repository.getActiveSession(this.scope)?.id ?? null;
   }
   state(sessionId: string): DomainState {
-    return recoverDomainState({...this.repository.getDomainHydration(this.scope, sessionId), channel: this.channel}, {resumePlayback: true});
+    const input = this.repository.getDomainHydration(this.scope, sessionId, {checkpointOnly: true});
+    if (input.checkpoint) {
+      try {
+        const restored = hydrateDomainState(input.checkpoint, {privacyEpoch: input.privacyEpoch, blockedTerms: input.blockedTerms, bannedActors: input.bannedActors, tombstones: input.tombstones});
+        restored.revision = input.revision; restored.session = {...input.session}; restored.settings = structuredClone(input.settings);
+        restored.captureEpoch = input.captureEpoch; restored.chatClearThroughMs = input.chatClearThroughMs;
+        return restored;
+      } catch { /* Privacy controls can invalidate a checkpoint without a domain transition. */ }
+      return recoverDomainState({...this.repository.getDomainHydration(this.scope, sessionId), channel: this.channel}, {resumePlayback: true});
+    }
+    return recoverDomainState({...input, channel: this.channel}, {resumePlayback: true});
+  }
+  entityState(sessionId: string, entityId: string): DomainState {
+    return loadHistoryEntity(this.repository, this.repository.getSession(this.scope, sessionId), this.state(sessionId), entityId);
   }
   dispatch(sessionId: string, event: DomainEvent, options: DispatchOptions = {}): Promise<DomainState> {
     const operation = this.chain.then(() => {
-      const previous = this.state(sessionId);
+      let previous = this.state(sessionId);
+      const target = historyEventEntity(event) ?? options.expectedEntity?.id;
+      if (target && ['chapter','lore'].includes(this.repository.getEntity(this.scope, target)?.kind ?? '')) {
+        previous = loadHistoryEntity(this.repository, previous.session, previous, target);
+      }
       const input: DomainEvent = options.settingsPatch ? {type: 'settings', baseRevision: options.settingsPatch.baseRevision, settings: {...previous.settings, ...options.settingsPatch.patch, revision: options.settingsPatch.baseRevision + 1}} : event;
       const transition = reduceDomain(previous, input, this.clock);
       if (options.settingsPatch && transition.state.settings.revision !== options.settingsPatch.baseRevision + 1) throw new ApiError(409, 'settings_not_ready', 'The requested setting is not ready. The previous setting is still active.');
@@ -72,8 +110,12 @@ export class StoryEngine {
         ...(options.expectedEntity ? {expectedEntity: options.expectedEntity} : {}),
         ...(options.settingsPatch ? {settingsPatch: options.settingsPatch} : {}),
       });
-      const next = this.state(sessionId);
+      // Persistence returns the exact committed checkpoint, including settings,
+      // publication and privacy adjustments. Do not reread its entire projection.
+      // This is a per-transition value, never a cache of external repository writes.
+      const next = result.checkpoint ?? this.state(sessionId);
       if (!result.applied) return next;
+      this.options.onCommittedTransition?.({sessionId,event:input,previous,state:next,effects:transition.effects,atMs:Math.max(0,Math.floor(this.clock.now()-Date.parse(next.session.startedAt)))});
       if (next.revision !== previous.revision) this.options.updates.publish({...this.scope, event: 'snapshot.changed', data: {sessionId, revision: next.revision}});
       for (const effect of transition.effects) {
         if (effect.type === 'privacy') this.options.updates.publish({...this.scope, event: 'privacy.invalidated', data: {sessionId, revision: next.revision, affectedIds: effect.receipt.hiddenEntityIds.slice(0, 100)}});
@@ -93,16 +135,16 @@ export class StoryEngine {
   async ingest(envelope: EventEnvelope): Promise<void> {
     if (envelope.channelId !== this.scope.channelId || envelope.runId !== this.scope.runId) throw new ApiError(403, 'wrong_scope', 'This event belongs to another stream.');
     if (!envelope.sessionId) {this.repository.ingest({...envelope, payload: null}); return;}
-    const state = this.state(envelope.sessionId);
+    const session = this.repository.getSession(this.scope, envelope.sessionId), settings = this.repository.getSettings(this.scope);
     const payload = envelope.payload as Record<string, unknown> | null;
-    const normalized = normalizeInput(envelope, state.session, {paused: state.settings.listeningPaused, ownEcho: typeof payload?.message_id === 'string' && this.options.isOwnEcho?.(payload.message_id)});
+    const normalized = normalizeInput(envelope, session, {paused: settings.listeningPaused, ownEcho: typeof payload?.message_id === 'string' && this.options.isOwnEcho?.(payload.message_id)});
     if (envelope.kind === 'channel.update') {
       const title = typeof payload?.title === 'string' ? payload.title.slice(0, 200) : '';
       const category = typeof payload?.category_name === 'string' ? payload.category_name.slice(0, 100) : '';
-      await this.reviewMetadata(state.session.id, title, category, envelope);
+      await this.reviewMetadata(session.id, title, category, envelope);
       return;
     }
-    await this.dispatch(state.session.id, normalized.domain ?? {type: 'tick'}, {envelope: normalized.event});
+    await this.dispatch(session.id, normalized.domain ?? {type: 'tick'}, {envelope: normalized.event});
   }
   async drain(sessionId: string): Promise<void> {
     for (const {event} of this.repository.listPendingDomainEvents(this.scope, sessionId, 100)) await this.ingest(event);
@@ -144,6 +186,7 @@ export class StoryEngine {
     await this.dispatch(sessionId, {type: 'metadata', title: safeTitle?.text ?? '', category: safeCategory?.text ?? '', atMs: Math.max(0, observedAt - Date.parse(session.startedAt)), safety}, envelope ? {envelope: {...envelope, payload: {type: 'metadata'}}} : {});
   }
   allowed(input: {sessionId: string; privacyEpoch: number; dependencyRefs: {id: string; revision: number}[]}): boolean {
+    if (this.outputPrivacyBlocked) return false;
     try {return canDispatch(this.state(input.sessionId), input);} catch {return false;}
   }
   async tick(): Promise<void> {
@@ -219,22 +262,24 @@ export class StoryEngine {
         }));
         if (phrases.length) {
           // Lore failure does not delay an already accepted chapter or a raid.
-          const showUnknown = async (ids: readonly string[]) => {
-            if (!this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) return;
-            for (const phrase of phrases.filter(value => ids.includes(value.id) && !this.state(job.sessionId).lore.some(lore => lore.id === value.id && lore.originKind !== 'unknown'))) await this.dispatch(job.sessionId, {type: 'lore.propose', ...phrase,
-              explanation: request.ticket.recapLanguage === 'ru' ? 'Фраза повторяется, но её происхождение пока не подтверждено.' : 'The phrase is recurring, but its origin is not confirmed.',
-              originRefs: [], exposureRefs: request.ticket.inputRefs, language: request.ticket.recapLanguage,
-              safety: {...held, reason: 'origin_needs_confirmation'},
-            });
-          };
           try {
             const proposals = await this.options.story.proposeLore(prepared, phrases, this.safety, signal);
             if (this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) for (const proposal of proposals.value.candidates) {
               await this.dispatch(job.sessionId, {type: 'lore.propose', ...proposal, exposureRefs: request.ticket.inputRefs, language: request.ticket.recapLanguage});
               try {await this.presentOwnerLore(job.sessionId, proposal.id, signal);} catch {signal.throwIfAborted();}
             }
-            await showUnknown(proposals.value.heldIds);
-          } catch {signal.throwIfAborted(); await showUnknown(phrases.map(phrase => phrase.id));}
+            for (const observation of proposals.value.observations) {
+              const phrase = phrases.find(value => value.id === observation.id && value.term === observation.term);
+              if (!phrase || !observation.evidenceRefs.length || !safetyAllowsPublication(observation.safety)
+                || !observation.evidenceRefs.every(ref => registered.has(`${ref.id}:${ref.revision}`))
+                || !this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})
+                || this.state(job.sessionId).lore.some(lore => lore.id === observation.id)) continue;
+              await this.dispatch(job.sessionId, {type: 'lore.propose', ...phrase, explanation: '', originRefs: [],
+                exposureRefs: request.ticket.inputRefs, language: request.ticket.recapLanguage,
+                safety: {...observation.safety, reason: 'origin_needs_confirmation'},
+              });
+            }
+          } catch {signal.throwIfAborted(); /* Rejected terms and provider outages remain observations only. */}
         }
       }
       this.setStatus('story', {state: 'ready', lastObservedAt: this.clock.iso(), message: null, action: null});
@@ -246,7 +291,7 @@ export class StoryEngine {
   }
   async presentOwnerChapter(sessionId: string, entityId: string): Promise<void> {
     if (!this.options.story.present) return;
-    const state = this.state(sessionId), chapter = state.chapters.find(value => value.id === entityId);
+    const state = this.entityState(sessionId, entityId), chapter = state.chapters.find(value => value.id === entityId);
     if (!chapter || !chapter.edited || !safetyAllowsPublication(chapter.safety)) return;
     const source = chapter.dependencyRefs.map(ref => state.sources.find(value => value.id === ref.id && value.revision === ref.revision)).find(value => value?.kind === 'owner_statement');
     if (!source?.text || source.status !== 'active') return;
@@ -260,7 +305,7 @@ export class StoryEngine {
   }
   async presentOwnerLore(sessionId: string, entityId: string, signal?: AbortSignal): Promise<void> {
     if (!this.options.story.presentLore) return;
-    const state = this.state(sessionId), lore = state.lore.find(value => value.id === entityId);
+    const state = this.entityState(sessionId, entityId), lore = state.lore.find(value => value.id === entityId);
     if (!lore || !['confirmed', 'published'].includes(lore.status) || !safetyAllowsPublication(lore.safety)) return;
     const originRefs = state.nodes[entityId]?.supports ?? [];
     const presentations = await this.options.story.presentLore({term: lore.term, explanation: lore.explanation, originRefs}, this.safety, signal);

@@ -17,7 +17,7 @@ let sends = 0, creates = 0, polls = 0, prepares = 0;
 const clipStates: string[] = [];
 try {
   storage.repository.ensureChannel(scope, 'authored_outbox');
-  storage.repository.createSession(scope, {id: context.sessionId, startedAt: '2026-11-02T00:00:00Z'});
+  if (phase === 'enqueue') storage.repository.createSession(scope, {id: context.sessionId, startedAt: '2026-11-02T00:00:00Z'});
   const service = new TwitchEffects({scope, repository: storage.repository, control: bindControlStore(storage.repository, scope), now: () => now, allowed: () => true,
     helix: {
       sendChat: async () => {sends++; return {message_id: 'authored-outgoing', is_sent: true};},

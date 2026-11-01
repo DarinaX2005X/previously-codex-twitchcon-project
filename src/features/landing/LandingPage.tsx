@@ -24,7 +24,7 @@ export function LandingPage({
     <section className="landing-hero">
       <h1>Help late arrivals<br />join the story</h1>
       <div className="landing-intro">
-        <p>Catch up with the stream while it keeps going.<span className="landing-intro__detail">Give newcomers the goal, the turning point, and what you are doing now.</span></p>
+        <p>Catch up with the stream while it keeps going.<span className="landing-intro__detail">Turn what people missed into context for what is happening now.</span></p>
         <a href={replayHref} className="pv-button pv-button--primary">Try a recorded stream</a>
       </div>
       <div className="landing-assembly">
@@ -36,8 +36,8 @@ export function LandingPage({
     </section>
     <section className="landing-proof" aria-labelledby="landing-proof-title">
       <div className="landing-proof__intro">
-        <h2 id="landing-proof-title">The reason behind the current step</h2>
-        <p>A late arrival needs more than the latest event. Previously keeps the goal and what changed together, with the source close enough to check.</p>
+        <h2 id="landing-proof-title">The context behind what is happening now</h2>
+        <p>Give late arrivals the earlier context that helps them follow along, with its sources close enough to check.</p>
         <a href={replayHref}>Follow the source in the recording</a>
       </div>
       <div className="landing-proof__record">{proof ?? <p>Open the recorded stream to follow a source into its published chapter.</p>}</div>
@@ -61,7 +61,7 @@ export function LandingPage({
   </main>;
 }
 function CurrentExplanation() {
-  return <div className="landing-current" data-theme="dark"><p>What matters now</p><h2>The goal<br />The change<br />The current step</h2><p>The context a late arrival needs to join in.</p></div>;
+  return <div className="landing-current" data-theme="dark"><h2>Context for a late arrival</h2><p>Follow the relevant earlier moments into what is happening now.</p></div>;
 }
 
 export interface LocalSetupInstructionsProps { replayHref?: string; localSetupHref?: string }

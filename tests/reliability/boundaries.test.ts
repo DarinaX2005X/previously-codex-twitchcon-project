@@ -7,6 +7,7 @@ import {createStorage} from '../../src/server/storage/index.js';
 import {StoryEngine} from '../../src/server/runtime/engine.js';
 import {SafetyService} from '../../src/server/providers/safety.js';
 import {RevisionStream} from '../../src/server/runtime/updates.js';
+import {RuntimeOwnerService} from '../../src/server/runtime/owner-service.js';
 import type {Source,StoryPatch} from '../../src/shared/contracts/index.js';
 
 const scope={channelId:'reliability',runId:'live'},epoch=Date.parse('2026-11-02T00:00:00Z');
@@ -17,6 +18,18 @@ function source(id:string,text='Synthetic source'):Source{return {...scope,id,se
 function ingest(f:ReturnType<typeof fixture>,value:Source){return f.store.repository.ingest({...scope,schemaVersion:1,eventId:`event:${value.id}`,externalId:value.id,origin:'owner',kind:'speech.transcribed',occurredAt:f.clock.iso(),receivedAt:f.clock.iso(),sessionId:'session',sessionOffsetMs:value.endMs,payload:null},{sources:[value]});}
 
 describe('cross-boundary reliability under adverse conditions',()=>{
+  it('pages all older sources through the owner service after the 500-source hot window and preserves early deletion across restart',()=>{
+    const f=fixture();for(let i=0;i<605;i++)ingest(f,{...source(`history-${String(i).padStart(4,'0')}`),startMs:i*1000,endMs:i*1000+100});
+    const updates=new RevisionStream();const engine=new StoryEngine({scope,channel:{id:scope.channelId,login:'synthetic',displayName:'Synthetic'},storage:f.store,clock:f.clock,updates,safety:new SafetyService({classify:async()=>({decision:'review',spans:[]})},{moderate:async()=> 'unavailable'}),story:{propose:async()=>{throw Error('No provider');}}});
+    try{const service=new RuntimeOwnerService(engine),principal={...scope,role:'owner' as const,actorId:'owner',sessionId:'owner-session',expiresAtMs:epoch+1000000};
+      expect(engine.state('session').sources).toHaveLength(500);expect(engine.state('session').sources.some(s=>s.id==='history-0000')).toBe(false);
+      const ids:string[]=[];let cursor:string|undefined;let pages=0;
+      do{const page=service.listSources(principal,{sessionId:'session',limit:100,cursor});ids.push(...page.items.map(s=>s.id));cursor=page.nextCursor??undefined;pages++;}while(cursor);
+      expect(pages).toBe(7);expect(ids).toHaveLength(605);expect(new Set(ids).size).toBe(605);expect(ids[0]).toBe('history-0000');
+      f.store.repository.invalidate(scope,{kind:'source',sessionId:'session',id:'history-0000'},{idempotencyKey:'old-source-forget',reason:'privacy'});f.store.close();
+      const reopened=createStorage({path:f.path});stores.push(reopened);expect(reopened.repository.listSources(scope,'session',{limit:1})[0]).toMatchObject({id:'history-0000',text:null,status:'deleted'});
+    }finally{updates.close();}
+  });
   it('privacy remains committable at a full work queue and cancels both leased and queued output before recovery',()=>{
     const f=fixture(),r=f.store.repository;ingest(f,source('private'));const refs=[{id:'private',revision:1}];
     for(let i=0;i<1000;i++)r.enqueueOutbox(scope,{sessionId:'session',kind:i%2?'chat':'clip',businessKey:`saturated-${i}`,payload:{text:'synthetic private content'},dependencyRefs:refs});
@@ -52,3 +65,4 @@ describe('cross-boundary reliability under adverse conditions',()=>{
     }finally{updates.close();}
   });
 });
+

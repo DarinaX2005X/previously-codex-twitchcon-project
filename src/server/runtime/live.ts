@@ -70,10 +70,14 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     },
   });
   const media = new PrivateMediaCache({directory: resolve(config.dataDir, 'media'), allowedHosts: ['production.assets.clips.twitchcdn.net'], now: clock.now,
-    visible: input => input.id.startsWith('narration:') ? narration?.allowsMedia(input) ?? false : twitch?.allowsMedia(input) ?? false,
+    visible: input => !engine.outputsBlocked() && (input.id.startsWith('narration:') ? narration?.allowsMedia(input) ?? false : twitch?.allowsMedia(input) ?? false),
     onRevoke: () => updates.publish({...scope, event: 'privacy.invalidated', data: {sessionId: engine.activeSessionId(), revision: 0}}),
   });
-  twitch = createTwitchRuntime({config, scope, channel, storage, engine, updates, clock, media, publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : undefined});
+  const suspendPrivacyOutput = (blocked: boolean) => {
+    if (blocked) {engine.setOutputsBlocked(true);cloud?.suspend();}
+    // Recovery is completed inside tick, after cancelling interrupted scenes.
+  };
+  twitch = createTwitchRuntime({config, scope, channel, storage, engine, updates, clock, media, onPrivacyBlocked: suspendPrivacyOutput, publicUrl: config.publicOrigin ? `${config.publicOrigin.replace(/\/$/, '')}/c/${channel.login}` : undefined});
   cloud = createCloudRuntime({scope, channel, engine, storage, publicOrigin: config.publicOrigin, sharedSecret: config.publishSharedSecret, clock, updates});
   const narrator = new OpenAIRealtimeNarrationProvider(transport, {approved: (text, language) => narration?.approved(text, language) ?? false});
   narration = createNarrationRuntime({engine, media, provider: narrator, clock, available: () => Boolean(config.paidCallsEnabled && config.openaiApiKey && storage.budget.status().enabled)});
@@ -129,6 +133,11 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     if (stopped || ticking) return;
     ticking = true;
     try {
+      if (twitch.privacyBlocked()) suspendPrivacyOutput(true);
+      else if (engine.outputsBlocked()) {
+        await engine.recoverPlayback();
+        if (!twitch.privacyBlocked()) {cloud.resume();engine.setOutputsBlocked(false);}
+      }
       await engine.tick();
       if (lastCaptureRenewal !== null && clock.now() - lastCaptureRenewal > 12_000) {
         lastCaptureRenewal = null;

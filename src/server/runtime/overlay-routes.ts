@@ -10,6 +10,7 @@ import type { RevisionConnectionEvent } from './updates.js';
 export interface OverlayEnginePort {
   readonly scope: Scope;
   activeSessionId(): string | null;
+  outputsBlocked?(): boolean;
   state(sessionId: string): DomainState;
   /** The coordinator persists the transition and publishes its revision/playback updates. */
   dispatch(sessionId: string, event: DomainEvent): Promise<DomainState>;
@@ -82,6 +83,7 @@ function authorize(response: Response, options: OverlayRouterOptions): Principal
   return principal;
 }
 function currentState(engine: OverlayEnginePort): DomainState | null {
+  if (engine.outputsBlocked?.()) return null;
   const sessionId = engine.activeSessionId();
   if (!sessionId) return null;
   const state = engine.state(sessionId);

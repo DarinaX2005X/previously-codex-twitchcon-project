@@ -35,6 +35,22 @@ function harness(input:{configured?:boolean;runId?:string;transport?:(request:Re
   }};
 }
 describe('local cloud runtime bridge',()=>{
+  it('stops renewing the live lease while a received privacy control cannot be applied',async()=>{
+    const h=harness();await h.seed();await h.flush();const sent=h.requests.length;
+    h.engine.setOutputsBlocked(true);h.bridge.suspend();h.setTime(120_000);
+    expect(await h.bridge.tick()).toBe('idle');expect(h.requests).toHaveLength(sent);
+    await expect(h.service.readSnapshot(h.scope.channelId)).rejects.toMatchObject({code:'live_recap_unavailable'});
+    h.bridge.resume();h.engine.setOutputsBlocked(false);await h.flush();
+    expect((await h.service.readSnapshot(h.scope.channelId)).chapters).toHaveLength(1);
+  });
+  it('aborts an in-flight publication and does not accept its acknowledgement during privacy recovery',async()=>{
+    let started!:()=>void;const sent=new Promise<void>(resolve=>started=resolve);
+    const h=harness({transport:request=>new Promise<Response>((_resolve,reject)=>{started();request.signal.addEventListener('abort',()=>reject(new Error('Publication suspended')),{once:true});})});
+    await h.seed();const attempt=h.bridge.tick();await sent;
+    h.engine.setOutputsBlocked(true);h.bridge.suspend();await attempt;
+    expect(h.storage.repository.getPublicationState(h.scope).ackSeq).toBe(0);
+    expect(await h.bridge.tick()).toBe('idle');expect(h.requests).toHaveLength(1);
+  });
   it('uses the already persisted outbox and shows pending until real handler ACK',async()=>{
     const h=harness(),state=await h.seed(),before=h.storage.repository.getPublicationState(h.scope);
     expect(state.published?.chapters).toHaveLength(1);expect(before.publishSeq).toBeGreaterThan(0);expect(before.ackSeq).toBe(0);expect(h.engine.statuses().cloud.state).toBe('delayed');

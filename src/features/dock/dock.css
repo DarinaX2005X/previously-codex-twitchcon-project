@@ -17,7 +17,7 @@
 .dock-queue { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:14px; padding:4px 0 0; margin-top:8px; }.dock-queue .pv-button { font-size:14px; background:transparent; }
 .dock-page .pv-language { margin:22px 0 10px; }.dock-page .pv-language > span { font-size:14px; }.dock-page .pv-language .pv-secondary { font-size:13px; }
 .dock-page p { overflow-wrap:anywhere; }.dock-page a { color:var(--pv-text); text-underline-offset:3px; }.dock-page a:hover { text-decoration-thickness:2px; }
-.dock-page .pv-notice,.dock-paper .pv-notice { margin:16px 0; padding:0; gap:8px; background:transparent; border:0; border-radius:0; font-size:14px; }.dock-page .pv-notice p { margin:4px 0; }.dock-page .pv-notice a { display:inline; }
+.dock-page .pv-notice,.dock-paper .pv-notice { margin:16px 0; font-size:14px; }.dock-page .pv-notice p { margin:4px 0; }.dock-page .pv-notice a { display:inline; }
 .dock-result { font-size:14px; line-height:1.6; margin:12px 0 20px; color:var(--pv-text); }
 .dock-current { padding:24px 0 28px; }.dock-current h2,.dock-moments h2 { margin:0 0 14px; font-size:14px; font-weight:550; color:var(--pv-secondary); }
 .dock-current .dock-current-main { margin:0 0 12px; font-size:23px; font-weight:550; letter-spacing:-.5px; line-height:1.3; color:var(--pv-text); }

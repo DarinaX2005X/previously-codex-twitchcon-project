@@ -23,20 +23,23 @@ export class DomainPersistence {
     const row=this.db.get('SELECT revision,privacy_epoch,body FROM domain_checkpoints WHERE channel_id=? AND run_id=? AND session_id=?',...this.scoped(scope),sessionId);
     return {revision:Number(row?.revision ?? 0),privacyEpoch:session.privacyEpoch,checkpoint:row?.body && Number(row.privacy_epoch)===session.privacyEpoch ? JSON.parse(String(row.body)) as DomainState : null};
   }
-  hydration(scope:Scope,sessionId:string):DomainHydration {
+  hydration(scope:Scope,sessionId:string,options:{checkpointOnly?:boolean}={}):DomainHydration {
     const checkpoint=this.checkpoint(scope,sessionId),session=this.repository.getSession(scope,sessionId),settings=this.repository.getSettings(scope);
     const channel=this.db.get('SELECT login FROM channels WHERE channel_id=? AND run_id=?',...this.scoped(scope))!;
-    const sources=this.db.all('SELECT id FROM sources WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY start_ms DESC,id DESC LIMIT 500',...this.scoped(scope),sessionId).reverse().map(row=>this.repository.getSource(scope,String(row.id))!);
-    const rows=this.db.all(`SELECT * FROM entities WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY
+    // A valid checkpoint already contains these records. Its caller must request
+    // the full recovery projection if checkpoint validation fails.
+    const recoveryRecords=!options.checkpointOnly || !checkpoint.checkpoint;
+    const sources=recoveryRecords ? this.db.all('SELECT id FROM sources WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY start_ms DESC,id DESC LIMIT 500',...this.scoped(scope),sessionId).reverse().map(row=>this.repository.getSource(scope,String(row.id))!) : [];
+    const rows=recoveryRecords ? this.db.all(`SELECT * FROM entities WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY
       CASE kind WHEN 'chapter' THEN 0 WHEN 'lore' THEN 1 WHEN 'moment' THEN 2 WHEN 'current_state' THEN 3 WHEN 'media' THEN 4 ELSE 5 END,
-      CASE status WHEN 'active' THEN 0 ELSE 1 END,COALESCE(end_ms,0) DESC,id LIMIT 2000`,...this.scoped(scope),sessionId);
+      CASE status WHEN 'active' THEN 0 ELSE 1 END,COALESCE(end_ms,0) DESC,id LIMIT 2000`,...this.scoped(scope),sessionId) : [];
     const entities:DomainEntity[]=rows.map(row=>{
       const edges=this.db.all('SELECT parent_id,parent_revision,kind FROM dependencies WHERE channel_id=? AND run_id=? AND child_id=?',...this.scoped(scope),String(row.id));
       const refs=(kind:string)=>edges.filter(edge=>edge.kind===kind).map(edge=>({id:String(edge.parent_id),revision:Number(edge.parent_revision)}));
       return {id:String(row.id),revision:Number(row.revision),kind:String(row.kind) as DerivedNode['kind'],supports:refs('supports'),exposedTo:refs('exposed_to'),startMs:Number(row.start_ms ?? 0),endMs:Number(row.end_ms ?? 0),active:row.status==='active',body:row.body===null ? null : JSON.parse(String(row.body)),ownerRevision:Number(row.owner_revision),ownerLocked:Boolean(row.owner_locked),pinned:Boolean(row.pinned)};
     });
     const candidates:StoryCandidate[]=[];
-    for(const row of this.db.all("SELECT body,status FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND body IS NOT NULL AND status IN ('pending','published') ORDER BY revision DESC LIMIT 1200",...this.scoped(scope),sessionId)) {
+    for(const row of recoveryRecords ? this.db.all("SELECT body,status FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND body IS NOT NULL AND status IN ('pending','published') ORDER BY revision DESC LIMIT 1200",...this.scoped(scope),sessionId) : []) {
       const candidate=JSON.parse(String(row.body)) as StoryCandidate;
       if(candidate.id && candidate.chapter && candidate.inputRefs)candidates.push({...candidate,status:String(row.status) as StoryCandidate['status']});
     }
@@ -265,7 +268,12 @@ export class DomainPersistence {
       const eventRefs=[...new Map([...(initialEventRefs ?? []).filter(ref=>this.activeRef(scope,ref)),...effects.flatMap(effect=>effect.type==='entity.upsert'&&effect.node.active ? [{id:effect.node.id,revision:effect.node.revision}] : effect.type==='source.persist'&&effect.source.status==='active' ? [{id:effect.source.id,revision:effect.source.revision}] : [])].map(ref=>[ref.id,ref])).values()];
       this.edges(scope,eventId,eventRefs,'exposed_to');
       // Validate persisted source/node versions again before retaining a sensitive checkpoint.
-      for(const source of state.sources){const saved=this.repository.getSource(scope,source.id);if(saved && (source.revision!==saved.revision || source.text!==saved.text || source.status!==saved.status))throw new StorageError('conflict','Checkpoint contains stale source content.');}
+      const savedSources=new Map(this.db.all('SELECT id,revision,text,status FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT value FROM json_each(?))',...this.scoped(scope),json(state.sources.map(source=>source.id))).map(row=>[String(row.id),row]));
+      for(const source of state.sources){const saved=savedSources.get(source.id);if(saved && (source.revision!==Number(saved.revision) || source.text!==saved.text || source.status!==saved.status))throw new StorageError('conflict','Checkpoint contains stale source content.');}
+      // Standalone invalidation inside this transaction may advance the capture
+      // lease beyond the reducer's epoch (for example, Forget the whole session).
+      const capture=this.db.get('SELECT epoch FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=?',...this.scoped(scope),sessionId);
+      state.captureEpoch=Number(capture?.epoch ?? state.captureEpoch);
       const body=json(state,CHECKPOINT_BYTES);
       this.db.run('INSERT INTO domain_checkpoints VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,session_id) DO UPDATE SET revision=excluded.revision,privacy_epoch=excluded.privacy_epoch,body=excluded.body,updated_at_ms=excluded.updated_at_ms',...this.scoped(scope),sessionId,state.revision,state.session.privacyEpoch,body,this.now());
       this.db.run('UPDATE events SET domain_processed=1 WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),eventId);

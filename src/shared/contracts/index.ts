@@ -243,6 +243,8 @@ export type OwnerSnapshot = {
   revision: number; serverNow: string;
   budget: { limitUsd: number; committedUsd: number; reservedUsd: number; paidCallsEnabled: boolean };
 };
+export type OwnerHistoryQuery = {sessionId: string; kind: 'chapter' | 'lore'; filter?: 'all' | 'published' | 'draft' | 'held'; limit: number; cursor?: string};
+export type OwnerHistoryPage = {items: (Chapter | Lore)[]; nextCursor: string | null; privacyEpoch: number; language: RecapLanguage};
 export type UpdateEvent = { id: number; event: 'snapshot.changed' | 'snapshot.reset' | 'privacy.invalidated' | 'source.status' | 'publication.synced' | 'playback.prepare' | 'playback.start' | 'playback.cancel'; data: { sessionId: string | null; revision: number; affectedIds?: string[] } };
 export type ReplayControl = { action: 'play' | 'pause' | 'reset' | 'seek'; speed?: 1 | 2 | 4; milestone?: string };
 export interface RecapClient {

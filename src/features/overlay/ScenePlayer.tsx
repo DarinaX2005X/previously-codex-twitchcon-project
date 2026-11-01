@@ -66,6 +66,7 @@ export function ScenePlayer(props:ScenePlayerProps) {
   const fits=!!plan&&!!layout&&sceneTextFits(plan,layout,{measure,hasMedia,reducedMotion:reduced});
   useEffect(()=>{if(plan&&layout&&!fits)callbacks.current.onStatus?.('text_too_long');},[plan,layout,fits]);
   const frame=plan&&layout&&fits?renderAt(t,plan,layout,{reducedMotion:reduced,measure,hasMedia}):null;
+  useEffect(()=>{if(plan?.media.length&&media&&frame?.mediaId&&!media.visuals.has(frame.mediaId))callbacks.current.onStatus?.('media_unavailable');},[plan,media,frame?.mediaId]);
   useEffect(()=>{
     if(!plan)return;
     if(playing&&frame?.visible)sound.current?.tick(t,sceneSoundEvents(plan));
@@ -83,7 +84,7 @@ export function ScenePlayer(props:ScenePlayerProps) {
   const extraViewers=(plan?.overflowArrivals.viewers??0)+(plan?.arrivals.slice(2).reduce((n,a)=>n+a.viewers,0)??0);
   return <div ref={root} className={`scene-player ${props.className??''}`} style={{aspectRatio:`${canvasWidth}/${canvasHeight}`}} data-phase={frame?.phase??'clear'} data-time-ms={Math.round(t)}>
     {plan&&layout&&frame?.visible&&<div className="scene-canvas" style={{width:1920,height:1080,transform:`scale(${scale}) translate(${- (cropToLayout?layout.bounds.x:0)}px,${-(cropToLayout?layout.bounds.y:0)}px)`}}>
-      <div className="scene-envelope" style={{left:layout.bounds.x,top:layout.bounds.y,width:layout.bounds.width,height:layout.bounds.height,opacity:frame.opacity}}>
+      <div className="scene-envelope" data-layout={layout.mode} style={{left:layout.bounds.x,top:layout.bounds.y,width:layout.bounds.width,height:layout.bounds.height,opacity:frame.opacity}}>
         {!reduced&&frame.edgeOffsets.map((offset,index)=><div key={index} className="scene-source-edge" style={{left:32+offset,top:26+index*12,width:Math.min(1090,layout.bounds.width-140),height:layout.bounds.height-76,transform:`rotate(${(-2+index)*.7}deg) translateY(${-frame.exit*240}px)`,opacity:1-frame.assembly}}/>)}
         {frame.retainedPlane&&frame.retainedCaption&&<div className="scene-aperture scene-aperture--retained" style={planeStyle(frame.retainedPlane)}><div className="scene-story"><div className="scene-context">{labels[frame.retainedCaption.kind]}</div><Caption caption={frame.retainedCaption} size={layout.captionSize}/></div></div>}
         <div className={`scene-aperture ${frame.assembly>.12?'scene-aperture--now':''}`} style={planeStyle(frame.aperture)}>
@@ -99,7 +100,7 @@ export function ScenePlayer(props:ScenePlayerProps) {
           </div>
         </div>
         {!reduced&&frame.openingExit>.9&&frame.caption&&(available||plan.variant!=='welcome')&&<div className={`scene-source ${available?'scene-source--media':''}`} style={{...planeStyle(frame.source),opacity:frame.source.opacity*(1-frame.exit)}}>
-          {available?<><Visual bundle={media} id={frame.mediaId} timeMs={frame.mediaTimeMs} playing={playing&&frame.mediaVisible&&frame.mediaTimeMs<(plan.media.find(m=>m.id===frame.mediaId)?.outMs??0)} onBlocked={()=>callbacks.current.onStatus?.('audio_blocked')}/><span className="scene-source-time">{plan.media.find(m=>m.id===frame.mediaId)?.previousSession?labels.old:labels.source} {timecode(plan.media.find(m=>m.id===frame.mediaId)?.captureStartMs??frame.caption.sourceMs)}</span></>:<><span className="scene-source-time">{labels.source} {timecode(frame.caption.sourceMs)}</span><span className="scene-no-video">{labels.clip}</span></>}
+          {available?<><Visual bundle={media} id={frame.mediaId} timeMs={frame.mediaTimeMs} playing={playing&&frame.mediaVisible&&frame.mediaTimeMs<(plan.media.find(m=>m.id===frame.mediaId)?.outMs??0)} onBlocked={()=>callbacks.current.onStatus?.('audio_blocked')}/><span className="scene-source-time">{plan.media.find(m=>m.id===frame.mediaId)?.previousSession?labels.old:labels.source} {timecode(plan.media.find(m=>m.id===frame.mediaId)?.captureStartMs??frame.caption.sourceMs)}</span></>:<><span className="scene-source-time">{labels.source} {timecode(frame.caption.sourceMs)}</span>{plan.media.length>0&&frame.assembly<.65&&layout.mode==='full'&&<span className="scene-no-video">{labels.clip}</span>}</>}
         </div>}
         {!reduced&&frame.mark>0&&<div className="scene-return-mark" style={{opacity:frame.mark*(1-(t/plan.durationMs>.95?(t/plan.durationMs-.95)/.05:0)),transform:`translateX(${-frame.mark*36}px) scale(${1-frame.mark*.15})`}}><span/><span/></div>}
       </div>
@@ -113,6 +114,7 @@ function ReducedContents({plan,layout}:{plan:RecapPlan;layout:SceneLayout}) {
 /** Reflowed companion for narrow landing/replay surfaces, using the same immutable permitted plan. */
 export function SceneSummary({plan,className=''}:{plan:RecapPlan|null;className?:string}) {
   if(!plan)return null;
-  return <section className={`scene-summary ${className}`} aria-label={plan.language==='ru'?'Кратко об эфире':'Stream recap'}>{plan.beats.map(beat=><p key={beat.id} className={beat.kind==='now'?'scene-summary-current':undefined}><span>{plan.language==='ru'?({attempt:'Цель',change:'Что изменилось',origin:'Источник',now:'Сейчас',context:'Контекст эфира'}[beat.kind]):({attempt:'The goal',change:'What changed',origin:'Where it started',now:'What matters now',context:'Stream context'}[beat.kind])}</span>{beat.text}</p>)}</section>;
+  const focalId=plan.beats.find(beat=>beat.kind==='now')?.id??plan.beats.at(-1)?.id;
+  return <section className={`scene-summary ${className}`} aria-label={plan.language==='ru'?'Кратко об эфире':'Stream recap'}>{plan.beats.map(beat=><p key={beat.id} className={beat.id===focalId?'scene-summary-current':undefined}><span>{plan.language==='ru'?({attempt:'Цель',change:'Что изменилось',origin:'Источник',now:'Сейчас',context:'Контекст эфира'}[beat.kind]):({attempt:'The goal',change:'What changed',origin:'Where it started',now:'What matters now',context:'Stream context'}[beat.kind])}</span>{beat.text}</p>)}</section>;
 }
 export function ScenePreview(props:ScenePlayerProps){return <ScenePlayer {...props} cropToLayout={props.cropToLayout??true}/>;}

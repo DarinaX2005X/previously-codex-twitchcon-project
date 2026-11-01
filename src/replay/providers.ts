@@ -10,10 +10,10 @@ export function canonical(value:unknown):unknown {
 export function providerKey(operation:ProviderOperation,input:unknown,versions=PROVIDER_VERSIONS){return `${operation}:${versions.model}:${versions.schemaVersion}:${versions.promptVersion}:${stateHash(canonical(input))}`;}
 export class FixtureMissing extends Error {readonly code='fixture_missing';constructor(){super('This recording has no safety check for this edit');}}
 export class RecordedProviders {
-  private records=new Map<string,RecordedOutcome>();
+  private records=new Map<string,RecordedOutcome[]>();
   private versions=new Map<ProviderOperation,typeof PROVIDER_VERSIONS>();
-  constructor(records:RecordedOutcome[]){for(const record of records){const versions={model:record.model,schemaVersion:record.schemaVersion,promptVersion:record.promptVersion},previous=this.versions.get(record.operation);if(previous&&JSON.stringify(previous)!==JSON.stringify(versions))throw new Error('ambiguous_recorded_provider_version');this.versions.set(record.operation,versions);this.records.set(providerKey(record.operation,record.input,record),record);}}
-  lookup(operation:ProviderOperation,input:unknown){const versions=this.versions.get(operation);if(!versions)throw new FixtureMissing();const result=this.records.get(providerKey(operation,input,versions));if(!result||JSON.stringify(canonical(result.input))!==JSON.stringify(canonical(input)))throw new FixtureMissing();return structuredClone(result);}
+  constructor(records:RecordedOutcome[]){for(const record of records){const versions={model:record.model,schemaVersion:record.schemaVersion,promptVersion:record.promptVersion},previous=this.versions.get(record.operation);if(previous&&JSON.stringify(previous)!==JSON.stringify(versions))throw new Error('ambiguous_recorded_provider_version');this.versions.set(record.operation,versions);const key=providerKey(record.operation,record.input,record);this.records.set(key,[...this.records.get(key)??[],record]);}}
+  lookup(operation:ProviderOperation,input:unknown,invocationId?:string){const versions=this.versions.get(operation);if(!versions)throw new FixtureMissing();const candidates=this.records.get(providerKey(operation,input,versions))??[];const result=invocationId?candidates.find(r=>r.invocationId===invocationId)??candidates.find(r=>!r.invocationId):candidates.find(r=>!r.error)??candidates[0];if(!result||JSON.stringify(canonical(result.input))!==JSON.stringify(canonical(input)))throw new FixtureMissing();return structuredClone(result);}
   clear(){this.records.clear();this.versions.clear();}
 }
 /** Only known logical identities are remapped; text is never rewritten. */
