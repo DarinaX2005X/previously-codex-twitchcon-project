@@ -44,18 +44,27 @@ function publish(s:DomainState,effects:DomainEffect[],clock:Clock,priority=false
   effects.push({type:'publication',snapshot:structuredClone(s.published),priority,final});
 }
 function publicChapter(c:Chapter){const {sessionId:_s,ownerEditRevision:_o,publicationState:_p,eligibleAt:_e,safety:_sf,dependencyRefs:_d,...publicValue}=c;return publicValue;}
+function retainPublicChapters(chapters:PublicSnapshot['chapters']):PublicSnapshot['chapters'] {
+  const ordered=[...chapters].sort((a,b)=>a.startMs-b.startMs||a.id.localeCompare(b.id)),pinned=ordered.filter(chapter=>chapter.pinned).slice(-300);
+  const rest=300-pinned.length;return [...pinned,...rest?ordered.filter(chapter=>!chapter.pinned).slice(-rest):[]].sort((a,b)=>a.startMs-b.startMs||a.id.localeCompare(b.id));
+}
+function candidateCanonical(s:DomainState,candidate:StoryCandidate):Chapter|undefined {
+  return s.chapters.find(chapter=>chapter.id===candidate.entityId&&chapter.ownerEditRevision===candidate.ownerRevision
+    &&canonical(chapter.claimIds)===canonical(candidate.chapter.claimIds)&&canonical(chapter.dependencyRefs)===canonical(candidate.chapter.dependencyRefs));
+}
 function eligibleCandidates(s:DomainState,effects:DomainEffect[],clock:Clock):boolean {
   let changed=false;
   const entities=[...new Set(s.candidates.map(c=>c.entityId))];
   for(const entityId of entities){
-    const eligible=s.candidates.filter(c=>c.entityId===entityId&&(c.status==='pending'&&c.privacyEpoch===s.session.privacyEpoch||c.status==='published'&&!s.published?.chapters.some(p=>p.id===entityId&&p.revision===c.revision))&&c.language===s.settings.recapLanguage&&c.eligibleAtMs<=clock.now()&&c.ownerRevision===(s.ownerRevisions[entityId]??0)&&!s.suppressedIds.includes(entityId)&&safetyAllowsPublication(c.safety)&&c.inputRefs.every(r=>isRefActive(s,r))).sort((a,b)=>b.revision-a.revision);
+    const eligible=s.candidates.filter(c=>c.entityId===entityId&&(c.status==='pending'&&c.privacyEpoch===s.session.privacyEpoch||c.status==='published'&&!s.published?.chapters.some(p=>p.id===entityId&&p.revision>=c.revision))&&c.language===s.settings.recapLanguage&&c.eligibleAtMs<=clock.now()&&c.ownerRevision===(s.ownerRevisions[entityId]??0)&&!s.suppressedIds.includes(entityId)&&safetyAllowsPublication(c.safety)&&c.inputRefs.every(r=>isRefActive(s,r))).sort((a,b)=>b.revision-a.revision);
     const next=eligible[0];if(!next)continue;
     const prev=s.published?.chapters.find(c=>c.id===entityId);
-    if(prev&&prev.revision>next.revision){next.status='rejected';continue;}
+    const matchingCanonical=candidateCanonical(s,next),publicValue={...publicChapter(next.chapter),revision:matchingCanonical?.revision??next.revision,pinned:s.chapters.find(c=>c.id===entityId)?.pinned??next.chapter.pinned};
+    if(prev&&prev.revision>publicValue.revision){next.status='rejected';continue;}
     next.status='published';for(const candidate of s.candidates)if(candidate.entityId===entityId&&candidate.language===next.language&&candidate.revision<next.revision)candidate.status='rejected';
-    const canonicalChapter=s.chapters.find(c=>c.id===entityId&&c.revision===next.revision);if(canonicalChapter)canonicalChapter.publicationState='published';
+    const canonicalChapter=matchingCanonical??s.chapters.find(c=>c.id===entityId&&c.revision===next.revision);if(canonicalChapter)canonicalChapter.publicationState='published';
     if(!s.published)publish(s,effects,clock);
-    s.published!.chapters=[...s.published!.chapters.filter(c=>c.id!==entityId),{...publicChapter(next.chapter),pinned:s.chapters.find(c=>c.id===entityId)?.pinned??next.chapter.pinned}].sort((a,b)=>a.startMs-b.startMs||a.id.localeCompare(b.id)).slice(-300);
+    s.published!.chapters=retainPublicChapters([...s.published!.chapters.filter(c=>c.id!==entityId),publicValue]);
     if(entityId===s.activeChapterId)s.current=next.current;
     changed=true;
   }
@@ -220,7 +229,18 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       for(const source of targets)effects.push({type:'source.persist',source:{...source,status:'quarantined',revision:source.revision+1}});
       s.openWindow=null;s.phrases=[];publish(s,effects,clock,true);break;
     }
-    case 'owner.pin':{const c=s.chapters.find(c=>c.id===event.entityId);if(c&&c.revision===event.baseRevision){c.pinned=event.pinned;c.revision++;const node=s.nodes[c.id];if(node)upsertNode(s,effects,{...node,revision:c.revision,body:c});if(s.pendingGeneration?.entityId===c.id){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}const p=s.published?.chapters.find(p=>p.id===c.id);if(p)p.pinned=event.pinned;publish(s,effects,clock);}break;}
+    case 'owner.pin':{
+      const c=s.chapters.find(c=>c.id===event.entityId);if(!c||c.revision!==event.baseRevision)break;
+      c.pinned=event.pinned;c.revision++;const node=s.nodes[c.id];if(node)upsertNode(s,effects,{...node,revision:c.revision,body:c});
+      if(s.pendingGeneration?.entityId===c.id){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}
+      const p=s.published?.chapters.find(p=>p.id===c.id);
+      if(p){p.pinned=event.pinned;p.revision=c.revision;}
+      else if(event.pinned){
+        const approved=s.candidates.find(candidate=>candidate.entityId===c.id&&candidate.status==='published'&&candidate.language===s.settings.recapLanguage&&candidateCanonical(s,candidate)&&safetyAllowsPublication(candidate.safety)&&candidate.inputRefs.every(ref=>isRefActive(s,ref)));
+        if(approved){if(!s.published)publish(s,effects,clock);s.published!.chapters=retainPublicChapters([...s.published!.chapters,{...publicChapter(approved.chapter),revision:c.revision,pinned:true}]);}
+      }
+      publish(s,effects,clock);break;
+    }
     case 'owner.edit':{
       const old=s.chapters.find(c=>c.id===event.entityId);if(!old||old.revision!==event.baseRevision||event.source.kind!=='owner_statement'||s.suppressedIds.includes(old.id))break;
       const oldRefs=old.dependencyRefs;if(!acceptSource(s,event.source,effects,clock,undefined,false))break;

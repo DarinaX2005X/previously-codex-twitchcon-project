@@ -12,7 +12,7 @@ import { ApiError } from './errors.js';
 import type { JobResult } from './scheduler.js';
 import { RevisionStream } from './updates.js';
 import { normalizeInput } from './input.js';
-import { historyEventEntity, loadHistoryEntity } from './history.js';
+import { enrichGenerationHistory, historyEventEntity, loadHistoryEntity } from './history.js';
 
 export type DispatchOptions = {
   envelope?: EventEnvelope; idempotencyKey?: string; requestBody?: unknown;
@@ -31,6 +31,8 @@ export type EngineOptions = {
 };
 const unavailable = (message: string): SourceStatus => ({state: 'unconfigured', lastObservedAt: null, message, action: null});
 const held: Safety = {moderation: 'pending', pii: 'pending', checkedAt: null, reason: null};
+export const CHAT_BATCH_LIMIT = 20;
+type CommittedDispatch = {previous:DomainState;next:DomainState;input:DomainEvent;effects:readonly DomainEffect[];applied:boolean};
 
 /** One coordinator serializes pure transitions; SQLite owns accepted work and all final fences. */
 export class StoryEngine {
@@ -94,13 +96,21 @@ export class StoryEngine {
   }
   dispatch(sessionId: string, event: DomainEvent, options: DispatchOptions = {}): Promise<DomainState> {
     const operation = this.chain.then(() => {
-      let previous = this.state(sessionId);
+      const committed=this.commit(sessionId,event,options,this.state(sessionId));
+      this.notifyCommitted(sessionId,committed);
+      return committed.next;
+    });
+    this.chain = operation.catch(() => {});
+    return operation;
+  }
+  private commit(sessionId:string,event:DomainEvent,options:DispatchOptions,previous:DomainState):CommittedDispatch {
       const target = historyEventEntity(event) ?? options.expectedEntity?.id;
       if (target && ['chapter','lore'].includes(this.repository.getEntity(this.scope, target)?.kind ?? '')) {
         previous = loadHistoryEntity(this.repository, previous.session, previous, target);
       }
       const input: DomainEvent = options.settingsPatch ? {type: 'settings', baseRevision: options.settingsPatch.baseRevision, settings: {...previous.settings, ...options.settingsPatch.patch, revision: options.settingsPatch.baseRevision + 1}} : event;
       const transition = reduceDomain(previous, input, this.clock);
+      enrichGenerationHistory(this.repository,transition,this.clock.now());
       if (options.settingsPatch && transition.state.settings.revision !== options.settingsPatch.baseRevision + 1) throw new ApiError(409, 'settings_not_ready', 'The requested setting is not ready. The previous setting is still active.');
       const result = this.repository.applyDomainTransition(this.scope, sessionId, {
         expectedRevision: previous.revision, expectedPrivacyEpoch: previous.session.privacyEpoch,
@@ -114,18 +124,41 @@ export class StoryEngine {
       // publication and privacy adjustments. Do not reread its entire projection.
       // This is a per-transition value, never a cache of external repository writes.
       const next = result.checkpoint ?? this.state(sessionId);
-      if (!result.applied) return next;
-      this.options.onCommittedTransition?.({sessionId,event:input,previous,state:next,effects:transition.effects,atMs:Math.max(0,Math.floor(this.clock.now()-Date.parse(next.session.startedAt)))});
+      return {previous,next,input,effects:transition.effects,applied:result.applied};
+  }
+  private notifyCommitted(sessionId:string,{previous,next,input,effects,applied}:CommittedDispatch):void {
+      if (!applied) return;
+      this.options.onCommittedTransition?.({sessionId,event:input,previous,state:next,effects,atMs:Math.max(0,Math.floor(this.clock.now()-Date.parse(next.session.startedAt)))});
       if (next.revision !== previous.revision) this.options.updates.publish({...this.scope, event: 'snapshot.changed', data: {sessionId, revision: next.revision}});
-      for (const effect of transition.effects) {
+      for (const effect of effects) {
         if (effect.type === 'privacy') this.options.updates.publish({...this.scope, event: 'privacy.invalidated', data: {sessionId, revision: next.revision, affectedIds: effect.receipt.hiddenEntityIds.slice(0, 100)}});
         if (effect.type === 'playback.prepare' || effect.type === 'playback.start' || effect.type === 'playback.cancel') this.options.updates.publish({...this.scope, event: effect.type, data: {sessionId, revision: next.revision, affectedIds: [effect.playback.id]}});
         if (effect.type === 'held') this.setStatus('story', {state: 'delayed', lastObservedAt: this.clock.iso(), message: 'The previous safe recap stays available while new material is checked.', action: null});
       }
-      this.options.onEffects?.(sessionId, transition.effects, next);
-      return next;
+      this.options.onEffects?.(sessionId, effects, next);
+  }
+  /** Only already-queued chat shares a commit. Privacy/owner/control events stay outside this boundary. */
+  ingestBatch(envelopes:readonly EventEnvelope[]):Promise<void> {
+    if(!envelopes.length)return Promise.resolve();
+    const sessionId=envelopes[0]!.sessionId;
+    if(envelopes.length>CHAT_BATCH_LIMIT || !sessionId || envelopes.some(event=>event.channelId!==this.scope.channelId || event.runId!==this.scope.runId || event.sessionId!==sessionId || event.kind!=='channel.chat.message')) {
+      return Promise.reject(new ApiError(400,'invalid_chat_batch','A chat batch must contain at most 20 messages from the same stream.'));
+    }
+    const items=structuredClone(envelopes);
+    const operation=this.chain.then(()=>{
+      const committed=this.repository.runDomainBatch(()=>{
+        let previous=this.state(sessionId);
+        return items.map(envelope=>{
+          const payload=envelope.payload as Record<string,unknown>|null;
+          const normalized=normalizeInput(envelope,previous.session,{paused:previous.settings.listeningPaused,ownEcho:typeof payload?.message_id==='string'&&this.options.isOwnEcho?.(payload.message_id)});
+          const result=this.commit(sessionId,normalized.domain??{type:'tick'},{envelope:normalized.event},previous);
+          previous=result.next;return result;
+        });
+      });
+      // Nothing observed outside this transaction can acknowledge a partial batch.
+      for(const result of committed)this.notifyCommitted(sessionId,result);
     });
-    this.chain = operation.catch(() => {});
+    this.chain=operation.catch(()=>{});
     return operation;
   }
   envelope(sessionId: string, kind: string, payload: unknown, id = randomUUID()): EventEnvelope {

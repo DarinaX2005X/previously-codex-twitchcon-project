@@ -76,12 +76,16 @@ export class DockStore {
     void this.refresh();
     return () => { this.active = false; ++this.generation; this.stop?.(); };
   }
+  invalidate(affectedIds?: string[]) {
+    ++this.generation;
+    const snapshot = this.state.snapshot;
+    this.update({ sourceEpoch: this.state.sourceEpoch + 1, invalidatedIds: affectedIds ?? null,
+      snapshot: snapshot ? { ...snapshot, published: null, drafts: [], held: [], lore: [], moments: [], playback: [] } : null });
+  }
   private onEvent = (event: UpdateEvent) => {
     if (event.event === 'privacy.invalidated' || event.event === 'snapshot.reset') {
-      const snapshot = this.state.snapshot;
       // Never keep forgotten source text visible while waiting for the authoritative refresh.
-      this.update({ sourceEpoch: this.state.sourceEpoch + 1, invalidatedIds: event.data.affectedIds ?? null,
-        snapshot: snapshot ? { ...snapshot, published: null, drafts: [], held: [], lore: [], moments: [], playback: [] } : null });
+      this.invalidate(event.data.affectedIds);
     }
     void this.refresh();
   };

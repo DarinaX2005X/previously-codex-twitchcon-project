@@ -1,5 +1,6 @@
 import type {Scope,Source,VersionRef} from '../../shared/contracts/index.js';
-import {IdSchema} from '../../shared/contracts/index.js';
+import {IdSchema,safetyAllowsPublication} from '../../shared/contracts/index.js';
+import {normalizeTerm} from '../../core/evidence.js';
 import type {StoryCandidate} from '../../core/types.js';
 import type {SqliteRepository} from './repository.js';
 import {StorageDatabase,StorageError,integer} from './database.js';
@@ -10,7 +11,9 @@ type Closure={entities:DomainEntity[];sources:Source[]};
 type Row=ReturnType<StorageDatabase['all']>[number];
 /** Targeted historical reads never hydrate a whole session or raw transcript text. */
 export class HistoryPersistence {
-  constructor(private readonly db:StorageDatabase,private readonly repository:SqliteRepository){}
+  constructor(private readonly db:StorageDatabase,private readonly repository:SqliteRepository){
+    db.raw.function('history_normalize',{deterministic:true},value=>typeof value==='string'?normalizeTerm(value):'');
+  }
   private scope(scope:Scope){return [scope.channelId,scope.runId] as const;}
   private entity(row:Row,edges:Row[]):DomainEntity {
     const refs=(kind:string):VersionRef[]=>edges.filter(edge=>edge.kind===kind).map(edge=>({id:String(edge.parent_id),revision:Number(edge.parent_revision)}));
@@ -35,7 +38,7 @@ export class HistoryPersistence {
       const node=entities[i]!,row=rows[i]!;
       if(!node.active||node.body===null)return null;
       if(this.db.get("SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND (kind='session' OR (kind='entity' AND target_id=?)) LIMIT 1",...this.scope(scope),String(row.session_id),node.id))return null;
-      if(node.kind==='lore'){
+      if(node.kind==='lore'||node.kind==='presentation'&&(node.body as {kind?:string}).kind==='lore'){
         const lore=node.body as {term?:unknown;aliases?:unknown};
         const terms=[lore.term,...Array.isArray(lore.aliases)?lore.aliases:[]].filter((term):term is string=>typeof term==='string');
         if(terms.some(term=>this.repository.isTermBlocked(scope,String(row.session_id),term)))return null;
@@ -67,7 +70,7 @@ export class HistoryPersistence {
     }
     for(const candidateRow of candidateRows){
       const candidate=JSON.parse(String(candidateRow.body)) as StoryCandidate;
-      if(!candidate.id||candidate.entityId!==id||candidate.chapter?.sessionId!==sessionId||candidate.ownerRevision!==root.ownerRevision||!Array.isArray(candidate.inputRefs)||!['en','ru'].includes(candidate.language))continue;
+      if(!candidate.id||candidate.entityId!==id||candidate.chapter?.id!==id||candidate.chapter.sessionId!==sessionId||candidate.chapter.revision!==candidate.revision||candidate.revision>root.revision||candidate.ownerRevision!==root.ownerRevision||!Array.isArray(candidate.inputRefs)||!['en','ru'].includes(candidate.language))continue;
       if(candidateRow.status==='pending'&&candidate.privacyEpoch!==session.privacyEpoch)continue;
       const roots=[candidate.id,...candidate.currentNodeId?[candidate.currentNodeId]:[],...candidate.inputRefs.map(ref=>ref.id)];
       const next=this.closure(scope,roots);if(!next)continue;
@@ -92,5 +95,35 @@ export class HistoryPersistence {
     const items:DomainEntity[]=[];
     for(const row of rows){const graph=this.graph(scope,sessionId,String(row.id));if(graph)items.push(graph.root);}
     const last=rows.at(-1);return {items,nextCursor:rows.length===limit&&last?{startMs:Number(last.start_ms),id:String(last.id)}:null};
+  }
+  generation(scope:Scope,sessionId:string,options:{text:string;limit?:number}):string[] {
+    this.repository.getSession(scope,sessionId);
+    if(typeof options.text!=='string'||options.text.length>12000)throw new StorageError('invalid_input','History retrieval text exceeds its limit.');
+    const limit=Math.min(integer(options.limit??8,1),8),text=normalizeTerm(options.text),ids:string[]=[];
+    const exact=(term:unknown)=>{
+      if(typeof term!=='string'||!term.trim()||term.length>120)return false;
+      const escaped=normalizeTerm(term).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`,'u').test(text);
+    };
+    // SQL returns a bounded candidate window; exact Unicode boundaries and graph validity are checked below.
+    const loreRows=text?this.db.all(`SELECT id FROM entities WHERE channel_id=? AND run_id=? AND session_id=? AND kind='lore' AND status='active' AND (
+      (length(history_normalize(json_extract(body,'$.term')))>0 AND instr(?,history_normalize(json_extract(body,'$.term')))>0)
+      OR EXISTS(SELECT 1 FROM json_each(json_extract(entities.body,'$.aliases')) alias WHERE length(history_normalize(alias.value))>0 AND instr(?,history_normalize(alias.value))>0)
+    ) ORDER BY COALESCE(start_ms,0) DESC,id DESC LIMIT 32`,...this.scope(scope),sessionId,text,text):[];
+    let loreCount=0;
+    for(const row of loreRows){
+      if(loreCount>=4||ids.length>=limit)break;
+      const graph=this.graph(scope,sessionId,String(row.id));if(!graph)continue;
+      const lore=graph.root.body as {term?:unknown;aliases?:unknown;status?:string;originKind?:string;safety?:Parameters<typeof safetyAllowsPublication>[0]};
+      if(!['confirmed','published'].includes(lore.status??'')||!['spoken','owner_confirmed'].includes(lore.originKind??'')||!lore.safety||!safetyAllowsPublication(lore.safety))continue;
+      if(![lore.term,...Array.isArray(lore.aliases)?lore.aliases:[]].some(exact))continue;
+      ids.push(graph.root.id);loreCount++;
+    }
+    if(ids.length<limit){
+      const pinned=this.db.all("SELECT id FROM entities WHERE channel_id=? AND run_id=? AND session_id=? AND kind='chapter' AND status='active' AND pinned=1 ORDER BY COALESCE(start_ms,0) DESC,id DESC LIMIT 32",...this.scope(scope),sessionId);
+      let pinnedCount=0;
+      for(const row of pinned){if(pinnedCount>=4||ids.length>=limit)break;const graph=this.graph(scope,sessionId,String(row.id));if(!graph||!graph.candidates.some(candidate=>candidate.status==='published'&&candidate.safety&&safetyAllowsPublication(candidate.safety)))continue;ids.push(graph.root.id);pinnedCount++;}
+    }
+    return ids;
   }
 }

@@ -4,6 +4,8 @@ import {StoryEngine} from '../../src/server/runtime/engine.js';
 import {RuntimeOwnerService} from '../../src/server/runtime/owner-service.js';
 import {SafetyService} from '../../src/server/providers/safety.js';
 import {RevisionStream} from '../../src/server/runtime/updates.js';
+import {enrichGenerationHistory} from '../../src/server/runtime/history.js';
+import {canDispatch, reduceDomain} from '../../src/core/index.js';
 import type {Chapter, Lore, OwnerHistoryQuery, Safety, Source, StoryPatch} from '../../src/shared/contracts/index.js';
 import type {Principal} from '../../src/server/runtime/security.js';
 
@@ -29,13 +31,15 @@ async function fixture(){
   for(let i=0;i<55;i++){
     const id=`lore:${String(i).padStart(3,'0')}`,refs=[{id:'shared',revision:1}];
     const lore:Lore={id,sessionId:'session',revision:1,term:`nickname ${i}`,explanation:'',firstSeenMs:i*1000,originMs:null,originKind:'unknown',momentId:null,maxDependencyEndMs:1000,status:'held',aliases:[],dependencyRefs:refs,safety:safe};
+    if(i===0)Object.assign(lore,{term:'wet corner',explanation:'The owner named a watercolor wash.',originMs:1000,originKind:'owner_confirmed',status:'confirmed'});
     r.saveEntity(scope,{id,sessionId:'session',kind:'lore',body:lore,refs,startMs:lore.firstSeenMs,endMs:1000});
+    if(i===0){const id='lore-presentation:old:en',body={kind:'lore',id,entityId:lore.id,entityRevision:1,language:'en',term:lore.term,explanation:lore.explanation,safety:safe,inputRefs:[{id:lore.id,revision:1},...refs],privacyEpoch:0,eligibleAtMs:start,maxDependencyEndMs:1000};r.saveEntity(scope,{id,sessionId:'session',kind:'presentation',body,refs:body.inputRefs,startMs:0,endMs:1000});}
   }
   const activity=source('current','The cook is preparing the soup.',1_000_000),first=await engine.dispatch('session',{type:'source',source:activity}),ticket=first.pendingGeneration!.ticket;
   const patch:StoryPatch={sessionId:'session',baseRevision:ticket.baseEntityRevision,action:'update',title:'Preparing soup',claims:[{id:'now',text:activity.text!,role:'state',support:[{id:activity.id,revision:1}],attribution:'streamer',epistemic:'explicit'}],relations:[],currentAttemptId:null,language:'en',missingContext:[]};
   await engine.dispatch('session',{type:'generation.result',ticket,patch,safety:safe});now+=75_000;await engine.dispatch('session',{type:'tick'});
   const principal:Principal={...scope,role:'owner',actorId:'owner',sessionId:'browser',expiresAtMs:start+10_000_000},service=new RuntimeOwnerService(engine);
-  return {store,r,engine,service,principal,context:(key:string,baseRevision=1)=>({principal,idempotencyKey:key,baseRevision}),async review(){const job=r.claimJob(scope,{kinds:['owner.review']});expect(job).not.toBeNull();const result=await service.executeReview(job!,new AbortController().signal);r.finishJob(scope,job!.id,job!.leaseToken,result.state,result.retryAtMs);return result;}};
+  return {store,r,engine,service,principal,source,set(ms:number){now=start+ms;},context:(key:string,baseRevision=1)=>({principal,idempotencyKey:key,baseRevision}),async review(){const job=r.claimJob(scope,{kinds:['owner.review']});expect(job).not.toBeNull();const result=await service.executeReview(job!,new AbortController().signal);r.finishJob(scope,job!.id,job!.leaseToken,result.state,result.retryAtMs);return result;}};
 }
 
 function allHistory(h:Awaited<ReturnType<typeof fixture>>,kind:OwnerHistoryQuery['kind']){
@@ -56,6 +60,18 @@ describe('durable owner history',()=>{
     const rest=page.nextCursor?allHistory(h,'chapter'):page.items;
     expect(rest.find(item=>item.id==='chapter:000')).toMatchObject({summary:'The earlier study used a dry brush.',publicationState:'published'});
     expect(h.engine.state('session').current).toEqual(current);expect(h.engine.state('session').chapters.length).toBeLessThanOrEqual(300);
+    const reviewed=h.engine.state('session').chapters.find(item=>item.id==='chapter:000')!;
+    const pinned=await h.service.editChapter(h.context('history-chapter-pin',reviewed.revision),reviewed.id,{pinned:true});
+    const preview=h.service.previewRecap(h.principal,'session')!;
+    expect(preview.beats.some(beat=>beat.text==='The earlier study used a dry brush.')).toBe(true);
+    expect(canDispatch(h.engine.state('session'),preview)).toBe(true);
+    // The durable pin also works when a bounded working set no longer contains the old record.
+    const cache=h.engine.state('session');cache.chapters=cache.chapters.filter(item=>item.id!==pinned.id);cache.candidates=cache.candidates.filter(item=>item.entityId!==pinned.id);cache.published!.chapters=cache.published!.chapters.filter(item=>item.id!==pinned.id);
+    h.set(1_200_000);const transition=reduceDomain(cache,{type:'source',source:h.source('later','The cook is stirring the soup.',1_200_000)},h.engine.clock);
+    enrichGenerationHistory(h.r,transition,h.engine.clock.now());
+    expect(transition.state.pendingGeneration?.packet.chapters.some(chapter=>chapter.summary==='The earlier study used a dry brush.')).toBe(true);
+    expect(transition.state.pendingGeneration?.ticket.inputRefs).toContainEqual({id:pinned.id,revision:pinned.revision});
+    expect(transition.state.chapters.length).toBeLessThanOrEqual(300);
     expect(h.store.budget.status().usedMicroUsd).toBe(0);
   });
 
@@ -79,5 +95,19 @@ describe('durable owner history',()=>{
     expect(()=>h.service.listHistory({...h.principal,channelId:'other'},{sessionId:'session',kind:'chapter',limit:20})).toThrow('cannot access');
     expect(()=>h.service.listHistory(h.principal,{sessionId:'session',kind:'lore',limit:1,cursor:page.nextCursor!})).toThrow('cursor is invalid');
     h.engine.setOutputsBlocked(true);expect(()=>h.service.listHistory(h.principal,{sessionId:'session',kind:'chapter',limit:20})).toThrow('pending chat removal');
+  });
+
+  it('retrieves evicted verified lore only on an exact mention and fences the frozen request after Forget',async()=>{
+    const h=await fixture();expect(h.engine.state('session').lore.some(lore=>lore.id==='lore:000')).toBe(false);
+    h.set(1_200_000);const unrelated=await h.engine.dispatch('session',{type:'source',source:h.source('unrelated','The cook is stirring the soup.',1_200_000)});
+    expect(unrelated.pendingGeneration?.packet.lore.some(lore=>lore.term==='wet corner')).toBe(false);
+    await h.engine.dispatch('session',{type:'generation.failed',jobId:unrelated.pendingGeneration!.ticket.jobId,reason:'authored_failure'});
+    h.set(1_300_000);const mentioned=await h.engine.dispatch('session',{type:'source',source:h.source('mention','The host mentions the wet corner again.',1_300_000)}),request=mentioned.pendingGeneration!;
+    expect(request.packet.lore.some(lore=>lore.term==='wet corner'&&lore.explanation==='The owner named a watercolor wash.')).toBe(true);
+    expect(request.ticket.inputRefs).toContainEqual({id:'lore:000',revision:1});expect(request.ticket.inputRefs).toContainEqual({id:'lore-presentation:old:en',revision:1});
+    expect(h.engine.allowed({sessionId:'session',privacyEpoch:request.ticket.privacyEpoch,dependencyRefs:request.ticket.inputRefs})).toBe(true);
+    await h.service.privacy(h.context('history-forget-lore'),{target:{kind:'source',sessionId:'session',id:'shared'},reason:'Forget original context'});
+    expect(h.engine.allowed({sessionId:'session',privacyEpoch:request.ticket.privacyEpoch,dependencyRefs:request.ticket.inputRefs})).toBe(false);
+    expect(h.r.findGenerationHistory(scope,'session',{text:'The wet corner is mentioned.'})).not.toContain('lore:000');
   });
 });

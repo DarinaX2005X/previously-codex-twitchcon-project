@@ -43,7 +43,7 @@ export function recoverDomainState(input:DomainHydrationInput,options:{resumePla
   }
   state.editorialExcludedRefs=uniqueRefs(state.editorialExcludedRefs);
   state.chapters=state.chapters.sort((a,b)=>a.startMs-b.startMs||a.revision-b.revision).slice(-300);
-  state.lore=[...state.lore,...structuredClone(input.blockedLore??[]).filter(l=>!state.lore.some(existing=>existing.id===l.id))].slice(-50);state.moments=state.moments.slice(-200);state.media=state.media.slice(-200);
+  state.lore=[...state.lore,...structuredClone(input.blockedLore??[]).filter(l=>!state.lore.some(existing=>existing.id===l.id))].sort((a,b)=>a.firstSeenMs-b.firstSeenMs||a.id.localeCompare(b.id)).slice(-50);state.moments=state.moments.slice(-200);state.media=state.media.slice(-200);
   state.lorePresentations=state.lorePresentations.filter(p=>state.lore.some(l=>l.id===p.entityId&&l.revision===p.entityRevision)&&p.inputRefs.every(ref=>isRefActive(state,ref))).slice(-100);
   state.memory.sort((a,b)=>a.firstAtMs-b.firstAtMs);if(state.memory.length>64)state.memory=[state.memory[0]!,...state.memory.slice(-63)];
   state.candidates=structuredClone(input.candidates).filter(c=>(c.status==='published'||c.privacyEpoch===state.session.privacyEpoch)&&!state.suppressedIds.includes(c.entityId)&&c.ownerRevision===(state.ownerRevisions[c.entityId]??0)&&c.inputRefs.every(r=>isRefActive(state,r)));

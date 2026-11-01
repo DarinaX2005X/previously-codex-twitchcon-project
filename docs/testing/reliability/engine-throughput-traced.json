@@ -1,0 +1,51 @@
+{
+  "scope": "Actual sequential StoryEngine.ingest + normalizer + SQLite transition/checkpoint/hydration; synthetic pending-safety chat, no provider/OBS/network. Throughput is measured service capacity, not real-time burst delivery.",
+  "hardware": {
+    "cpu": "12th Gen Intel(R) Core(TM) i7-1260P",
+    "logicalCpus": 16,
+    "totalMemory": 34071896064,
+    "node": "v22.13.0"
+  },
+  "samples": [
+    {
+      "processed": 250,
+      "elapsedSeconds": 12.206598099999999,
+      "segmentSeconds": 12.206598099999999,
+      "segmentEventsPerSecond": 20.480726730898105,
+      "heapUsed": 13845840,
+      "rss": 120307712,
+      "diskBytes": 1036288,
+      "retainedSources": 250
+    },
+    {
+      "processed": 500,
+      "elapsedSeconds": 28.142157299999997,
+      "segmentSeconds": 15.9355592,
+      "segmentEventsPerSecond": 15.688184949292523,
+      "heapUsed": 14190864,
+      "rss": 116989952,
+      "diskBytes": 1728512,
+      "retainedSources": 500
+    },
+    {
+      "processed": 750,
+      "elapsedSeconds": 51.37281019999999,
+      "segmentSeconds": 23.2306529,
+      "segmentEventsPerSecond": 10.761643294149517,
+      "heapUsed": 14287056,
+      "rss": 120147968,
+      "diskBytes": 2256896,
+      "retainedSources": 500
+    },
+    {
+      "processed": 1000,
+      "elapsedSeconds": 87.9932018,
+      "segmentSeconds": 36.620391600000005,
+      "segmentEventsPerSecond": 6.826797559423149,
+      "heapUsed": 14437664,
+      "rss": 120516608,
+      "diskBytes": 2813952,
+      "retainedSources": 500
+    }
+  ]
+}

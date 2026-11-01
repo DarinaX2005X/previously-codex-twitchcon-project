@@ -1,5 +1,5 @@
-import { ChapterSchema, LoreSchema, safetyAllowsPublication, type Chapter, type Lore, type OwnerHistoryQuery } from '../../shared/contracts/index.js';
-import { canonical as canonicalValue, createDomainState, isRefActive, safeLorePresentation, type DomainEvent, type DomainState, type LorePresentation } from '../../core/index.js';
+import { ChapterSchema, LoreSchema, safetyAllowsPublication, type Chapter, type Lore, type OwnerHistoryQuery, type PublicChapter, type VersionRef } from '../../shared/contracts/index.js';
+import { canonical as canonicalValue, createDomainState, evidencePacketBytes, EVIDENCE_PACKET_BYTE_CAP, isRefActive, safeLorePresentation, sourceAllowed, stateHash, uniqueRefs, type DerivedNode, type DomainEvent, type DomainState, type DomainTransition, type LorePresentation } from '../../core/index.js';
 import type { SqliteRepository } from '../storage/index.js';
 import { ApiError } from './errors.js';
 
@@ -81,6 +81,12 @@ export function historyItem(repository: SqliteRepository, state: Pick<DomainStat
   filter: NonNullable<OwnerHistoryQuery['filter']>, nowMs: number): Chapter | Lore | null {
   const graph = repository.getEntityGraph(state.session, state.session.id, id);
   if (!graph) return null;
+  return projectHistoryItem(state,graph,filter,nowMs);
+}
+
+function projectHistoryItem(state: Pick<DomainState, 'channel'|'session'|'settings'>, graph: EntityGraph,
+  filter: NonNullable<OwnerHistoryQuery['filter']>, nowMs: number): Chapter | Lore | null {
+  const id=graph.root.id;
   const context = withHistoryEntity(createDomainState({channel: state.channel, session: state.session, settings: state.settings}), graph);
   if (graph.root.kind === 'chapter') {
     const canonical = context.chapters[0]!;
@@ -100,4 +106,46 @@ export function historyItem(repository: SqliteRepository, state: Pick<DomainStat
     : {...canonical, status: ['published', 'confirmed'].includes(canonical.status) ? 'held' : canonical.status};
   if (filter === 'published' && !ready || filter === 'draft' || filter === 'held' && !['held', 'observed'].includes(item.status)) return null;
   return item;
+}
+
+/** Runs only when the reducer schedules a new request, before its immutable ticket is registered. */
+export function enrichGenerationHistory(repository:SqliteRepository,transition:DomainTransition,nowMs:number):void {
+  const effect=transition.effects.find(effect=>effect.type==='generation.request');if(!effect||effect.type!=='generation.request')return;
+  const request=effect.request;let state=transition.state;
+  const text=request.packet.sources.filter(source=>sourceAllowed(state,source)).map(source=>source.text!).join('\n');
+  const ids=repository.findGenerationHistory(state.session,state.session.id,{text,limit:8});
+  let added=false,addedNodes=0,addedBytes=0;
+  for(const id of ids){
+    if(id===request.entityId)continue;
+    const graph=repository.getEntityGraph(state.session,state.session.id,id);if(!graph)continue;
+    const item=projectHistoryItem(state,graph,'published',nowMs);if(!item)continue;
+    const isChapter='claimIds' in item;
+    if(isChapter&&request.packet.chapters.some(chapter=>chapter.id===id||chapter.id.startsWith(`context:${id}:`))||!isChapter&&request.packet.lore.some(lore=>lore.id===id))continue;
+    const contextId=`history:${stateHash([id,graph.root.revision,state.settings.recapLanguage,isChapter?[item.title,item.summary]:[item.term,item.explanation]])}`;
+    const selectedCandidate=isChapter?graph.candidates.find(candidate=>candidate.status==='published'&&candidate.language===state.settings.recapLanguage&&candidate.chapter.title===item.title&&candidate.chapter.summary===item.summary):undefined;
+    const presentations=graph.entities.filter(node=>node.kind==='presentation'&&(isChapter?node.id===selectedCandidate?.id:node.body&&typeof node.body==='object'&&'kind' in node.body&&node.body.kind==='lore'&&'language' in node.body&&node.body.language===state.settings.recapLanguage&&'term' in node.body&&node.body.term===item.term&&'explanation' in node.body&&node.body.explanation===item.explanation));
+    const refs:VersionRef[]=uniqueRefs([{id,revision:graph.root.revision},...presentations.map(node=>({id:node.id,revision:node.revision}))]);
+    const allRefs=uniqueRefs([...request.ticket.inputRefs,{id:contextId,revision:1},...refs]);if(allRefs.length>100)continue;
+    const packet=structuredClone(request.packet);
+    let body:PublicChapter|Lore;
+    if(isChapter){
+      const {sessionId:_session,ownerEditRevision:_owner,publicationState:_publication,eligibleAt:_eligible,safety:_safety,dependencyRefs:_deps,...chapter}=item;
+      body={...chapter,id:contextId,revision:1};packet.chapters=[body,...packet.chapters].slice(0,6);
+    }else{body={...item,id:contextId,revision:1};packet.lore=[body,...packet.lore].slice(0,5);}
+    // A retrieved record never displaces current safe evidence to make itself fit.
+    if(evidencePacketBytes(packet)>EVIDENCE_PACKET_BYTE_CAP)continue;
+    const graphBytes=Buffer.byteLength(JSON.stringify(graph)),graphNodes=[...graph.entities,...graph.sources].filter(node=>!state.nodes[node.id]&&!state.sources.some(source=>source.id===node.id)).length;
+    if(addedNodes+graphNodes>512||addedBytes+graphBytes>1_000_000)continue;
+    try{state=withHistoryEntity(state,graph);}catch(error){if(error instanceof ApiError&&error.code==='history_capacity')continue;throw error;}
+    addedNodes+=graphNodes;addedBytes+=graphBytes;transition.state=state;
+    const node:DerivedNode={id:contextId,revision:1,kind:'provider_cache',supports:refs,exposedTo:refs,startMs:isChapter?item.startMs:item.firstSeenMs,endMs:item.maxDependencyEndMs,active:true,body};
+    state.nodes[contextId]=node;transition.effects.unshift({type:'entity.upsert',node:structuredClone(node)});
+    request.packet=packet;request.ticket.inputRefs=allRefs;added=true;
+  }
+  if(added){
+    request.ticket.inputHash=stateHash(request.packet);
+    const endMs=Math.max(0,...request.ticket.inputRefs.map(ref=>state.sources.find(source=>source.id===ref.id)?.endMs??state.nodes[ref.id]?.endMs??0));
+    request.ticket.eligibleAt=new Date(Date.parse(state.session.startedAt)+endMs+state.settings.publicationDelaySeconds*1000).toISOString();
+    state.pendingGeneration=structuredClone(request);
+  }
 }

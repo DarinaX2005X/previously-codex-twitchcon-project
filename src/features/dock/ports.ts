@@ -1,9 +1,10 @@
 import type { CaptureState } from '../capture/controller';
-import type { Lore, Source, InvalidationReceipt, RecapPlan } from '../../shared/contracts';
+import type { Lore, Source, InvalidationReceipt, RecapPlan, OwnerHistoryQuery, OwnerHistoryPage } from '../../shared/contracts';
 import type { ReactNode } from 'react';
 
 /** Optional capabilities are injected. A recorded dock never discovers or calls live routes. */
 export interface DockOwnerPort {
+  listHistory?(query: OwnerHistoryQuery): Promise<OwnerHistoryPage>;
   listSources(query: { sessionId: string; fromMs?: number; toMs?: number; cursor?: string; limit: number }): Promise<{ items: Source[]; nextCursor: string | null }>;
   editLore(id: string, patch: { term: string; explanation: string; originMs: number | null; baseRevision: number }): Promise<Lore>;
   confirmLore(id: string, baseRevision: number): Promise<Lore>;

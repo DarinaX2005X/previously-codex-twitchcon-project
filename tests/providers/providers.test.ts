@@ -12,11 +12,12 @@ const patch:StoryPatch={sessionId:'session',baseRevision:0,action:'update',title
 function budget(){let spent=0;return {status:()=>({enabled:true}),reserve:vi.fn((_id:string,amount:number)=>{spent+=amount;return spent<=4500000;}),settle:vi.fn()};}
 const response=(value:unknown)=>new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(value)}]}],usage:{input_tokens:500,output_tokens:200}}),{status:200});
 describe('authored provider adapters: no real calls',()=>{
-  it('pins Standard pricing and short cache TTL, reserves the full cache-write envelope, and catches overage',async()=>{
+  it('pins Standard pricing without cache breakpoints, reserves the full cache-write envelope, and catches overage',async()=>{
     const b=budget(),fetcher=vi.fn().mockResolvedValue(response(patch));const provider=new OpenAIStoryProvider(new ProviderTransport({apiKey:'authored',runId:'live',externalCallsEnabled:true,budget:b,fetch:fetcher}));
     await provider.propose(packet,ticket);const sent=JSON.parse(fetcher.mock.calls[0][1].body);
-    expect(sent).toMatchObject({service_tier:'default',prompt_cache_options:{ttl:'30m'},max_output_tokens:1024,reasoning:{effort:'none'}});
-    expect(RESERVATION.text).toBeGreaterThanOrEqual(Math.ceil(1.1*(8000*.125+1024*.5)));expect(b.reserve.mock.calls[0][1]).toBe(RESERVATION.text);
+    expect(sent).toMatchObject({service_tier:'default',prompt_cache_options:{mode:'explicit',ttl:'30m'},max_output_tokens:1024,reasoning:{effort:'none'}});
+    expect(sent.input.every((message:{content:unknown})=>typeof message.content==='string')).toBe(true);
+    expect(RESERVATION.text).toBeGreaterThanOrEqual(Math.ceil(1.1*(10000*.125+1024*.5)));expect(b.reserve.mock.calls[0][1]).toBe(RESERVATION.text);
     fetcher.mockResolvedValue(new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(patch)}]}],usage:{input_tokens:16000,output_tokens:0,input_tokens_details:{cache_write_tokens:16000}}})));
     await expect(provider.propose(packet,ticket)).rejects.toMatchObject({code:'budget'});expect(b.settle).toHaveBeenCalledWith(expect.any(String),2200);
   });

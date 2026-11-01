@@ -27,10 +27,13 @@ export class SqliteRepository {
   private readonly domain:DomainPersistence;
   getEntityGraph(scope:Scope,sessionId:string,id:string):EntityGraph|null{return new HistoryPersistence(this.db,this).graph(scope,sessionId,id);}
   listEntityHistory(scope:Scope,sessionId:string,options:{kind:'chapter'|'lore';limit?:number;cursor?:EntityHistoryCursor}):EntityHistoryPage{return new HistoryPersistence(this.db,this).page(scope,sessionId,options);}
+  findGenerationHistory(scope:Scope,sessionId:string,options:{text:string;limit?:number}):string[]{return new HistoryPersistence(this.db,this).generation(scope,sessionId,options);}
   constructor(private readonly db: StorageDatabase, private readonly now: () => number) {this.controls=new ControlPersistence(db,now);this.domain=new DomainPersistence(db,now,this);}
   getDomainCheckpoint(scope:Scope,sessionId:string):DomainCheckpoint{return this.domain.checkpoint(scope,sessionId);}
   getDomainHydration(scope:Scope,sessionId:string,options?:{checkpointOnly?:boolean}):DomainHydration{return this.domain.hydration(scope,sessionId,options);}
   applyDomainTransition(scope:Scope,sessionId:string,input:DomainCommitInput):DomainCommitResult{return this.domain.apply(scope,sessionId,input);}
+  /** An intake batch stays atomic; domain transitions still keep their own savepoint fences. */
+  runDomainBatch<T>(action:()=>T):T{return this.db.transaction(action);}
   controlGet<T=unknown>(scope:Scope,key:string):T|null{return this.controls.get<T>(scope,key);}
   controlPut(scope:Scope,key:string,value:unknown,expiresAtMs?:number):void{this.controls.put(scope,key,value,expiresAtMs);}
   controlDelete(scope:Scope,key:string):boolean{return this.controls.delete(scope,key);}

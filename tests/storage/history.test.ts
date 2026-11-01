@@ -46,11 +46,28 @@ describe('bounded historical entity graph',()=>{
     const f=fixture();source(f);entity(f,'chapter');entity(f,'current','claim');
     const db=new DatabaseSync(f.path);try{
       for(const [id,language,ownerRevision,privacyEpoch,status] of [['english','en',0,0,'published'],['russian','ru',0,0,'published'],['old-owner','en',1,0,'published'],['old-epoch','en',0,99,'pending']] as const){
-        entity(f,id,'presentation');const body={id,entityId:'chapter',revision:1,ownerRevision,privacyEpoch,inputRefs:[{id:'source',revision:1}],eligibleAtMs:0,currentNodeId:'current',chapter:{sessionId:'session'},language,status};
+        entity(f,id,'presentation');const body={id,entityId:'chapter',revision:1,ownerRevision,privacyEpoch,inputRefs:[{id:'source',revision:1}],eligibleAtMs:0,currentNodeId:'current',chapter:{id:'chapter',revision:1,sessionId:'session'},language,status,safety:{moderation:'allowed',pii:'allowed',checkedAt:start,reason:null}};
         db.prepare('INSERT INTO publication_candidates(channel_id,run_id,id,session_id,entity_id,revision,owner_revision,privacy_epoch,eligible_at_ms,status,safe,body) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(scope.channelId,scope.runId,id,'session','chapter',1,ownerRevision,privacyEpoch,0,status,1,JSON.stringify(body));
       }
     }finally{db.close();}
     const graph=f.r.getEntityGraph(scope,'session','chapter')!;expect(graph.candidates.map(value=>value.id).sort()).toEqual(['english','russian']);expect(graph.entities.map(value=>value.id)).toEqual(expect.arrayContaining(['chapter','english','russian','current']));expect(graph.entities.map(value=>value.id)).not.toContain('old-owner');
+    expect(f.r.findGenerationHistory(scope,'session',{text:''})).toEqual([]);f.r.pinEntity(scope,'chapter',1,true);expect(f.r.findGenerationHistory(scope,'session',{text:''})).toEqual(['chapter']);
+  });
+  it('retrieves only exact mentioned verified lore through normalized aliases and never guesses a substring topic',()=>{
+    const f=fixture();source(f);const safe={moderation:'allowed',pii:'allowed',checkedAt:start,reason:null};
+    entity(f,'old-lore','lore',undefined,{term:'ＢＲＩＣＫ',aliases:['Cafe\u0301'],status:'confirmed',originKind:'spoken',safety:safe});
+    for(let i=0;i<60;i++)entity(f,`later-${i}`,'lore',undefined,{term:`unmentioned-${i}`,status:'confirmed',originKind:'spoken',safety:safe},300+i);
+    expect(f.r.findGenerationHistory(scope,'session',{text:'Brickwork and cafés are unrelated.'})).toEqual([]);
+    expect(f.r.findGenerationHistory(scope,'session',{text:'We mentioned the CAFÉ again.'})).toEqual(['old-lore']);
+    entity(f,'regex-lore','lore',undefined,{term:'c++',aliases:[],status:'confirmed',originKind:'owner_confirmed',safety:safe});expect(f.r.findGenerationHistory(scope,'session',{text:'I said C++.'})).toEqual(['regex-lore']);
+    entity(f,'unverified','lore',undefined,{term:'unknown',status:'held',originKind:'unknown',safety:safe});expect(f.r.findGenerationHistory(scope,'session',{text:'Unknown.'})).toEqual([]);
+    f.r.invalidate(scope,{kind:'term',sessionId:'session',term:'brick'},{idempotencyKey:'generation-term-block',reason:'privacy'});expect(f.r.findGenerationHistory(scope,'session',{text:'CAFÉ and brick.'})).toEqual([]);
+    expect(()=>f.r.findGenerationHistory(scope,'session',{text:'x'.repeat(12001)})).toThrow(/exceeds its limit/);
+  });
+  it('caps generation lore selection at four roots while preserving an explicit smaller retrieval limit',()=>{
+    const f=fixture();source(f);for(let i=0;i<7;i++)entity(f,`mentioned-${i}`,'lore',undefined,{term:`phrase${i}`,status:'published',originKind:'spoken',safety:{moderation:'allowed',pii:'allowed',checkedAt:start,reason:null}},300+i);
+    const text=Array.from({length:7},(_,i)=>`phrase${i}`).join(' ');expect(f.r.findGenerationHistory(scope,'session',{text})).toHaveLength(4);expect(f.r.findGenerationHistory(scope,'session',{text,limit:2})).toHaveLength(2);
+    f.r.invalidate(scope,{kind:'source',sessionId:'session',id:'source'},{idempotencyKey:'generation-source-forget',reason:'privacy'});expect(f.r.findGenerationHistory(scope,'session',{text})).toEqual([]);
   });
   it('fails explicitly instead of silently truncating a dependency closure over the cap',()=>{
     const f=fixture();source(f);const refs=[];

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { Chapter, InvalidationReceipt, OwnerSnapshot, PrivacyTarget, PublicChapter, RecapClient, RecapPlan } from '../../shared/contracts';
+import type { Chapter, InvalidationReceipt, Lore, OwnerSnapshot, PrivacyTarget, PublicChapter, RecapClient, RecapPlan } from '../../shared/contracts';
 import { ActionGroup, Brand, Button, ChapterRow, Dialog, DockLayout, Field, InlineNotice, LanguageControl, QuietButton, SegmentedControl, Sheet, SourceDisclosure, SourceStatus, Textarea, Timecode, formatTimecode } from '../../ui';
 import { SettingsSheet } from '../settings/SettingsSheet';
 import { dockClock, DockStore, errorCode, forgetWindow, hotkeyMatches, pauseListening, privacyAcknowledged, publicationLabel, saveChapterDraft, type DockClockMode } from './model';
 import type { DockCapturePort, DockOwnerPort, DockPreviewRenderer } from './ports';
 import { SourceSheet, type SourceContext } from './SourceSheet';
 import { LoreRow } from './LoreRow';
+import { DockHistoryStore, historyKey, mergeHistory, type HistoryContext } from './history';
 import './dock.css';
 
 export interface DockPageProps { client: RecapClient; capture?: DockCapturePort; owner?: DockOwnerPort; renderPreview?: DockPreviewRenderer; label?: string; clockMode?: DockClockMode; recording?: boolean; }
@@ -22,7 +23,14 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const captureState = useSyncExternalStore(capture?.subscribe ?? idleSubscribe, capture?.getSnapshot ?? getIdleCapture, getIdleCapture);
   const snapshot = state.snapshot;
+  const historyStore = useMemo(() => new DockHistoryStore(owner?.listHistory ? query => owner.listHistory!(query) : undefined, () => { store.invalidate(); void store.refresh(); }), [owner, store]);
+  const historyState = useSyncExternalStore(historyStore.subscribe, historyStore.getSnapshot, historyStore.getSnapshot);
   const [filter, setFilter] = useState('published'), [limit, setLimit] = useState(20);
+  const [loreLimit, setLoreLimit] = useState(20);
+  const historyContext: HistoryContext | null = snapshot?.session ? { sessionId: snapshot.session.id, privacyEpoch: snapshot.session.privacyEpoch, language: snapshot.settings.recapLanguage, filter: filter === 'drafts' ? 'draft' : filter === 'held' ? 'held' : 'published', resetKey: `${state.sourceEpoch}:${snapshot.published?.language ?? ''}` } : null;
+  const contextKey = historyContext ? historyKey(historyContext) : '';
+  const history = historyState.key === contextKey ? historyState : null;
+  const durableHistory = Boolean(owner?.listHistory && historyContext && !(filter === 'published' && snapshot?.published && snapshot.published.language !== snapshot.settings.recapLanguage));
   const [edit, setEdit] = useState<Edit | null>(null), [settings, setSettings] = useState(false);
   const [source, setSource] = useState<SourceContext | null>(null), [forget, setForget] = useState<PrivacyTarget | null>(null);
   const [preview, setPreview] = useState<RecapPlan | null>(null), [previewOpen, setPreviewOpen] = useState(false);
@@ -44,6 +52,7 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
     setEdit(current => current && (state.invalidatedIds === null || state.invalidatedIds.includes(current.id)) ? null : current);
   }, [state.sourceEpoch]);
   useEffect(() => { setLimit(20); }, [filter, snapshot?.session?.id]);
+  useEffect(() => { historyStore.reset(historyContext ?? undefined); setLoreLimit(20); return () => historyStore.reset(); }, [historyStore, contextKey]);
 
   async function run(key: string, action: () => Promise<void>) {
     if (busy.current.has(key)) return;
@@ -71,7 +80,7 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
     await run('edit', async () => {
       const result = await saveChapterDraft(client, value);
       if (generation !== privacyGeneration.current || editor !== editGeneration.current) return;
-      if (result.ok) { setEdit(null); setNotice(result.chapter.publicationState === 'held' ? publicationLabel(result.chapter, now) : 'Your wording is saved. New audio will not replace it.'); await store.refresh(); }
+      if (result.ok) { if (historyContext) historyStore.apply(result.chapter, historyContext); setEdit(null); setNotice(result.chapter.publicationState === 'held' ? publicationLabel(result.chapter, now) : 'Your wording is saved. New audio will not replace it.'); await store.refresh(); }
       else { setEdit(current => current?.id === value.id ? { ...current, error: result.error, conflict: result.conflict } : current); if (result.conflict) await store.refresh(); }
     });
   }
@@ -80,7 +89,7 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
     await run('forget', async () => {
       // A privacy action cancels both the local preview sink and pending preview preparation.
       ++previewGeneration.current; ++privacyGeneration.current; setPreview(null); setPreviewOpen(false); setSource(null); setEdit(null);
-      const result = await client.privacy(forget, 'owner_forget'); setReceipt(result); setReceiptKind('forget'); setForget(null); setNotice(''); await store.refresh();
+      const result = await client.privacy(forget, 'owner_forget'); setReceipt(result); store.invalidate(result.hiddenEntityIds); setReceiptKind('forget'); setForget(null); setNotice(''); await store.refresh();
     });
   }
   function focusHotkey(event: React.KeyboardEvent<HTMLElement>) {
@@ -96,10 +105,14 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
   const active = snapshot?.playback.filter(item => ['playing', 'preparing', 'queued'].includes(item.status)) ?? [];
   const published = snapshot?.published;
   const heldChapters = snapshot?.held.filter((item): item is Chapter => 'publicationState' in item) ?? [];
-  const chapters: (PublicChapter | Chapter)[] = filter === 'drafts' ? snapshot?.drafts ?? [] : filter === 'held' ? heldChapters : published?.chapters ?? [];
+  const localChapters: (PublicChapter | Chapter)[] = filter === 'drafts' ? snapshot?.drafts ?? [] : filter === 'held' ? heldChapters : published?.chapters ?? [];
+  const recentChapters = [...localChapters].sort((a, b) => b.startMs - a.startMs || b.id.localeCompare(a.id));
+  const chapters = durableHistory && history?.chapterLoaded ? mergeHistory<PublicChapter | Chapter>(history.chapters, recentChapters.slice(0, 20)) : recentChapters;
   // Chronology is stable when pinning. Pin changes the next scene selection, not keyboard order.
-  const visible = [...chapters].sort((a, b) => b.startMs - a.startMs || a.id.localeCompare(b.id)).slice(0, limit);
-  const comparison = edit && [...(published?.chapters ?? []), ...(snapshot?.drafts ?? []), ...heldChapters].find(item => item.id === edit.id);
+  const visible = [...chapters].sort((a, b) => b.startMs - a.startMs || b.id.localeCompare(a.id)).slice(0, durableHistory && history?.chapterLoaded ? chapters.length : limit);
+  const comparison = edit && [...localChapters, ...(snapshot?.drafts ?? []), ...heldChapters, ...(history?.chapters ?? [])].filter(item => item.id === edit.id).sort((a, b) => b.revision - a.revision)[0];
+  const localLore = [...(snapshot?.lore.filter(item => item.status === 'held' || item.status === 'observed') ?? [])].sort((a, b) => b.firstSeenMs - a.firstSeenMs || b.id.localeCompare(a.id));
+  const lore = (durableHistory && history?.loreLoaded ? mergeHistory<Lore>(history.lore, localLore.slice(0, 20)) : localLore.slice(0, loreLimit)).sort((a, b) => b.firstSeenMs - a.firstSeenMs || b.id.localeCompare(a.id));
   const paused = snapshot?.settings.listeningPaused || captureState.status === 'paused';
   const captured = captureState.status === 'listening' || captureState.status === 'delayed';
   const captureEngaged = captured || captureState.status === 'permission_pending';
@@ -144,10 +157,11 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
         <SegmentedControl label="Chapter collection" value={filter} onChange={setFilter} options={[{ value: 'published', label: 'Published' }, { value: 'drafts', label: snapshot.drafts.length ? `Drafts (${snapshot.drafts.length})` : 'Drafts' }, { value: 'held', label: snapshot.held.length ? `Held (${snapshot.held.length})` : 'Held' }]} />
         <section className="dock-chronology" aria-label={`${filter} chapters`}>
           {!visible.length && (filter !== 'published' || published?.current) && <p className="dock-empty">{filter === 'published' ? 'No earlier chapters yet.' : filter === 'drafts' ? 'No chapters waiting to publish.' : 'No held chapters.'}</p>}
-          {visible.map(chapter => <ChapterRow key={chapter.id} title={chapter.title} atMs={chapter.startMs} state={'publicationState' in chapter ? publicationLabel(chapter, now) : chapter.edited ? 'Your wording' : undefined} actions={<ActionGroup>{owner && snapshot.session && <QuietButton onClick={() => setSource({ title: chapter.title, sessionId: snapshot.session!.id, fromMs: chapter.startMs, toMs: Math.max(chapter.endMs, chapter.maxDependencyEndMs) })}>Source</QuietButton>}<QuietButton onClick={() => openEdit(chapter)}>Edit</QuietButton><QuietButton aria-pressed={chapter.pinned} pending={pending.has(`pin:${chapter.id}`)} onClick={() => void run(`pin:${chapter.id}`, async () => { await client.pinChapter(chapter.id, !chapter.pinned, chapter.revision); setNotice(chapter.pinned ? 'Chapter unpinned.' : 'Pinned for the next scene. Safety checks still apply.'); await store.refresh(); })}>{chapter.pinned ? 'Unpin' : 'Pin'}</QuietButton><QuietButton tone="danger" pending={pending.has(`delete:${chapter.id}`)} onClick={() => void run(`delete:${chapter.id}`, async () => { const result = await client.deleteChapter(chapter.id, chapter.revision); setReceipt(result); setReceiptKind('chapter'); ++previewGeneration.current; setSource(null); setPreview(null); setPreviewOpen(false); setNotice(''); await store.refresh(); })}>Delete</QuietButton></ActionGroup>} sources={owner && snapshot.session ? undefined : <SourceDisclosure label="Source">{chapter.sourceLabels.length ? chapter.sourceLabels.map(item => <p key={item.id}>{item.label} <Timecode milliseconds={item.atMs} /></p>) : <p>No source details available in this recording.</p>}</SourceDisclosure>}><p>{chapter.summary}</p></ChapterRow>)}
-          {chapters.length > limit && <QuietButton onClick={() => setLimit(value => value + 20)}>Earlier chapters</QuietButton>}
+          {visible.map(chapter => <ChapterRow key={chapter.id} title={chapter.title} atMs={chapter.startMs} state={'publicationState' in chapter ? publicationLabel(chapter, now) : chapter.edited ? 'Your wording' : undefined} actions={<ActionGroup>{owner && snapshot.session && <QuietButton onClick={() => setSource({ title: chapter.title, sessionId: snapshot.session!.id, fromMs: chapter.startMs, toMs: Math.max(chapter.endMs, chapter.maxDependencyEndMs) })}>Source</QuietButton>}<QuietButton onClick={() => openEdit(chapter)}>Edit</QuietButton><QuietButton aria-pressed={chapter.pinned} pending={pending.has(`pin:${chapter.id}`)} onClick={() => void run(`pin:${chapter.id}`, async () => { const updated = await client.pinChapter(chapter.id, !chapter.pinned, chapter.revision); if (historyContext) historyStore.apply(updated, historyContext); setNotice(chapter.pinned ? 'Chapter unpinned.' : 'Pinned for the next scene. Safety checks still apply.'); await store.refresh(); })}>{chapter.pinned ? 'Unpin' : 'Pin'}</QuietButton><QuietButton tone="danger" pending={pending.has(`delete:${chapter.id}`)} onClick={() => void run(`delete:${chapter.id}`, async () => { const result = await client.deleteChapter(chapter.id, chapter.revision); setReceipt(result); store.invalidate(result.hiddenEntityIds); setReceiptKind('chapter'); ++previewGeneration.current; setSource(null); setPreview(null); setPreviewOpen(false); setNotice(''); await store.refresh(); })}>Delete</QuietButton></ActionGroup>} sources={owner && snapshot.session ? undefined : <SourceDisclosure label="Source">{chapter.sourceLabels.length ? chapter.sourceLabels.map(item => <p key={item.id}>{item.label} <Timecode milliseconds={item.atMs} /></p>) : <p>No source details available in this recording.</p>}</SourceDisclosure>}><p>{chapter.summary}</p></ChapterRow>)}
+          {durableHistory && historyContext ? (!history?.chapterLoaded || history.chapterCursor) && <QuietButton pending={history?.loading === 'chapter'} disabled={Boolean(history?.loading)} onClick={() => void historyStore.load('chapter', historyContext)}>{history?.chapterLoaded || localChapters.length > 20 ? 'Earlier chapters' : 'Browse chapter history'}</QuietButton> : chapters.length > limit && <QuietButton onClick={() => setLimit(value => value + 20)}>Show more chapters</QuietButton>}
+          {history?.error && <InlineNotice tone="danger">{history.error}</InlineNotice>}
         </section>
-        {filter === 'held' && snapshot.lore.filter(item => item.status === 'held' || item.status === 'observed').map(lore => <LoreRow key={`${lore.id}:${state.sourceEpoch}`} lore={lore} owner={owner} onSaved={refresh} onSource={() => snapshot.session && setSource({ title: lore.term, sessionId: snapshot.session.id, fromMs: Math.max(0, lore.firstSeenMs - 30_000), toMs: Math.min(172_800_000, lore.firstSeenMs + 30_000) })} />)}
+        {filter === 'held' && <>{lore.map(item => <LoreRow key={`${item.id}:${state.sourceEpoch}`} lore={item} owner={owner} onSaved={result => { if (result && 'status' in result && historyContext) historyStore.apply(result, historyContext); else if (result && 'privacyEpoch' in result) store.invalidate(result.hiddenEntityIds); refresh(); }} onSource={() => snapshot.session && setSource({ title: item.term, sessionId: snapshot.session.id, fromMs: Math.max(0, item.firstSeenMs - 30_000), toMs: Math.min(172_800_000, item.firstSeenMs + 30_000) })} />)}{durableHistory && historyContext ? (!history?.loreLoaded || history.loreCursor) && <QuietButton pending={history?.loading === 'lore'} disabled={Boolean(history?.loading)} onClick={() => void historyStore.load('lore', historyContext)}>{history?.loreLoaded || localLore.length > 20 ? 'Earlier lore' : 'Browse lore history'}</QuietButton> : localLore.length > loreLimit && <QuietButton onClick={() => setLoreLimit(value => value + 20)}>Show more lore</QuietButton>}</>}
         {snapshot.moments.length > 0 && <section className="dock-moments"><h2>Saved moments</h2>{snapshot.moments.slice(-10).reverse().map(moment => <div key={moment.id}><Timecode milliseconds={moment.startMs} /><span>{moment.label}</span><small>{moment.mediaState === 'ready' ? 'Clip ready' : moment.mediaState === 'pending' ? 'Clip pending' : 'Clip unavailable'}</small></div>)}</section>}
       </>}
     </DockLayout>
@@ -164,6 +178,8 @@ export function DockPage({ client, capture, owner, renderPreview, label, clockMo
     </Sheet>
   </main>;
 }
+
+
 
 
 

@@ -8,10 +8,10 @@ export class ProviderError extends Error {
 export interface BudgetPort { status(): {enabled:boolean}; reserve(id:string, amountMicroUsd:number, runId:string): boolean; settle(id:string, actualMicroUsd:number): void }
 export type ProviderOptions = { apiKey?:string; runId:string; budget:BudgetPort; fetch?:typeof fetch; now?:()=>number; externalCallsEnabled?:boolean };
 export const MODEL = 'gpt-6-luna';
-// At most 8K input tokens including framing, all charged as 30m cache writes, plus 1,024 output:
-// ceil(1.1 * (8000 * 0.125 + 1024 * 0.50)) = 1,664 micro-USD, below the 2,000 reserve.
+// Reserve 10K input tokens including framing, all at the 30m cache-write rate, plus 1,024 output:
+// ceil(1.1 * (10000 * 0.125 + 1024 * 0.50)) = 1,939 micro-USD, below the 2,000 reserve.
 export const RESERVATION = {text:2000,transcription:10000,narration:50000} as const;
-export function structuredRequest<T>(name:string,schema:z.ZodType<T>,instructions:string,data:unknown) {return {model:MODEL,service_tier:'default',prompt_cache_options:{ttl:'30m'},store:false,reasoning:{effort:'none'},max_output_tokens:1024,tools:[],input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(data)}],text:{format:{type:'json_schema',name,strict:true,schema:z.toJSONSchema(schema)}}};}
+export function structuredRequest<T>(name:string,schema:z.ZodType<T>,instructions:string,data:unknown) {return {model:MODEL,service_tier:'default',prompt_cache_options:{mode:'explicit',ttl:'30m'},store:false,reasoning:{effort:'none'},max_output_tokens:1024,tools:[],input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(data)}],text:{format:{type:'json_schema',name,strict:true,schema:z.toJSONSchema(schema)}}};}
 /** The same persistent BudgetStore is shared by every provider. No implicit enable, refund or retry. */
 export class ProviderTransport {
   readonly fetch:typeof fetch;

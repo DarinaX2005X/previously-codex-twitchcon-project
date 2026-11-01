@@ -1,11 +1,12 @@
 import {canonical,isRefActive,type DomainEffect,type DomainState} from '../../core/index.js';
 import {type Channel,type Clock,type PublicSnapshot,type Scope,type SourceStatus} from '../../shared/contracts/index.js';
-import {LocalPublisher,heartbeatOperation,validatePublicSnapshot,type PublicationLease,type PublicationRepository} from '../publication/index.js';
+import {LocalPublisher,heartbeatOperation,validatePublicSnapshot,signedHeaders,type PublicationLease,type PublicationRepository} from '../publication/index.js';
 import {ManifestSchema,type PublicationOperation,type PublicationAck} from '../../cloud/contracts.js';
 import type {StoryEngine,RuntimeStorage} from './engine.js';
 import type {RevisionStream} from './updates.js';
+import type {RecordingExportRegistry} from '../replay/recording-registry.js';
 
-export type CloudRuntimeOptions={scope:Scope;channel:Channel;engine:StoryEngine;storage:RuntimeStorage;publicOrigin?:string;sharedSecret?:string;clock:Clock;fetch?:typeof fetch;updates?:RevisionStream};
+export type CloudRuntimeOptions={scope:Scope;channel:Channel;engine:StoryEngine;storage:RuntimeStorage;publicOrigin?:string;sharedSecret?:string;clock:Clock;fetch?:typeof fetch;updates?:RevisionStream;recordingExports?:Pick<RecordingExportRegistry,'uploadForLease'>};
 type HeartbeatMarker={publishSeq:number;sessionId:string;atMs:number;terminal:boolean};
 const HEARTBEAT='cloud:heartbeat';
 const strings=(value:unknown):string[]=>Array.isArray(value)?value.filter((v):v is string=>typeof v==='string'):[];
@@ -38,14 +39,26 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
     const state=engine.state(sessionId);if(!state.published||forgotten(state))return null;
     return validatePublicSnapshot(state.published);
   }
-  function buildOperation(lease:PublicationLease):PublicationOperation{
+  async function buildOperation(lease:PublicationLease):Promise<PublicationOperation>{
     const current=sync(),body=payload(lease),common={channelId:scope.channelId,channelLogin:channel.login,publishSeq:lease.publishSeq!,privacyRevision:current.privacyRevision};
     if(lease.kind==='retract'){
       const sessionIds=[...new Set([lease.sessionId,...strings(body.affectedSessionIds),...strings(body.sessionIds)])];
       const exportIds=[...new Set([...strings(body.exportIds),...strings(body.affectedIds).filter(id=>repository.getEntity(scope,id)?.kind==='export')])];
       return {...common,operation:'retract',sessionIds,exportIds,snapshots:sessionIds.map(publicState).filter((s):s is PublicSnapshot=>s!==null)};
     }
-    if(lease.kind==='export_manifest')return {...common,operation:'export_manifest',manifest:ManifestSchema.parse(body.manifest)};
+    if(lease.kind==='export_manifest'){
+      if(body.recordingExportId){
+        if(!options.recordingExports)throw new Error('Recording exports are unavailable');
+        await options.recordingExports.uploadForLease(lease,async(metadata,bytes)=>{
+          if(closed||engine.outputsBlocked()||!repository.renewOutbox(scope,lease.id,lease.leaseToken,30_000))throw new Error('Recording publication was revoked');
+          const path='/api/publish/export-assets',framed=Buffer.concat([Buffer.from(JSON.stringify(metadata)+'\n'),Buffer.from(bytes)]);
+          const response=await (options.fetch??fetch)(new URL(path,options.publicOrigin!),{method:'POST',headers:{'Content-Type':'application/octet-stream',...signedHeaders(options.sharedSecret!,'POST',path,scope.channelId,lease.publishSeq!,framed,clock.now())},body:framed,redirect:'error',signal:AbortSignal.any([lifetime.signal,outputWindow.signal,AbortSignal.timeout(20_000)])});
+          if(!response.ok){await response.body?.cancel();throw new Error('Recording upload requires retry');}
+          await response.body?.cancel();
+        });
+      }
+      return {...common,operation:'export_manifest',manifest:ManifestSchema.parse(body.manifest)};
+    }
     const activeSessionId=activeForCloud(lease.sessionId);
     if(body.heartbeat===true){if(!activeSessionId||activeSessionId!==lease.sessionId)throw new Error('Heartbeat session is no longer active');return heartbeatOperation({...common,activeSessionId,now:clock.now()});}
     const snapshot=publicState(lease.sessionId);if(!snapshot)throw new Error('Published snapshot is unavailable');

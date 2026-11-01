@@ -1,4 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
+import type {MediaRecord} from '../media/cache.js';
+import {prepareRecordingMedia} from './recording-media.js';
+import {packageRecordingBundle} from './recording-package.js';
 import type {CommittedTransition} from '../runtime/engine.js';
 import type {DomainState} from '../../core/index.js';
 import {safetyAllowsPublication,type Clock,type Scope,type Source,type VersionRef} from '../../shared/contracts/index.js';
@@ -9,16 +12,17 @@ import {ManifestSchema,type ExportAsset} from '../../cloud/contracts.js';
 import {assertNoCredentials} from './recorder.js';
 import {RecordingStore} from './recording-store.js';
 import {collectSources,digest,exportBundle,reviewOf,sourceHash,summary} from './recording-review.js';
-import type {RecordingRecord,RecordingReview,ReviewedExport,SourceReview} from './recording-types.js';
+import type {RecordingRecord,RecordingReview,ReviewedExport,SourceReview,MediaReview,RecordingMedia} from './recording-types.js';
 
-export type RecordingOptions={dataDir:string;scope:Scope;clock:Clock;state:(sessionId:string)=>DomainState;source?:(id:string)=>Source|null;providerModel:string;registerExport?:(value:ReviewedExport)=>{exportId:string;status:'staged';publishSeq?:number};};
-export type ReviewInput={captureRevision:number;digest:string;reviewedSources:SourceReview[];reviewedOutputHashes:string[];metadataReviewed:true;};
+export type RecordingOptions={dataDir:string;scope:Scope;clock:Clock;state:(sessionId:string)=>DomainState;source?:(id:string)=>Source|null;providerModel:string;registerExport?:(value:ReviewedExport)=>{exportId:string;status:'staged';publishSeq?:number};resolveMedia?:(id:string)=>Promise<{record:MediaRecord;path:string}>;outputsBlocked?:()=>boolean;};
+export type ReviewInput={captureRevision:number;digest:string;reviewedSources:SourceReview[];reviewedOutputHashes:string[];reviewedMedia?:MediaReview[];metadataReviewed:true;};
 const fail=(code:string,message:string,status=409)=>new ApiError(status,code,message);
 const pristine=(state:DomainState)=>state.sequence===0&&state.sources.length===0&&state.chapters.length===0&&state.memory.length===0&&!state.pendingGeneration&&state.session.privacyEpoch===0;
 
 /** Owner-controlled private recorder. No microphone, provider, OAuth or network methods exist here. */
 export class RecordingController {
   readonly store:RecordingStore;private records=new Map<string,RecordingRecord>();private active:string|null=null;
+  private lastCaptureWrite=0;
   constructor(readonly options:RecordingOptions){
     if(options.scope.runId!=='live')throw new Error('recording_requires_live_scope');
     this.store=new RecordingStore(options.dataDir);
@@ -30,9 +34,12 @@ export class RecordingController {
   }
   private authorize(principal:Principal){if(principal.role!=='owner'||principal.channelId!==this.options.scope.channelId||principal.runId!=='live')throw fail('role_forbidden','Only the channel owner can manage recordings.',403);if(principal.expiresAtMs<=this.options.clock.now())throw fail('session_required','Sign in to manage recordings.',401);}
   command<T>(principal:Principal,key:string,request:unknown,action:()=>T):T{this.authorize(principal);if(!/^[\w.-]{8,128}$/.test(key))throw fail('idempotency_required','A recording command needs an idempotency key.',400);return this.store.command(digest({scope:this.options.scope,actor:principal.actorId,key}),digest(request),action);}
+  commandAsync<T>(principal:Principal,key:string,request:unknown,action:()=>Promise<T>):Promise<T>{this.authorize(principal);if(!/^[\w.-]{8,128}$/.test(key))throw fail('idempotency_required','A recording command needs an idempotency key.',400);return this.store.commandAsync(digest({scope:this.options.scope,actor:principal.actorId,key}),digest(request),action);}
+  private outputGate(){if(this.options.outputsBlocked?.())throw fail('privacy_pending','Recording review and export are blocked while privacy removal is pending.');}
+  private eraseMedia(record:RecordingRecord){for(const media of record.selectedMedia??[])this.store.removeMedia(record.id,media.assetId);record.selectedMedia=[];record.mediaEvents=[];}
   private get(id:string){const record=this.records.get(id);if(!record)throw fail('recording_not_found','This recording is unavailable.',404);this.validateCurrent(record);return record;}
   private persist(record:RecordingRecord){record.revision++;record.receipt=null;this.store.write(record);}
-  private invalidate(record:RecordingRecord,reason:string){record.status='invalidated';record.message=reason;record.initial=null;record.events=[];record.providers=[];record.sources=[];record.safeSourceHashes=[];record.pending={};record.correction=null;record.receipt=null;record.revision++;if(this.active===record.id)this.active=null;this.store.write(record);}
+  private invalidate(record:RecordingRecord,reason:string){this.eraseMedia(record);record.status='invalidated';record.message=reason;record.initial=null;record.events=[];record.providers=[];record.sources=[];record.safeSourceHashes=[];record.pending={};record.correction=null;record.receipt=null;record.revision++;if(this.active===record.id)this.active=null;this.store.write(record);}
   private validateCurrent(record:RecordingRecord){
     if(!record.sessionId||['invalidated','failed'].includes(record.status))return;
     try{const state=this.options.state(record.sessionId);if(state.session.privacyEpoch!==record.privacyEpoch)this.invalidate(record,'This recording was erased after a source privacy change. Record a new clean session.');}
@@ -47,7 +54,18 @@ export class RecordingController {
     this.store.write(record);this.records.set(record.id,record);this.active=record.id;return summary(record);
   }
   stop(principal:Principal,id:string){this.authorize(principal);const record=this.get(id);if(record.status==='stopped'||record.status==='exported')return summary(record);if(!['armed','recording'].includes(record.status))throw fail('recording_not_active','This recording is no longer active.');record.status='stopped';record.stoppedAt=this.options.clock.iso();record.pending={};if(this.active===id)this.active=null;this.persist(record);return summary(record);}
-  remove(principal:Principal,id:string){this.authorize(principal);const record=this.get(id);if(record.exportId)throw fail('recording_export_exists','Revoke the managed export before removing its private recording.');if(this.active===id)this.active=null;this.store.remove(id);this.records.delete(id);}
+  remove(principal:Principal,id:string){this.authorize(principal);const record=this.get(id);if(record.exportId)throw fail('recording_export_exists','Revoke the managed export before removing its private recording.');if(this.active===id)this.active=null;this.eraseMedia(record);this.store.remove(id);this.records.delete(id);}
+  private mediaCurrent(record:RecordingRecord,media:RecordingMedia){this.outputGate();const state=this.options.state(record.sessionId!),current=state.media.find(m=>m.id===media.id);if(state.session.privacyEpoch!==record.privacyEpoch||!current||current.state!=='ready'||current.revision!==media.media.revision||current.kind!==media.media.kind||current.captureStartMs!==media.media.captureStartMs||current.captureEndMs!==media.media.captureEndMs||!media.media.refs.length||media.media.refs.some(ref=>{const source=this.options.source?.(ref.id)??state.sources.find(s=>s.id===ref.id);return !source||source.status!=='active'||source.revision!==ref.revision;}))throw fail('recording_media_changed','The selected media or its source is no longer available.');}
+  async attachMedia(principal:Principal,id:string,mediaId:string){
+    this.authorize(principal);this.outputGate();const record=this.get(id);if(record.status!=='stopped'||record.exportId)throw fail('recording_media_locked','Stop the recording before selecting media. Exported recordings cannot be changed.');if(!this.options.resolveMedia)throw fail('recording_media_unavailable','The private media cache is unavailable.');
+    const candidate=record.mediaEvents?.findLast(m=>m.media.id===mediaId);if(!candidate||candidate.media.state!=='ready'||!['video','audio'].includes(candidate.media.kind)||candidate.media.previousSession||!candidate.media.refs.length||candidate.media.refs.some(ref=>!record.sources.some(s=>s.id===ref.id&&s.revision===ref.revision)))throw fail('recording_media_unavailable','Choose ready media captured in this recording with its original sources.');
+    const cached=await this.options.resolveMedia(mediaId),m=cached.record;
+    if(m.state!=='ready'||m.sessionId!==record.sessionId||m.privacyEpoch!==record.privacyEpoch||m.kind!==candidate.media.kind||m.captureStartMs!==candidate.media.captureStartMs||m.captureEndMs!==candidate.media.captureEndMs||digest(m.dependencyRefs)!==digest(candidate.media.refs))throw fail('recording_media_unavailable','The cached media does not match this recording.');
+    let prepared:Awaited<ReturnType<typeof prepareRecordingMedia>>;try{prepared=await prepareRecordingMedia(cached,this.store.directory);}catch{throw fail('recording_media_prepare_failed','The selected media could not be prepared within the 3 MB limit. Video requires a working h264_nvenc encoder.');}const {bytes}=prepared;
+    const selected:RecordingMedia={id:mediaId,assetId:'media-'+digest(mediaId).slice(0,32),atMs:candidate.atMs,media:structuredClone(candidate.media),hash:digestBytes(bytes),bytes:bytes.length,mime:prepared.mime};this.authorize(principal);if(this.get(id)!==record||record.status!=='stopped')throw fail('recording_media_changed','The recording changed.');this.mediaCurrent(record,selected);if((record.selectedMedia?.length??0)>=12&&!record.selectedMedia?.some(m=>m.id===mediaId))throw fail('recording_media_limit','Choose at most twelve media assets.');this.store.writeMedia(id,selected.assetId,bytes);record.selectedMedia=[...(record.selectedMedia??[]).filter(m=>m.id!==mediaId),selected];this.persist(record);return reviewOf(record);
+  }
+  detachMedia(principal:Principal,id:string,mediaId:string){this.authorize(principal);const record=this.get(id);if(record.status!=='stopped'||record.exportId)throw fail('recording_media_locked','Exported recordings cannot be changed.');const media=record.selectedMedia?.find(m=>m.id===mediaId);if(media)this.store.removeMedia(id,media.assetId);record.selectedMedia=record.selectedMedia?.filter(m=>m.id!==mediaId);this.persist(record);return reviewOf(record);}
+  readMedia(principal:Principal,id:string,mediaId:string){this.authorize(principal);const record=this.get(id),media=record.selectedMedia?.find(m=>m.id===mediaId);if(!media)throw fail('recording_media_unavailable','This media is unavailable.',404);this.mediaCurrent(record,media);const bytes=this.store.readMedia(id,media.assetId);if(bytes.length!==media.bytes||digestBytes(bytes)!==media.hash)throw fail('recording_media_changed','The selected media bytes changed.');return {bytes,mime:media.mime};}
   /** Wire only after the source/domain transaction commits. Capture failures never start external work. */
   onCommittedTransition=(input:CommittedTransition):void=>{
     for(const record of this.records.values())if(record.sessionId===input.sessionId&&input.state.session.privacyEpoch!==record.privacyEpoch)this.invalidate(record,'This recording was erased after a source privacy change. Record a new clean session.');
@@ -65,6 +83,11 @@ export class RecordingController {
       if(event.type==='privacy'||event.type==='ban'||event.type==='chat.clear'){this.invalidate(record,'A privacy action erased this recording. Record a new clean session.');return;}
       // The text recorder excludes screen/audio asset objects entirely, including internal paths.
       if(event.type!=='media')record.events.push({atMs,event});
+      if(event.type==='media'){
+        const {clipId:_clipId,manageUrl:_manageUrl,clip:_clip,...media}=input.state.media.find(m=>m.id===event.media.id)??event.media;
+        if((record.mediaEvents?.length??0)>=100&&!record.mediaEvents?.some(m=>m.media.id===media.id))throw new Error('recording_media_capacity');
+        record.mediaEvents=[...(record.mediaEvents??[]).filter(m=>m.media.id!==media.id),{atMs,media:structuredClone(media)}];
+      }
       const append=(operation:RecordedOutcome['operation'],request:unknown,output:unknown,delayMs=0,invocationId?:string,error?:string)=>{record.providers.push({operation,model:this.options.providerModel,schemaVersion:'1',promptVersion:'checked-replay-v1',input:structuredClone(request),output:structuredClone(output),delayMs:Math.max(0,Math.min(60000,delayMs)),...(invocationId?{invocationId}:{}),...(error?{error}:{})});};
       if(event.type==='generation.result'||event.type==='generation.failed'){
         const jobId=event.type==='generation.result'?event.ticket.jobId:event.jobId,request=record.pending[jobId]??(input.previous.pendingGeneration?{request:input.previous.pendingGeneration,atMs:Math.max(0,input.previous.pendingGeneration.requestedAtMs-Date.parse(input.previous.session.startedAt))}:null);
@@ -89,29 +112,33 @@ export class RecordingController {
       collectSources(record,input.effects.filter(e=>e.type==='source.persist').map(e=>e.source));
       for(const effect of input.effects){if(effect.type==='generation.request')record.pending[effect.request.ticket.jobId]={request:effect.request,atMs};if(effect.type==='publication'&&effect.snapshot.chapters.length&&!record.milestones.some(m=>m.id==='published'))record.milestones.push({id:'published',label:'First published context',atMs});}
       if(event.type==='recap.trigger'&&event.trigger.reason==='raid'&&!record.milestones.some(m=>m.id==='raid'))record.milestones.push({id:'raid',label:'Incoming raid',atMs});
-      this.persist(record);
+      record.revision++;record.receipt=null;
+      // A crash always interrupts capture, so only a stopped recording is exportable.
+      // Checkpoint at most once per five seconds instead of rewriting a growing bundle per tick/chat.
+      if(this.options.clock.now()-this.lastCaptureWrite>=5000){this.store.write(record);this.lastCaptureWrite=this.options.clock.now();}
     }catch{record.status='failed';record.message='Recording stopped because a normalized input could not be saved safely. The live session continues.';record.receipt=null;this.active=null;try{this.persist(record);}catch{/* Original session validity remains authoritative after restart. */}}
   };
-  review(principal:Principal,id:string):RecordingReview{this.authorize(principal);return reviewOf(this.get(id));}
+  review(principal:Principal,id:string):RecordingReview{this.authorize(principal);this.outputGate();return reviewOf(this.get(id));}
   approve(principal:Principal,id:string,input:ReviewInput){
-    this.authorize(principal);const record=this.get(id),review=reviewOf(record);
+    this.authorize(principal);this.outputGate();const record=this.get(id),review=reviewOf(record);
     if(review.blockedReasons.length)throw fail('recording_review_blocked',review.blockedReasons[0]!);
     if(input.captureRevision!==record.revision||input.digest!==review.digest)throw fail('recording_review_changed','The recording changed. Review its current contents.');
     if(input.metadataReviewed!==true||review.sources.some(s=>!input.reviewedSources.some(r=>r.id===s.id&&r.revision===s.revision&&r.textHash===s.textHash))||review.outputs.some(o=>!input.reviewedOutputHashes.includes(o.hash)))throw fail('recording_review_incomplete','Review every source excerpt and generated field before exporting.');
+    if(review.media.some(m=>!input.reviewedMedia?.some(r=>r.id===m.id&&r.hash===m.hash&&r.visualReviewed===true&&r.audioReviewed===true)))throw fail('recording_media_review_required','Watch or listen to every selected asset and confirm its visual and audio review.');for(const media of record.selectedMedia??[])this.readMedia(principal,id,media.id);
     // Validate exact replay before issuing a receipt, without making any provider call.
     exportBundle(record);
-    record.receipt={id:randomUUID(),recordingId:id,captureRevision:record.revision,digest:review.digest,sourceReviews:input.reviewedSources,outputHashes:input.reviewedOutputHashes,reviewedBy:principal.actorId,reviewedAt:this.options.clock.iso(),privacyEpoch:record.privacyEpoch};this.store.write(record);
-    return {receiptId:record.receipt.id,recordingId:id,captureRevision:record.revision,mediaPolicy:'excluded' as const,publishing:false};
+    record.receipt={id:randomUUID(),recordingId:id,captureRevision:record.revision,digest:review.digest,sourceReviews:input.reviewedSources,outputHashes:input.reviewedOutputHashes,mediaReviews:input.reviewedMedia??[],reviewedBy:principal.actorId,reviewedAt:this.options.clock.iso(),privacyEpoch:record.privacyEpoch};this.store.write(record);
+    return {receiptId:record.receipt.id,recordingId:id,captureRevision:record.revision,mediaPolicy:'owner-selected' as const,publishing:false};
   }
   export(principal:Principal,id:string,receiptId:string){
-    this.authorize(principal);const record=this.get(id),receipt=record.receipt,review=reviewOf(record);
+    this.authorize(principal);this.outputGate();const record=this.get(id),receipt=record.receipt,review=reviewOf(record);
     if(!receipt||receipt.id!==receiptId||receipt.captureRevision!==record.revision||receipt.digest!==review.digest||receipt.privacyEpoch!==record.privacyEpoch)throw fail('recording_review_required','Review the current recording before exporting.');
     if(!this.options.registerExport)throw fail('recording_export_unconfigured','The private export registry is unavailable.',503);
-    const bundle=exportBundle(record),bytes=new TextEncoder().encode(JSON.stringify(bundle));
-    const asset:ExportAsset={id:'bundle',hash:digestBytes(bytes),bytes:bytes.length,mime:'application/json',kind:'bundle'};
-    const manifest=ManifestSchema.parse({schemaVersion:1,id:bundle.id,revision:1,origin:'own-stream',sourceSessionId:record.sessionId,durationMs:bundle.durationMs,bundleHash:asset.hash,assets:[asset],milestones:bundle.milestones,providerVersions:{model:this.options.providerModel,schema:'1',prompt:'checked-replay-v1'}});
+    const bundle=exportBundle(record),packaged=packageRecordingBundle(bundle);
+    const mediaAssets=(record.selectedMedia??[]).map(media=>({asset:{id:media.assetId,hash:media.hash,bytes:media.bytes,mime:media.mime,kind:media.media.kind as 'video'|'audio'} satisfies ExportAsset,bytes:this.readMedia(principal,id,media.id).bytes}));
+    const manifest=ManifestSchema.parse({schemaVersion:1,id:bundle.id,revision:1,origin:'own-stream',sourceSessionId:record.sessionId,durationMs:bundle.durationMs,bundleHash:packaged.bundleHash,assets:[...packaged.assets.map(m=>m.asset),...mediaAssets.map(m=>m.asset)],milestones:bundle.milestones,providerVersions:{model:this.options.providerModel,schema:'1',prompt:'checked-replay-v1'}});
     const current=this.options.state(record.sessionId!),refs=new Map<string,VersionRef>();for(const source of record.sources){const live=this.options.source?.(source.id)??current.sources.find(s=>s.id===source.id);if(!live||live.status!=='active')throw fail('recording_source_changed','A recorded source is no longer available.');refs.set(live.id,{id:live.id,revision:live.revision});}
-    const result=this.options.registerExport({recordingId:id,reviewReceiptId:receipt.id,scope:this.options.scope,sourceSessionId:record.sessionId!,privacyEpoch:record.privacyEpoch,sourceRefs:[...refs.values()],intervals:record.sources.map(s=>({startMs:s.startMs,endMs:s.endMs})),manifest,assets:[{asset,bytes}],bundle});
+    const result=this.options.registerExport({recordingId:id,reviewReceiptId:receipt.id,scope:this.options.scope,sourceSessionId:record.sessionId!,privacyEpoch:record.privacyEpoch,sourceRefs:[...refs.values()],mediaRefs:(record.selectedMedia??[]).map(m=>({id:m.id,revision:m.media.revision})),intervals:[...record.sources.map(s=>({startMs:s.startMs,endMs:s.endMs})),...(record.selectedMedia??[]).map(m=>({startMs:m.media.captureStartMs,endMs:m.media.captureEndMs}))],manifest,assets:[...packaged.assets,...mediaAssets],bundle});
     record.status='exported';record.exportId=result.exportId;this.store.write(record);return {...result,manifest,uploaded:false,notice:'This export is staged privately. Publishing requires a separate explicit action. Downloaded copies cannot be remotely revoked.'};
   }
 }

@@ -1,4 +1,4 @@
-import {useEffect,useMemo,useState} from 'react';
+import {useEffect,useMemo,useRef,useState} from 'react';
 import {Brand,Button,QuietButton,SegmentedControl} from '../../ui/index.js';
 import {DockPage} from '../dock/index.js';
 import {ScenePreview,renderAt,resolveSceneLayout} from '../overlay/index.js';
@@ -45,7 +45,10 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
   const current=published?.current;
   const currentText=current?.now??chapter?.summary??current?.goal??current?.change;
   const hasContext=!!currentText;
-  const removedContext=!!publishMilestone&&!!t&&t.atMs>=publishMilestone.atMs&&!hasContext;
+  const publicationSeen=useRef<{sessionId:string|null;atMs:number;seen:boolean}>({sessionId:null,atMs:0,seen:false});
+  const sameTimeline=publicationSeen.current.sessionId===(s?.session?.id??null)&&(t?.atMs??0)>=publicationSeen.current.atMs;
+  const removedContext=sameTimeline&&publicationSeen.current.seen&&!hasContext;
+  useEffect(()=>{publicationSeen.current={sessionId:s?.session?.id??null,atMs:t?.atMs??0,seen:hasContext||sameTimeline&&publicationSeen.current.seen};},[s?.session?.id,t?.atMs,hasContext,sameTimeline]);
   const held=!!s?.held.length;
   const incomingSource=!hasContext&&!held&&!removedContext?t?.latestSource:null;
   const incomingExcerpt=incomingSource?sourceExcerpt(incomingSource.text):null;

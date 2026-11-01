@@ -4,14 +4,14 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {createStorage} from '../../src/server/storage/index.js';
-import {StoryEngine} from '../../src/server/runtime/engine.js';
+import {StoryEngine,type EngineOptions} from '../../src/server/runtime/engine.js';
 import {RevisionStream} from '../../src/server/runtime/updates.js';
 import {SafetyService} from '../../src/server/providers/safety.js';
 import type {EventEnvelope,Source} from '../../src/shared/contracts/index.js';
 
 const cleanups:(()=>void)[]=[];
 afterEach(()=>{for(const cleanup of cleanups.splice(0).reverse())cleanup();});
-function fixture(){
+function fixture(onCommittedTransition?:EngineOptions['onCommittedTransition']){
   const directory=mkdtempSync(join(tmpdir(),'previously-hydration-')),path=join(directory,'state.sqlite');
   cleanups.push(()=>rmSync(directory,{recursive:true,force:true}));
   const start=Date.parse('2026-11-02T00:00:00Z'),clock={now:()=>start+10000,iso:()=>new Date(start+10000).toISOString()};
@@ -20,6 +20,7 @@ function fixture(){
   const engine=new StoryEngine({scope,channel:{id:'channel',login:'fixture',displayName:'Fixture'},storage,clock,updates,
     safety:new SafetyService({classify:async()=>({decision:'review',spans:[]})},{moderate:async()=> 'unavailable'}),
     story:{propose:async()=>{throw new Error('No provider calls in hydration tests.');}},
+    onCommittedTransition,
   });
   storage.repository.createSession(scope,{id:'session',startedAt:new Date(start).toISOString()});
   storage.repository.updateSettings(scope,0,{listeningPaused:false});
@@ -86,5 +87,44 @@ describe('checkpoint hot path keeps authoritative storage fences',()=>{
     const forgotten=await f.engine.dispatch('session',{type:'privacy',target:{kind:'session',sessionId:'session'}});
     expect(forgotten.captureEpoch).toBe(f.engine.state('session').captureEpoch);
     expect(forgotten.session).toEqual(f.engine.state('session').session);expect(forgotten.lastReceipt).toEqual(f.engine.state('session').lastReceipt);
+  });
+});
+
+describe('bounded durable chat intake batches',()=>{
+  const payload=(id:string)=>({chatter_user_id:'viewer',message_id:id,message:{text:`Authored chat ${id}`}});
+  it('keeps per-message identity and publishes callbacks only after the whole batch commits',async()=>{
+    const observed:{visible:number;before:number;after:number}[]=[];
+    const f=fixture(transition=>observed.push({visible:f.repository.listSources(f.scope,'session').length,before:transition.previous.sources.length,after:transition.state.sources.length}));
+    const a=f.event('batch-a',payload('a'),'channel.chat.message'),b=f.event('batch-b',payload('b'),'channel.chat.message');
+    await f.engine.ingestBatch([a,b,a]);
+    expect(f.engine.state('session').sources.map(source=>source.id)).toEqual(['chat:a','chat:b']);
+    expect(observed).toEqual([{visible:2,before:0,after:1},{visible:2,before:1,after:2}]);
+    expect(f.repository.listPendingDomainEvents(f.scope,'session')).toEqual([]);
+  });
+  it('rolls back every message and emits no callback if any source cannot commit',async()=>{
+    let observed=0;const f=fixture(()=>{observed++;});
+    f.sql("CREATE TRIGGER reject_batch BEFORE INSERT ON sources WHEN NEW.id='chat:b' BEGIN SELECT RAISE(ABORT,'authored batch failure'); END");
+    const events=['a','b'].map(id=>f.event(`batch-${id}`,payload(id),'channel.chat.message'));
+    await expect(f.engine.ingestBatch(events)).rejects.toThrow('could not be saved');
+    expect(f.repository.getSource(f.scope,'chat:a')).toBeNull();expect(f.repository.getDomainCheckpoint(f.scope,'session').checkpoint).toBeNull();expect(observed).toBe(0);
+    f.sql('DROP TRIGGER reject_batch');await f.engine.ingestBatch(events);
+    expect(f.engine.state('session').sources).toHaveLength(2);expect(observed).toBe(2);
+  });
+  it('observes a preceding pause before normalizing queued chat',async()=>{
+    const f=fixture();
+    const pause=f.engine.dispatch('session',{type:'tick'},{settingsPatch:{baseRevision:1,patch:{listeningPaused:true}}});
+    const chat=f.engine.ingestBatch([f.event('after-pause',payload('after-pause'),'channel.chat.message')]);
+    await Promise.all([pause,chat]);expect(f.engine.state('session').sources).toEqual([]);
+  });
+  it('retains prior privacy tombstones and refuses to mix privacy or different sessions into chat batches',async()=>{
+    const f=fixture();
+    await f.engine.dispatch('session',{type:'privacy',target:{kind:'message',sessionId:'session',externalMessageId:'deleted'}});
+    await f.engine.ingestBatch(['deleted','allowed'].map(id=>f.event(id,payload(id),'channel.chat.message')));
+    expect(f.engine.state('session').sources.map(source=>source.id)).toEqual(['chat:allowed']);
+    const valid=f.event('valid',payload('valid'),'channel.chat.message');
+    await expect(f.engine.ingestBatch([valid,f.event('privacy',{message_id:'allowed'},'channel.chat.message_delete')])).rejects.toMatchObject({code:'invalid_chat_batch'});
+    await expect(f.engine.ingestBatch([valid,{...valid,sessionId:'other'}])).rejects.toMatchObject({code:'invalid_chat_batch'});
+    await expect(f.engine.ingestBatch(Array.from({length:21},()=>valid))).rejects.toMatchObject({code:'invalid_chat_batch'});
+    expect(f.engine.state('session').sources.map(source=>source.id)).toEqual(['chat:allowed']);
   });
 });

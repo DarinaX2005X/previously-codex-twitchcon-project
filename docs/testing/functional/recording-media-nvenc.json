@@ -1,0 +1,15 @@
+{
+  "checkedAt": "2026-11-01T22:08:29.258Z",
+  "material": "Authored ffmpeg test pattern. No real streamer, provider, or clip.",
+  "encoder": "h264_nvenc",
+  "originalBytes": 10047164,
+  "exportBytes": 2389596,
+  "durationMs": 12000,
+  "mime": "video/mp4",
+  "decoded": true,
+  "durationToleranceMs": 250,
+  "retainedOriginalInterval": [
+    1000,
+    13000
+  ]
+}

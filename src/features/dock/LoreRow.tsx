@@ -1,19 +1,19 @@
 import { useRef, useState } from 'react';
-import { safetyAllowsPublication, type Lore } from '../../shared/contracts';
+import { safetyAllowsPublication, type Lore, type InvalidationReceipt } from '../../shared/contracts';
 import { ActionGroup, Button, Field, InlineNotice, QuietButton, Sheet, SourceDisclosure, Textarea, Timecode } from '../../ui';
 import { errorCode } from './model';
 import type { DockOwnerPort } from './ports';
 
-export function LoreRow({ lore, owner, onSaved, onSource }: { lore: Lore; owner?: DockOwnerPort; onSaved(): void; onSource(): void }) {
+export function LoreRow({ lore, owner, onSaved, onSource }: { lore: Lore; owner?: DockOwnerPort; onSaved(result?: Lore | InvalidationReceipt): void; onSource(): void }) {
   const [open, setOpen] = useState(false), [editing, setEditing] = useState(false);
   const [term, setTerm] = useState(lore.term), [explanation, setExplanation] = useState(lore.explanation);
   const [origin, setOrigin] = useState(lore.originMs === null ? '' : String(lore.originMs / 1000));
   const [pending, setPending] = useState(''), [error, setError] = useState('');
   const busy = useRef(false);
-  async function act(action: string, run: () => Promise<unknown>) {
+  async function act(action: string, run: () => Promise<Lore | InvalidationReceipt>) {
     if (busy.current) return;
     busy.current = true; setPending(action); setError('');
-    try { await run(); setEditing(false); onSaved(); }
+    try { const result = await run(); setEditing(false); onSaved(result); }
     catch (cause) { setError(errorCode(cause) === 'revision_conflict' ? 'This origin changed. Compare the refreshed version before confirming. Your edit is still here.' : 'Could not save this lore. Your edit is still here. Try again.'); onSaved(); }
     finally { busy.current = false; setPending(''); }
   }
