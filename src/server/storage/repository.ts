@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Scope, Source, EventEnvelope, VersionRef, GenerationTicket, StoryPatch, PrivacyTarget, InvalidationReceipt, CommitResult } from '../../shared/contracts/index.js';
+import type { Scope, Source, Session, EventEnvelope, VersionRef, GenerationTicket, StoryPatch, PrivacyTarget, InvalidationReceipt, CommitResult } from '../../shared/contracts/index.js';
 import { SourceSchema, EventEnvelopeSchema, GenerationTicketSchema, StoryPatchSchema, PrivacyTargetSchema } from '../../shared/contracts/index.js';
 import { StorageDatabase, StorageError, integer, json } from './database.js';
 
@@ -7,6 +7,7 @@ export type WorkInput = {id?: string; sessionId: string; kind: string; businessK
 export type WorkLease = {id: string; sessionId: string; kind: string; payload: unknown; privacyEpoch: number; leaseToken: string; leaseUntilMs: number; attempts: number; publishSeq: number|null};
 export type EntityInput = {id: string; sessionId: string; kind: 'claim'|'relation'|'chapter'|'current_state'|'presentation'|'lore'|'moment'|'media'|'playback'|'provider_cache'|'export'; body: unknown; refs: VersionRef[]; startMs?: number; endMs?: number};
 export type PrivacyOptions = {idempotencyKey: string; reason: string};
+export const normalizeBlockedTerm=(term:string):string=>term.normalize('NFKC').toLowerCase().replace(/\s+/gu,' ').trim();
 const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -28,19 +29,30 @@ export class SqliteRepository {
       this.db.run('INSERT INTO publication_sync(channel_id,run_id) VALUES(?,?) ON CONFLICT DO NOTHING', ...this.scope(scope));
     });
   }
-  createSession(scope: Scope, input: {id: string; startedAt: string; twitchStreamId?: string|null}) {
+  createSession(scope: Scope, input: {id: string; startedAt: string; twitchStreamId?: string|null;title?:string;category?:string}) {
     return this.db.transaction(() => {
       if (input.twitchStreamId) {
         const existing = this.db.get('SELECT id FROM sessions WHERE channel_id=? AND run_id=? AND stream_id=?', ...this.scope(scope), input.twitchStreamId);
         if (existing) return {id: String(existing.id), created: false};
       }
-      this.db.run('INSERT INTO sessions(channel_id,run_id,id,stream_id,started_at) VALUES(?,?,?,?,?)', ...this.scope(scope), input.id, input.twitchStreamId ?? null, input.startedAt);
+      this.db.run('INSERT INTO sessions(channel_id,run_id,id,stream_id,started_at,title,category) VALUES(?,?,?,?,?,?,?)', ...this.scope(scope), input.id, input.twitchStreamId ?? null, input.startedAt,input.title ?? '',input.category ?? '');
       return {id: input.id, created: true};
     });
   }
-  getSession(scope: Scope, id: string) {
+  getSession(scope: Scope, id: string):Session {
     const row = this.session(scope,id);
-    return {id: String(row.id), startedAt: String(row.started_at), endedAt: row.ended_at === null ? null : String(row.ended_at), status: String(row.status), privacyEpoch: Number(row.privacy_epoch), publicationRevision: Number(row.publication_revision)};
+    return {...scope,id: String(row.id),twitchStreamId:row.stream_id === null ? null : String(row.stream_id),title:String(row.title),category:String(row.category), startedAt: String(row.started_at), endedAt: row.ended_at === null ? null : String(row.ended_at), status: String(row.status) as Session['status'], privacyEpoch: Number(row.privacy_epoch), publicationRevision: Number(row.publication_revision),metadataMaxDependencyEndMs:Number(row.metadata_end_ms),finalizedAt:row.finalized_at === null ? null : String(row.finalized_at),finalSnapshotAckAt:row.final_snapshot_ack_at === null ? null : String(row.final_snapshot_ack_at)};
+  }
+  updateSession(scope:Scope,id:string,patch:Partial<Pick<Session,'title'|'category'|'status'|'endedAt'|'metadataMaxDependencyEndMs'|'finalizedAt'|'finalSnapshotAckAt'>>):Session {
+    return this.db.transaction(()=>{
+      const current=this.getSession(scope,id),next={...current,...patch};
+      if (this.sessionForgotten(scope,id) && (next.title || next.category || next.metadataMaxDependencyEndMs)) throw new StorageError('conflict','Forgotten session metadata cannot be restored.');
+      if ((current.status==='finalized' && next.status!=='finalized') || (current.status==='closing' && next.status==='live')) throw new StorageError('conflict','A closed session cannot be reopened.');
+      if (next.status==='finalized' && (!next.endedAt || !next.finalizedAt)) throw new StorageError('invalid_input','Finalization requires end and finalization times.');
+      if (next.title.length>200 || next.category.length>100) throw new StorageError('invalid_input','Session metadata exceeds its limit.');
+      this.db.run('UPDATE sessions SET title=?,category=?,status=?,ended_at=?,metadata_end_ms=?,finalized_at=?,final_snapshot_ack_at=? WHERE channel_id=? AND run_id=? AND id=?',next.title,next.category,next.status,next.endedAt,integer(next.metadataMaxDependencyEndMs),next.finalizedAt,next.finalSnapshotAckAt,...this.scope(scope),id);
+      return next;
+    });
   }
   listSessions(scope: Scope, options: {limit?: number; cursor?: {startedAt: string; id: string}} = {}) {
     const limit = Math.min(integer(options.limit ?? 50, 1),50), cursor = options.cursor;
@@ -63,9 +75,11 @@ export class SqliteRepository {
   private tombstoned(scope: Scope, source: Source): boolean {
     return !!this.db.get(`SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND (
       kind='session' OR (kind='source' AND target_id=?) OR (kind='message' AND target_id=?) OR
-      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND from_ms<=? AND to_ms>=?) OR
-      (kind='term' AND instr(lower(?),lower(target_id))>0)) LIMIT 1`,
-    ...this.scope(scope), source.sessionId, source.id, source.externalMessageId, source.actorId,source.endMs,source.endMs,source.startMs,source.text ?? '');
+      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND from_ms<=? AND to_ms>=?)) LIMIT 1`,
+    ...this.scope(scope), source.sessionId, source.id, source.externalMessageId, source.actorId,source.endMs,source.endMs,source.startMs);
+  }
+  private sessionForgotten(scope:Scope,sessionId:string):boolean {
+    return !!this.db.get("SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND kind='session' LIMIT 1",...this.scope(scope),sessionId);
   }
   ingest(event: EventEnvelope<unknown>, effects: {sources?: Source[]; jobs?: WorkInput[]; outbox?: WorkInput[]} = {}): {accepted: boolean; eventId: string} {
     if (!EventEnvelopeSchema.safeParse(event).success || effects.sources?.some(source=>!SourceSchema.safeParse(source).success)) throw new StorageError('invalid_input','Evidence does not match the shared contract.');
@@ -74,7 +88,7 @@ export class SqliteRepository {
       if (old) return {accepted:false,eventId:String(old.id)};
       if (event.sessionId) this.session(event,event.sessionId);
       this.db.run('INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?,?,?)',...this.scope(event),event.eventId,event.sessionId,event.externalId,event.origin,event.kind,event.occurredAt,event.receivedAt,event.sessionOffsetMs,json(event.payload));
-      let redacted = false;
+      let redacted = event.sessionId!==null && this.sessionForgotten(event,event.sessionId);
       for (const source of effects.sources ?? []) {
         if (source.channelId !== event.channelId || source.runId !== event.runId || source.sessionId !== event.sessionId) throw new StorageError('inaccessible','Source scope does not match its event.');
         redacted = this.insertSource(event,source) || redacted;
@@ -112,6 +126,8 @@ export class SqliteRepository {
   }
   private insertEntity(scope: Scope,input: EntityInput): void {
     this.session(scope,input.sessionId);
+    if(this.sessionForgotten(scope,input.sessionId)) throw new StorageError('conflict','The session was forgotten.');
+    if (input.kind==='lore' && this.loreTerms(input.body).some(term=>this.isTermBlocked(scope,input.sessionId,term))) throw new StorageError('conflict','This lore term is blocked.');
     if (this.db.get('SELECT 1 FROM sources WHERE channel_id=? AND run_id=? AND id=?',...this.scope(scope),input.id)) throw new StorageError('conflict','Entity ID is already used by a source.');
     this.db.run('INSERT INTO entities(channel_id,run_id,id,session_id,kind,body,start_ms,end_ms) VALUES(?,?,?,?,?,?,?,?)',...this.scope(scope),input.id,input.sessionId,input.kind,json(input.body),input.startMs ?? null,input.endMs ?? null);
     this.edges(scope,input.id,input.refs,'supports');
@@ -121,12 +137,41 @@ export class SqliteRepository {
     if (!row) return null;
     return {id:String(row.id),sessionId:String(row.session_id),kind:String(row.kind),revision:Number(row.revision),ownerRevision:Number(row.owner_revision),ownerLocked:Boolean(row.owner_locked),pinned:Boolean(row.pinned),status:String(row.status),body:row.body === null ? null : JSON.parse(String(row.body)) as unknown};
   }
+  listEntities(scope:Scope,sessionId:string,options:{kind?:EntityInput['kind'];status?:'active'|'hidden';limit?:number;afterId?:string}={}) {
+    this.session(scope,sessionId);
+    const rows=this.db.all(`SELECT id FROM entities WHERE channel_id=? AND run_id=? AND session_id=? AND id>? ${options.kind ? 'AND kind=?' : ''} ${options.status ? 'AND status=?' : ''} ORDER BY id LIMIT ?`,...this.scope(scope),sessionId,options.afterId ?? '',...(options.kind ? [options.kind] : []),...(options.status ? [options.status] : []),Math.min(integer(options.limit ?? 100,1),500));
+    return rows.map(row=>this.getEntity(scope,String(row.id))!);
+  }
+  private loreTerms(body:unknown):string[] {
+    if (!body || typeof body!=='object') return [];
+    const value=body as {term?:unknown;canonicalPhrase?:unknown;aliases?:unknown};
+    return [value.term,value.canonicalPhrase,...(Array.isArray(value.aliases) ? value.aliases : [])].filter((term):term is string=>typeof term==='string').map(normalizeBlockedTerm);
+  }
+  isTermBlocked(scope:Scope,_sessionId:string,term:string):boolean {
+    return !!this.db.get('SELECT 1 FROM blocked_terms WHERE channel_id=? AND run_id=? AND term=?',...this.scope(scope),normalizeBlockedTerm(term));
+  }
+  listBlockedTerms(scope:Scope,sessionId:string,options:{limit?:number;afterTerm?:string}={}):string[] {
+    this.session(scope,sessionId);
+    return this.db.all('SELECT term FROM blocked_terms WHERE channel_id=? AND run_id=? AND term>? ORDER BY term LIMIT ?',...this.scope(scope),options.afterTerm ?? '',Math.min(integer(options.limit ?? 100,1),500)).map(row=>String(row.term));
+  }
+  /** Upgrade-only reconciliation: a block saved under the old session scope becomes channel-wide. */
+  reconcileLegacyTermBlocks():void {
+    const matches=new Map<string,{scope:Scope;sessionId:string;term:string}>();
+    for(const row of this.db.raw.prepare("SELECT channel_id,run_id,session_id,body FROM entities WHERE kind='lore' AND status='active' AND body IS NOT NULL").iterate()) {
+      const scope={channelId:String(row.channel_id),runId:String(row.run_id)},sessionId=String(row.session_id);
+      for(const term of this.loreTerms(JSON.parse(String(row.body)))) if(this.isTermBlocked(scope,sessionId,term)) {
+        matches.set(digest([scope,term]),{scope,sessionId,term});
+      }
+    }
+    for(const [key,{scope,sessionId,term}] of matches) this.invalidate(scope,{kind:'term',sessionId,term},{idempotencyKey:`global-term-upgrade:${key}`,reason:'scope_upgrade'});
+  }
   private insertWork(table:'jobs'|'outbox',scope:Scope,input:WorkInput): string {
     const session=this.session(scope,input.sessionId);
+    if(input.kind!=='retract' && this.sessionForgotten(scope,input.sessionId)) throw new StorageError('conflict','The session was forgotten.');
     const previous=this.db.get(`SELECT id FROM ${table} WHERE channel_id=? AND run_id=? AND business_key=?`,...this.scope(scope),input.businessKey);
     if (previous) return String(previous.id);
-    const pending=this.db.get(`SELECT COUNT(*) AS count FROM ${table} WHERE channel_id=? AND run_id=? AND state IN ('queued','running') ${input.kind==='stt' ? "AND kind='stt'" : ''}`,...this.scope(scope))!;
-    if (Number(pending.count)>=(input.kind==='stt' ? 5 : 1000) && input.kind!=='retract') throw new StorageError('capacity','Durable work queue is full.');
+    const pending=this.db.get(`SELECT COUNT(*) AS count FROM ${table} WHERE channel_id=? AND run_id=? AND ${input.kind==='stt' ? "state='queued' AND kind='stt'" : "state IN ('queued','running')"}`,...this.scope(scope))!;
+    if (Number(pending.count)>=(input.kind==='stt' ? 3 : 1000) && input.kind!=='retract') throw new StorageError('capacity','Durable work queue is full.');
     const id=input.id ?? randomUUID();
     this.db.run(`INSERT INTO ${table}(channel_id,run_id,id,session_id,kind,business_key,payload,privacy_epoch,priority,next_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?)`,...this.scope(scope),id,input.sessionId,input.kind,input.businessKey,json(input.payload),Number(session.privacy_epoch),input.priority ?? 0,input.nextAtMs ?? this.now());
     if (table==='outbox' && ['publish','retract','export_manifest'].includes(input.kind)) this.assignPublicationSequence(scope,id);
@@ -171,7 +216,7 @@ export class SqliteRepository {
     if (!GenerationTicketSchema.safeParse(ticket).success) throw new StorageError('invalid_input','Generation ticket does not match the shared contract.');
     this.db.transaction(()=>{
       const session=this.session(ticket,ticket.sessionId), entity=this.getEntity(ticket,entityId);
-      if (Number(session.privacy_epoch)!==ticket.privacyEpoch || !entity || entity.status!=='active' || entity.ownerLocked || entity.revision!==ticket.baseEntityRevision) throw new StorageError('conflict','Generation context changed.');
+      if (Number(session.privacy_epoch)!==ticket.privacyEpoch || !entity || entity.sessionId!==ticket.sessionId || entity.status!=='active' || entity.ownerLocked || entity.revision!==ticket.baseEntityRevision) throw new StorageError('conflict','Generation context changed.');
       if (ticket.inputRefs.length>500) throw new StorageError('capacity','Generation context exceeds 500 records.');
       this.edges(ticket,ticket.jobId,ticket.inputRefs,'exposed_to');
       this.db.run('INSERT INTO generation_jobs VALUES(?,?,?,?,?,?,\'registered\')',...this.scope(ticket),ticket.jobId,ticket.sessionId,entityId,json(ticket));
@@ -185,7 +230,7 @@ export class SqliteRepository {
       if (!job || job.status!=='registered' || digest(JSON.parse(String(job.ticket)))!==digest(ticket)) return {committed:false,reason:'ticket_unavailable'};
       const session=this.session(ticket,ticket.sessionId), entity=this.getEntity(ticket,String(job.entity_id));
       if (Number(session.privacy_epoch)!==ticket.privacyEpoch) return {committed:false,reason:'privacy_changed'};
-      if (!entity || entity.status!=='active' || entity.ownerLocked || entity.revision!==ticket.baseEntityRevision || entity.ownerRevision!==(ticket.ownerEditRevision ?? 0)) return {committed:false,reason:'owner_or_entity_changed'};
+      if (!entity || entity.sessionId!==ticket.sessionId || entity.status!=='active' || entity.ownerLocked || entity.revision!==ticket.baseEntityRevision || entity.ownerRevision!==(ticket.ownerEditRevision ?? 0)) return {committed:false,reason:'owner_or_entity_changed'};
       if (patch.sessionId!==ticket.sessionId || patch.baseRevision!==ticket.baseEntityRevision || !ticket.inputRefs.every(ref=>this.ref(ticket,ref))) return {committed:false,reason:'inputs_changed'};
       const allowed=new Map(ticket.inputRefs.map(ref=>[ref.id,ref.revision]));
       const supports=[...patch.claims.flatMap(claim=>claim.support),...patch.relations.flatMap(relation=>relation.support)];
@@ -217,6 +262,7 @@ export class SqliteRepository {
       const session=this.session(scope,entity.sessionId),id=randomUUID();
       this.db.run('INSERT INTO publication_candidates VALUES(?,?,?,?,?,?,?,?,?,\'pending\',0,?)',...this.scope(scope),id,entity.sessionId,entityId,entity.revision,ownerRevision,Number(session.privacy_epoch),this.now(),json(body));
       this.edges(scope,id,refs,'exposed_to');
+      this.edges(scope,entityId,refs,'exposed_to');
       // Preserve lineage even if an editorial caller omits the old supporting refs.
       this.db.run("INSERT OR IGNORE INTO dependencies SELECT channel_id,run_id,parent_id,parent_revision,?,'exposed_to' FROM dependencies WHERE channel_id=? AND run_id=? AND child_id=?",id,...this.scope(scope),entityId);
       return id;
@@ -262,7 +308,14 @@ export class SqliteRepository {
     });
   }
   pinEntity(scope:Scope,id:string,baseRevision:number,pinned:boolean):boolean {
-    return this.db.run("UPDATE entities SET pinned=? WHERE channel_id=? AND run_id=? AND id=? AND revision=? AND status='active'",Number(pinned),...this.scope(scope),id,baseRevision).changes===1;
+    return this.db.transaction(()=>{
+      const entity=this.getEntity(scope,id);
+      if(!entity || entity.status!=='active' || entity.revision!==baseRevision) return false;
+      this.db.run("UPDATE entities SET pinned=?,revision=revision+1 WHERE channel_id=? AND run_id=? AND id=? AND revision=? AND status='active'",Number(pinned),...this.scope(scope),id,baseRevision);
+      this.db.run('UPDATE sessions SET publication_revision=publication_revision+1 WHERE channel_id=? AND run_id=? AND id=?',...this.scope(scope),entity.sessionId);
+      this.insertWork('outbox',scope,{sessionId:entity.sessionId,kind:'publish',businessKey:`pin:${id}:${baseRevision+1}`,payload:{entityId:id,revision:baseRevision+1,pinned},priority:10});
+      return true;
+    });
   }
   invalidate(scope:Scope,target:PrivacyTarget,options:PrivacyOptions):InvalidationReceipt {
     if (!PrivacyTargetSchema.safeParse(target).success || !options.idempotencyKey || options.idempotencyKey.length>160) throw new StorageError('invalid_input','Privacy request does not match the shared contract.');
@@ -281,14 +334,26 @@ export class SqliteRepository {
         case 'user':where='actor_id=? AND end_ms<=?';params=[target.actorId,integer(target.throughMs)];targetId=target.actorId;toMs=target.throughMs;break;
         case 'interval':where='start_ms<=? AND end_ms>=?';params=[integer(target.toMs),integer(target.fromMs)];fromMs=target.fromMs;toMs=target.toMs;if(fromMs>toMs)throw new StorageError('invalid_input','Privacy interval is invalid.');break;
         case 'session':where='1=1';break;
-        case 'term':where='instr(lower(text),lower(?))>0';params=[target.term];targetId=target.term;break;
+        case 'term':where='0=1';targetId=normalizeBlockedTerm(target.term);break;
         case 'entity':where='0=1';targetId=target.id;break;
       }
       // Reasons are codes, never free-form source text. Receipts contain only IDs and statuses.
-      this.db.run('INSERT INTO source_tombstones VALUES(?,?,?,?,?,?,?,?,?)',...this.scope(scope),randomUUID(),target.sessionId,target.kind,targetId,fromMs,toMs,'privacy');
+      if(target.kind==='term') this.db.run('INSERT INTO blocked_terms VALUES(?,?,?) ON CONFLICT DO NOTHING',...this.scope(scope),targetId);
+      else this.db.run('INSERT INTO source_tombstones VALUES(?,?,?,?,?,?,?,?,?)',...this.scope(scope),randomUUID(),target.sessionId,target.kind,targetId,fromMs,toMs,'privacy');
       this.db.raw.exec('CREATE TEMP TABLE IF NOT EXISTS affected(id TEXT PRIMARY KEY); DELETE FROM affected;');
       this.db.run(`INSERT INTO affected SELECT id FROM sources WHERE channel_id=? AND run_id=? AND session_id=? AND (${where})`,...this.scope(scope),target.sessionId,...params);
+      if(target.kind==='session') {
+        this.db.run('INSERT OR IGNORE INTO affected SELECT id FROM entities WHERE channel_id=? AND run_id=? AND session_id=?',...this.scope(scope),target.sessionId);
+        this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND session_id=?',...this.scope(scope),target.sessionId);
+        this.db.run("UPDATE sessions SET title='',category='',metadata_end_ms=0 WHERE channel_id=? AND run_id=? AND id=?",...this.scope(scope),target.sessionId);
+        this.db.run('UPDATE capture_leases SET epoch=epoch+1,expires_at_ms=0,actor_id=NULL WHERE channel_id=? AND run_id=? AND session_id=?',...this.scope(scope),target.sessionId);
+      }
       if (target.kind==='entity') this.db.run('INSERT OR IGNORE INTO affected SELECT id FROM entities WHERE channel_id=? AND run_id=? AND session_id=? AND id=?',...this.scope(scope),target.sessionId,target.id);
+      if (target.kind==='term') {
+        for (const row of this.db.raw.prepare("SELECT id,body FROM entities WHERE channel_id=? AND run_id=? AND kind='lore' AND status='active'").iterate(...this.scope(scope))) {
+          if (row.body && this.loreTerms(JSON.parse(String(row.body))).includes(targetId!)) this.db.run('INSERT OR IGNORE INTO affected VALUES(?)',String(row.id));
+        }
+      }
       // Media can expose speech/chat independent of its caption; overlap is a separate root.
       this.db.run(`INSERT OR IGNORE INTO affected SELECT e.id FROM entities e WHERE e.channel_id=? AND e.run_id=? AND e.session_id=? AND e.kind='media'
         AND (EXISTS (SELECT 1 FROM sources s JOIN affected a ON a.id=s.id WHERE s.channel_id=e.channel_id AND s.run_id=e.run_id AND s.start_ms<=e.end_ms AND s.end_ms>=e.start_ms)
@@ -324,6 +389,7 @@ export class SqliteRepository {
   acquireCapture(scope:Scope,sessionId:string,actorId:string,takeover=false,ttlMs=12000) {
     return this.db.transaction(()=>{
       this.session(scope,sessionId);
+      if(this.sessionForgotten(scope,sessionId)) throw new StorageError('conflict','The session was forgotten.');
       const current=this.db.get('SELECT * FROM capture_leases WHERE channel_id=? AND run_id=?',...this.scope(scope));
       if (current && Number(current.expires_at_ms)>this.now() && (current.actor_id!==actorId||current.session_id!==sessionId) && !takeover) throw new StorageError('conflict','Another browser is capturing audio.');
       const epoch=Number(current?.epoch ?? 0)+1,expiresAtMs=this.now()+Math.min(integer(ttlMs,1),30000);

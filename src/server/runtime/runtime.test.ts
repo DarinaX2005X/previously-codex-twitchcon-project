@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,7 +26,13 @@ async function appRequest(options: Partial<AppOptions> = {}) {
   const server = createServer(app); servers.push(server);
   await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing test address');
-  return (path: string, init: RequestInit = {}) => fetch(`http://127.0.0.1:${address.port}${path}`, {...init, headers: {Host: 'localhost:4317', ...init.headers}});
+  return (path: string, init: RequestInit = {}) => new Promise<Response>((done, reject) => {
+    const request = httpRequest({hostname: '127.0.0.1', port: address.port, path, method: init.method ?? 'GET', headers: {Host: 'localhost:4317', ...(init.headers as Record<string, string>)}}, response => {
+      const chunks: Buffer[] = []; response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.on('end', () => done(new Response(Buffer.concat(chunks), {status: response.statusCode ?? 500})));
+    });
+    request.on('error', reject); request.end(typeof init.body === 'string' ? init.body : undefined);
+  });
 }
 
 describe('safe configuration and instance ownership', () => {
@@ -76,6 +82,13 @@ describe('HTTP security and truthful setup', () => {
     expect((await request('/api/setup/status', {headers: {Origin: 'https://hostile.example'}})).status).toBe(403);
     expect((await request('/api/owner/settings', {method: 'POST'})).status).toBe(403);
   });
+  it('permits a top-level OAuth return to reach the auth adapter, while keeping other cross-site routes closed', async () => {
+    const router = express.Router(); router.get('/auth/twitch/callback', (_req, res) => {res.status(400).json({error: {code: 'oauth_state_required'}});});
+    const request = await appRequest({routers: {auth: router}});
+    const headers = {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate'};
+    expect((await request('/auth/twitch/callback', {headers})).status).toBe(400);
+    expect((await request('/api/setup/status', {headers})).status).toBe(403);
+  });
   it('requires valid role, CSRF and idempotency on owner mutations', async () => {
     const router = express.Router(); router.post('/change', (_req, res) => {res.json({saved: true});});
     const request = await appRequest({auth: {authenticate: () => principal}, routers: {owner: router}});
@@ -107,6 +120,13 @@ describe('bounded identifiers-only updates', () => {
   it('refuses text fields instead of retaining deleted content in the event ring', () => {
     const stream = new RevisionStream();
     expect(() => stream.publish({channelId: 'c', runId: 'live', event: 'snapshot.changed', data: {sessionId: 's', revision: 1, text: 'private'}} as never)).toThrow();
+  });
+  it('assigns distinct transport cursors to events sharing a publication revision', () => {
+    const stream = new RevisionStream();
+    stream.publish({channelId: principal.channelId, runId: 'live', event: 'privacy.invalidated', data: {sessionId: null, revision: 4}});
+    stream.publish({channelId: principal.channelId, runId: 'live', event: 'snapshot.changed', data: {sessionId: null, revision: 4}});
+    const replay = stream.catchUp(principal, 1);
+    expect(replay.records.map(event => [event.id, event.data.revision])).toEqual([[2, 4]]);
   });
 });
 

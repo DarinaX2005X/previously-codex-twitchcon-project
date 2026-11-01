@@ -8,11 +8,13 @@ export type { WorkInput, WorkLease, EntityInput, PrivacyOptions } from './reposi
 export { TokenVault, SessionStore, hashOpaqueId } from './auth.js';
 export { BudgetStore } from './budget.js';
 
-export function createStorage(options:{path:string;now?:()=>number;encryptionKey?:Uint8Array;keyVersion?:number}) {
-  const db=new StorageDatabase(options.path),now=options.now ?? Date.now;
+export function createStorage(options:{path:string;now?:()=>number;encryptionKey?:Uint8Array;keyVersion?:number;maxBytes?:number}) {
+  const db=new StorageDatabase(options.path,options.maxBytes),now=options.now ?? Date.now;
   try {
+    const repository=new SqliteRepository(db,now);
+    if(db.reconcileGlobalTerms)repository.reconcileLegacyTermBlocks();
     return {
-      repository:new SqliteRepository(db,now),
+      repository,
       sessions:new SessionStore(db,now),
       budget:new BudgetStore(db,now),
       tokenVault:options.encryptionKey ? new TokenVault(db,options.encryptionKey,options.keyVersion ?? 1) : null,

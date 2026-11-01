@@ -7,7 +7,7 @@
   "engines": { "node": ">=22.13.0" },
   "scripts": {
     "setup:local": "node scripts/setup/local.mjs",
-    "dev": "tsx watch src/server/index.ts",
+    "dev": "tsx watch src/server/index.ts --recover-stale-lock",
     "dev:ui": "vite --host 127.0.0.1",
     "build": "vite build && node scripts/build-server.mjs",
     "build:public": "vite build --mode public",

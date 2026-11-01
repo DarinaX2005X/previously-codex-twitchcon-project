@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -22,6 +22,10 @@ function processExists(pid: number): boolean {
 export function acquireInstanceLock(dataDirectory: string, recoverStale = false): {release(): void} {
   mkdirSync(dataDirectory, {recursive: true});
   const path = resolve(realpathSync(dataDirectory), 'instance.lock');
+  const acquisition = resolve(realpathSync(dataDirectory), 'instance-acquiring');
+  try {mkdirSync(acquisition);} catch {throw new InstanceLockError('Another startup is checking this data directory. If it crashed, inspect the instance-acquiring directory while all instances are stopped.');}
+  let record: LockRecord;
+  try {
   if (existsSync(path)) {
     const old = readLock(path);
     if (processExists(old.pid)) throw new InstanceLockError('Another Previously instance already owns this data directory.');
@@ -29,10 +33,11 @@ export function acquireInstanceLock(dataDirectory: string, recoverStale = false)
     if (readLock(path).instanceId !== old.instanceId) throw new InstanceLockError('The instance lock changed. Try again.');
     unlinkSync(path);
   }
-  const record: LockRecord = {pid: process.pid, instanceId: randomUUID()};
+  record = {pid: process.pid, instanceId: randomUUID()};
   let fd: number;
   try {fd = openSync(path, 'wx', 0o600);} catch {throw new InstanceLockError('Another Previously instance acquired this data directory.');}
   try {writeFileSync(fd, JSON.stringify(record), 'utf8');} finally {closeSync(fd);}
+  } finally {rmdirSync(acquisition);}
   let released = false;
   return {release() {
     if (released) return;

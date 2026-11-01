@@ -6,8 +6,10 @@ export class BudgetStore {
   setPaidEnabled(enabled: boolean) { this.db.run('UPDATE budget_policy SET paid_enabled=? WHERE id=1', Number(enabled)); }
   status() {
     const policy = this.db.get('SELECT * FROM budget_policy WHERE id=1')!;
-    const used = this.db.get(`SELECT COALESCE(SUM(CASE WHEN state='settled' THEN actual_microusd WHEN state='reserved' THEN amount_microusd ELSE 0 END),0) AS used FROM budget_reservations`)!;
-    return {enabled: Boolean(policy.paid_enabled), limitMicroUsd: Number(policy.limit_microusd), usedMicroUsd: Number(used.used)};
+    const used = this.db.get(`SELECT COALESCE(SUM(CASE WHEN state='settled' THEN actual_microusd ELSE 0 END),0) AS committed,
+      COALESCE(SUM(CASE WHEN state='reserved' THEN amount_microusd ELSE 0 END),0) AS reserved FROM budget_reservations`)!;
+    const committedMicroUsd=Number(used.committed),reservedMicroUsd=Number(used.reserved);
+    return {enabled: Boolean(policy.paid_enabled), limitMicroUsd: Number(policy.limit_microusd), usedMicroUsd: committedMicroUsd+reservedMicroUsd,committedMicroUsd,reservedMicroUsd};
   }
   reserve(id: string, amountMicroUsd: number, runId: string): boolean {
     integer(amountMicroUsd, 1);
@@ -32,8 +34,8 @@ export class BudgetStore {
       if (!row) throw new StorageError('inaccessible', 'Reservation is unavailable.');
       if (row.state === 'settled' && Number(row.actual_microusd) === actualMicroUsd) return;
       if (row.state !== 'reserved') throw new StorageError('conflict', 'Reservation is already closed.');
-      if (actualMicroUsd > Number(row.amount_microusd)) throw new StorageError('invalid_input', 'Actual charge exceeds the reserved upper bound.');
       this.db.run('UPDATE budget_reservations SET state=\'settled\',actual_microusd=? WHERE id=?', actualMicroUsd, id);
+      if (actualMicroUsd > Number(row.amount_microusd)) this.db.run('UPDATE budget_policy SET paid_enabled=0 WHERE id=1');
     });
   }
   /** Only release a request known not to have reached a provider; unknown outcomes stay reserved. */

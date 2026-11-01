@@ -7,37 +7,44 @@ const identifier = z.string().regex(/^[A-Za-z0-9_.:-]{1,160}$/);
 const updateSchema = z.object({
   channelId: identifier, runId: identifier,
   event: z.enum(['snapshot.changed', 'privacy.invalidated', 'source.status', 'publication.synced', 'playback.prepare', 'playback.start', 'playback.cancel']),
-  data: z.object({sessionId: identifier, revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), affectedIds: z.array(identifier).max(100).optional()}).strict(),
+  data: z.object({sessionId: identifier.nullable(), revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), affectedIds: z.array(identifier).max(100).optional()}).strict(),
 }).strict();
 export type RevisionUpdate = z.infer<typeof updateSchema>;
-type Client = {principal: Principal; response: Response; authorize: () => Promise<boolean>};
+export type StoredRevisionUpdate = RevisionUpdate & {id: number};
+type Client = {principal: Principal; response: Response; authorize: () => Promise<boolean>; pending: Promise<void>; queued: number};
 const sameScope = (event: RevisionUpdate, principal: Principal) => event.channelId === principal.channelId && event.runId === principal.runId;
 
 /** Contains identifiers and revision numbers only, never story text or provider payloads. */
 export class RevisionStream {
-  private readonly records: RevisionUpdate[] = [];
+  private readonly records: StoredRevisionUpdate[] = [];
+  private cursor = 0;
   private readonly clients = new Set<Client>();
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   constructor(private readonly capacity = 1000, private readonly now: () => number = Date.now) {
     if (!Number.isInteger(capacity) || capacity < 1 || capacity > 1000) throw new Error('Invalid revision stream capacity.');
   }
   publish(input: RevisionUpdate): void {
-    const event = updateSchema.parse(input);
-    const previous = this.records.findLast(record => record.channelId === event.channelId && record.runId === event.runId);
-    if (previous && event.data.revision <= previous.data.revision) throw new Error('Revision updates must be strictly increasing within scope.');
+    const event = {...updateSchema.parse(input), id: ++this.cursor};
     this.records.push(event);
     if (this.records.length > this.capacity) this.records.shift();
-    for (const client of this.clients) if (sameScope(event, client.principal)) this.write(client, event);
+    for (const client of this.clients) if (sameScope(event, client.principal)) this.enqueue(client, event);
   }
-  catchUp(principal: Principal, cursor: number | undefined): {reset: boolean; records: RevisionUpdate[]} {
+  catchUp(principal: Principal, cursor: number | undefined): {reset: boolean; records: StoredRevisionUpdate[]} {
     const scoped = this.records.filter(record => sameScope(record, principal));
-    if (cursor === undefined || !scoped.some(record => record.data.revision === cursor)) return {reset: true, records: []};
-    return {reset: false, records: scoped.filter(record => record.data.revision > cursor)};
+    if (cursor === undefined || !scoped.some(record => record.id === cursor)) return {reset: true, records: []};
+    return {reset: false, records: scoped.filter(record => record.id > cursor)};
   }
-  private write(client: Client, event: RevisionUpdate): void {
-    // Authorization is checked on every heartbeat. Revocation adapters should also call revoke().
+  private enqueue(client: Client, event: StoredRevisionUpdate): void {
+    if (++client.queued > 100) {client.response.end(); this.clients.delete(client); return;}
+    client.pending = client.pending.then(async () => {
+      if (client.response.writableEnded) return;
+      if (!await client.authorize()) {client.response.end(); this.clients.delete(client); return;}
+      this.write(client, event);
+    }).catch(() => {client.response.end(); this.clients.delete(client);}).finally(() => {client.queued--; this.stopHeartbeatIfEmpty();});
+  }
+  private write(client: Client, event: StoredRevisionUpdate): void {
     if (client.principal.expiresAtMs <= this.now()) { client.response.end(); this.clients.delete(client); return; }
-    if (!client.response.write(`id: ${event.data.revision}\nevent: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`)) {
+    if (!client.response.write(`id: ${event.id}\nevent: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`)) {
       client.response.end(); this.clients.delete(client);
     }
   }
@@ -51,9 +58,9 @@ export class RevisionStream {
       const backlog = this.catchUp(principal, cursor);
       res.status(200).set({'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no'});
       res.flushHeaders();
-      const client: Client = {principal, response: res, authorize: async () => authorize(principal)};
+      const client: Client = {principal, response: res, authorize: async () => authorize(principal), pending: Promise.resolve(), queued: 0};
       if (backlog.reset) res.write('event: snapshot.reset\ndata: {}\n\n');
-      else for (const event of backlog.records) this.write(client, event);
+      else for (const event of backlog.records) this.enqueue(client, event);
       if (!res.writableEnded) this.clients.add(client);
       req.on('close', () => { this.clients.delete(client); this.stopHeartbeatIfEmpty(); });
       this.startHeartbeat();

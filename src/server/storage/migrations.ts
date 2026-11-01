@@ -1,12 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite';
 
 /** DELETE journaling permits a consistent backup only while the instance is stopped. */
-export function migrate(db: DatabaseSync): void {
+export function migrate(db: DatabaseSync): boolean {
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON; PRAGMA busy_timeout=5000;');
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY);`);
   const version = db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()?.version;
-  if (version && Number(version) > 1) throw new Error('Storage schema is newer than this application.');
-  if (version === 1) return;
+  if (version && Number(version) > 3) throw new Error('Storage schema is newer than this application.');
+  if (version === 3) return false;
+  if (version === 2) { upgrade3(db); return true; }
+  if (version === 1) { upgrade2(db); upgrade3(db); return true; }
   db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE channels(channel_id TEXT NOT NULL, run_id TEXT NOT NULL, login TEXT NOT NULL,
       privacy_revision INTEGER NOT NULL DEFAULT 0, publish_seq INTEGER NOT NULL DEFAULT 0,
@@ -94,4 +96,29 @@ export function migrate(db: DatabaseSync): void {
     INSERT INTO budget_policy VALUES(1,4500000,0);
     INSERT INTO schema_migrations VALUES(1);
     COMMIT;`);
+  upgrade2(db);
+  upgrade3(db);
+  return false;
+}
+
+function upgrade2(db: DatabaseSync):void {
+  db.exec(`BEGIN IMMEDIATE;
+    CREATE TABLE blocked_terms(channel_id TEXT NOT NULL,run_id TEXT NOT NULL,session_id TEXT NOT NULL,term TEXT NOT NULL,
+      PRIMARY KEY(channel_id,run_id,session_id,term),FOREIGN KEY(channel_id,run_id,session_id) REFERENCES sessions(channel_id,run_id,id));
+    ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE sessions ADD COLUMN category TEXT NOT NULL DEFAULT '';
+    ALTER TABLE sessions ADD COLUMN metadata_end_ms INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sessions ADD COLUMN finalized_at TEXT;
+    ALTER TABLE sessions ADD COLUMN final_snapshot_ack_at TEXT;
+    INSERT INTO schema_migrations VALUES(2); COMMIT;`);
+}
+
+function upgrade3(db:DatabaseSync):void {
+  db.exec(`BEGIN IMMEDIATE;
+    ALTER TABLE blocked_terms RENAME TO blocked_terms_session;
+    CREATE TABLE blocked_terms(channel_id TEXT NOT NULL,run_id TEXT NOT NULL,term TEXT NOT NULL,
+      PRIMARY KEY(channel_id,run_id,term),FOREIGN KEY(channel_id,run_id) REFERENCES channels(channel_id,run_id));
+    INSERT INTO blocked_terms SELECT DISTINCT channel_id,run_id,term FROM blocked_terms_session;
+    DROP TABLE blocked_terms_session;
+    INSERT INTO schema_migrations VALUES(3); COMMIT;`);
 }

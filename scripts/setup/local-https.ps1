@@ -9,6 +9,9 @@ function New-LocalSecret {
 }
 
 try {
+  $setupStage = 'certificate-modules'
+  Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
+  Import-Module (Join-Path $PSHOME 'Modules/PKI/PKI.psd1') -ErrorAction Stop
   $setupStage = 'environment'
   $projectDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
   $environmentPath = Join-Path $projectDirectory '.env'
@@ -69,14 +72,24 @@ try {
   }
   # Trust only this user; machine-wide roots and TLS validation settings are untouched.
   $setupStage = 'certificate-trust'
-  $rootStore = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'CurrentUser')
-  try {
-    $rootStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-    if ($rootStore.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $certificate.Thumbprint, $false).Count -eq 0) {
-      $publicCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certificate.RawData)
-      $rootStore.Add($publicCertificate)
+  $publicCertificatePath = Join-Path $tlsDirectory 'localhost.cer'
+  [System.IO.File]::WriteAllBytes($publicCertificatePath, $certificate.RawData)
+  $trustedCertificate = Get-Item -LiteralPath ('Cert:\CurrentUser\Root\' + $certificate.Thumbprint) -ErrorAction SilentlyContinue
+  if ($null -eq $trustedCertificate) {
+    Write-Output 'Windows may ask to trust the localhost certificate. Confirm that local certificate in the Windows Security Warning to finish setup.'
+    $trustLog = Join-Path $tlsDirectory 'certificate-import.log'
+    $trustErrorLog = Join-Path $tlsDirectory 'certificate-import-error.log'
+    # CurrentUser Root may require a Windows confirmation even with -f. Never disable TLS checks.
+    $trustProcess = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/certutil.exe') -ArgumentList @('-user', '-f', '-addstore', 'Root', ('"' + $publicCertificatePath + '"')) -WindowStyle Hidden -PassThru -RedirectStandardOutput $trustLog -RedirectStandardError $trustErrorLog
+    if (-not $trustProcess.WaitForExit(60000)) {
+      $trustProcess.Kill()
+      Write-Output 'Certificate trust was not confirmed within 60 seconds. Run npm run setup:local again when ready to answer the Windows dialog.'
+      throw 'Certificate trust confirmation timed out.'
     }
-  } finally { $rootStore.Close() }
+    $trustProcess.Refresh()
+    if ($trustProcess.ExitCode -ne 0) { throw 'CurrentUser certificate installation failed.' }
+    Remove-Item -LiteralPath $trustLog, $trustErrorLog -Force -ErrorAction SilentlyContinue
+  }
   Write-Output 'Local HTTPS setup is ready. Existing credentials were preserved.'
   Write-Output 'Start Previously and open https://localhost:4317.'
 } catch {

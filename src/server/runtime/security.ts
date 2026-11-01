@@ -30,7 +30,7 @@ export function requireRole(role: Role, auth: AuthenticationPort, secret?: strin
       if (isMutation(req.method)) {
         const supplied = req.headers['x-csrf-token'];
         const expected = secret ? csrfToken(secret, principal.sessionId) : '';
-        if (typeof supplied !== 'string' || !expected || supplied.length !== expected.length || !timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) throw new ApiError(403, 'csrf_rejected', 'Reload the application before trying again.');
+        if (typeof supplied !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(supplied) || !expected || supplied.length !== expected.length || !timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) throw new ApiError(403, 'csrf_rejected', 'Reload the application before trying again.');
         if (role === 'owner' && (typeof req.headers['idempotency-key'] !== 'string' || !/^[\w.-]{8,128}$/.test(req.headers['idempotency-key']))) throw new ApiError(400, 'idempotency_required', 'An idempotency key is required.');
       }
       res.locals.principal = principal; next();

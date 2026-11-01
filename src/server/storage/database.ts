@@ -8,9 +8,22 @@ export class StorageError extends Error {
 }
 export class StorageDatabase {
   readonly raw: DatabaseSync;
-  constructor(path: string) {
-    try { this.raw = new DatabaseSync(path); migrate(this.raw); }
-    catch { throw new StorageError('save_failed', 'Storage could not be opened or migrated.'); }
+  readonly reconcileGlobalTerms:boolean;
+  constructor(path: string,maxBytes=2*1024*1024*1024) {
+    let opened:DatabaseSync|undefined;
+    try {
+      integer(maxBytes,1);
+      opened=new DatabaseSync(path);this.raw=opened;this.reconcileGlobalTerms=migrate(this.raw);
+      const pageSize=Number(this.raw.prepare('PRAGMA page_size').get()!.page_size);
+      const pages=Math.floor(maxBytes/pageSize);
+      if(pages<1) throw new StorageError('capacity','Configured database limit is smaller than one page.');
+      const result=this.raw.prepare(`PRAGMA max_page_count=${pages}`).get()!;
+      if(Number(result.max_page_count)>pages) throw new StorageError('capacity','Existing database exceeds its configured size limit.');
+    } catch(error) {
+      opened?.close();
+      if(error instanceof StorageError)throw error;
+      throw new StorageError('save_failed', 'Storage could not be opened or migrated.');
+    }
   }
   run(sql: string, ...params: SQLInputValue[]) { return this.raw.prepare(sql).run(...params); }
   get(sql: string, ...params: SQLInputValue[]) { return this.raw.prepare(sql).get(...params); }
