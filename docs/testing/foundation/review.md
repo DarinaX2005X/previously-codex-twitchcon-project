@@ -4,6 +4,8 @@ Scope: stage 01, local storage/runtime and shared interface controls. Authored e
 
 ## Functional observations
 
+- The stage-closing `npm run check` passed TypeScript, the functional suite and both builds. Two independent review rounds found six storage defects; targeted SQLite regressions now cover their repairs. Previous chapter context is retained as an immutable dependency, and obsolete pending candidates are cleared when privacy epochs change.
+
 - The first integrated test run passed 33 checks across actual SQLite, server middleware/scheduling and public projection contracts. Additional targeted regressions were subsequently added by the owning packages; stage closure records the final run.
 - The local and public Vite builds use separate entry points. The public JavaScript does not contain the setup route, API key setting name, or foundation interface text.
 - HTTPS `/ready` returns 200 with storage ready and configuration incomplete when validated against the generated localhost certificate explicitly. No certificate validation was disabled.

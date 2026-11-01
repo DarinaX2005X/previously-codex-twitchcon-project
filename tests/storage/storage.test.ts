@@ -312,8 +312,11 @@ describe('real SQLite storage boundaries',()=>{
     now+=30000;
     expect(storage.repository.publishEligible(scope,'chapter1')?.candidateId).toBe(first.candidateId);
     expect(storage.repository.getPublished(scope,'chapter1')).toMatchObject({title:'private evidence'});
+    storage.repository.editEntity(scope,'chapter1',3,{title:'Owner correction'});
+    expect(storage.repository.getEntity(scope,'chapter1')).toMatchObject({status:'active',body:{title:'Owner correction'}});
     storage.repository.invalidate(scope,{kind:'source',sessionId:'s1',id:'source1'},{idempotencyKey:'self-context-forget',reason:'privacy'});
     expect(storage.repository.getPublished(scope,'chapter1')).toBeNull();
+    expect(storage.repository.getEntity(scope,'chapter1')?.body).toBeNull();
     const check=new DatabaseSync(path);
     expect(check.prepare("SELECT COUNT(*) AS n FROM entities WHERE id LIKE 'context:%' AND body IS NOT NULL").get()?.n).toBe(0);check.close();
   });
