@@ -1,5 +1,5 @@
 import type { DomainState, DomainTransition, DerivedNode, StoryCandidate } from '../../core/types.js';
-import type { Channel, EventEnvelope, InvalidationReceipt, PrivacyTarget, PublicSnapshot, Session, Settings, Source } from '../../shared/contracts/index.js';
+import type { Channel, EventEnvelope, InvalidationReceipt, Lore, PrivacyTarget, PublicSnapshot, Session, Settings, Source } from '../../shared/contracts/index.js';
 
 export type DomainCheckpoint={revision:number;privacyEpoch:number;checkpoint:DomainState|null};
 export type DomainEntity=DerivedNode & {ownerRevision:number;ownerLocked:boolean;pinned:boolean};
@@ -7,6 +7,7 @@ export type DomainHydration={
   channel:Channel;session:Session;settings:Settings;revision:number;privacyEpoch:number;checkpoint:DomainState|null;
   sources:Source[];entities:DomainEntity[];candidates:StoryCandidate[];published:PublicSnapshot|null;
   tombstones:PrivacyTarget[];blockedTerms:string[];bannedActors:string[];captureEpoch:number;chatClearThroughMs:number|null;
+  blockedLore:Lore[];
 };
 export type DomainCommitInput={
   expectedRevision:number;expectedPrivacyEpoch:number;transition:DomainTransition;event?:EventEnvelope<unknown>;

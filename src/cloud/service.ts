@@ -77,7 +77,9 @@ export class PublicationService {
         }
       }
       if(op.operation==='snapshot'){
-        if(op.liveLeaseUntil&&(Date.parse(op.liveLeaseUntil)>now+30_000||Date.parse(op.liveLeaseUntil)<now-60_000))throw new PublicationError(400,'invalid_live_lease');
+        // A delayed durable retry may carry an expired lease. It can commit safely but remains
+        // unreadable until a separately sequenced heartbeat; never stretch its original lease.
+        if(op.liveLeaseUntil&&Date.parse(op.liveLeaseUntil)>now+30_000)throw new PublicationError(400,'invalid_live_lease');
         if(op.activeSessionId&&!head.episodePointers.some(p=>p.sessionId===op.activeSessionId&&p.status!=='finalized'))throw new PublicationError(400,'unknown_active_session');
         head.activeSessionId=op.activeSessionId;head.liveLeaseUntil=op.activeSessionId?op.liveLeaseUntil:null;
       }

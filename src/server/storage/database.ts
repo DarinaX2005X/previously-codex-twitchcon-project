@@ -1,5 +1,6 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { migrate } from './migrations.js';
+import { overlaps } from '../../core/evidence.js';
 
 export class StorageError extends Error {
   constructor(public readonly code: 'inaccessible'|'conflict'|'invalid_input'|'save_failed'|'key_setup'|'capacity'|'paid_disabled', message: string) {
@@ -16,6 +17,7 @@ export class StorageDatabase {
     try {
       integer(maxBytes,1);
       opened=new DatabaseSync(path);this.raw=opened;migrate(this.raw);
+      this.raw.function('ranges_overlap',{deterministic:true},(a,b,c,d)=>Number(overlaps(Number(a),Number(b),Number(c),Number(d))));
       const pageSize=Number(this.raw.prepare('PRAGMA page_size').get()!.page_size);
       const pages=Math.floor(maxBytes/pageSize);
       if(pages<1) throw new StorageError('capacity','Configured database limit is smaller than one page.');

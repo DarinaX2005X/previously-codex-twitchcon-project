@@ -78,6 +78,21 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
   const owner = createOwnerService(engine);
   const ownerRouter = Router();
   ownerRouter.use(twitch.ownerRouter);
+  let lastCaptureRenewal: number | null = null;
+  ownerRouter.use((req, res, next) => {
+    const path = req.path;
+    res.once('finish', () => {
+      if (res.statusCode < 200 || res.statusCode >= 300) return;
+      if (path === '/capture/pause') {
+        lastCaptureRenewal = null;
+        engine.setStatus('mic', {state: 'paused', lastObservedAt: clock.iso(), message: 'Listening is paused.', action: 'Start listening'});
+      } else if (path === '/capture/lease') {
+        lastCaptureRenewal = clock.now();
+        engine.setStatus('mic', {state: 'ready', lastObservedAt: clock.iso(), message: null, action: null});
+      }
+    });
+    next();
+  });
   ownerRouter.use(createAudioRouter(audio, (_req, _res, next) => next()));
   ownerRouter.use(createOwnerRouter(owner));
   const mediaAuthorization: RequestHandler = async (req, res, next) => {
@@ -85,28 +100,37 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
       const principal = await twitch.auth.authenticate(req, 'owner') ?? await twitch.auth.authenticate(req, 'overlay');
       if (!principal || principal.expiresAtMs <= clock.now()) throw new ApiError(401, 'session_required', 'Sign in to continue.');
       if (principal.channelId !== scope.channelId || principal.runId !== 'live') throw new ApiError(403, 'role_forbidden', 'This session cannot access that media.');
+      const mediaId = req.path.split('/').filter(Boolean).at(-1);
+      if (principal.role === 'overlay' && (!mediaId || !twitch.permitsOverlayMedia(decodeURIComponent(mediaId)))) throw new ApiError(410, 'media_revoked', 'This media is no longer part of the active recap.');
       res.locals.principal = principal; next();
     } catch (error) {next(error);}
   };
   const scheduler = new BoundedScheduler(storage.repository, [
     {scope, kinds: ['stt'], concurrency: 2, execute: (job, signal) => audio.execute(scope, job, signal)},
     {scope, kinds: ['story'], concurrency: 1, execute: (job, signal) => engine.executeStory(job, signal)},
-  ]);
+    {scope, kinds: ['owner.review'], concurrency: 1, retryOnShutdown: true, execute: (job, signal) => owner.executeReview(job, signal)},
+  ], undefined, clock.now);
   let stopped = false, ticking = false, lastCleanupAt = 0;
+  let tickFlight: Promise<void> | undefined, safetyFlight: Promise<void> | undefined;
   let interval: ReturnType<typeof setInterval> | undefined;
   const tick = async () => {
     if (stopped || ticking) return;
     ticking = true;
     try {
       await engine.tick();
+      if (lastCaptureRenewal !== null && clock.now() - lastCaptureRenewal > 12_000) {
+        lastCaptureRenewal = null;
+        engine.setStatus('mic', {state: 'disconnected', lastObservedAt: clock.iso(), message: 'The microphone connection ended.', action: 'Start listening'});
+      }
       await twitch.tick();
       await cloud.tick();
-      if (config.paidCallsEnabled && config.openaiApiKey) void engine.checkPendingSources().catch(() => {});
+      if (config.paidCallsEnabled && config.openaiApiKey && !safetyFlight) safetyFlight = engine.checkPendingSources().catch(() => {}).finally(() => {safetyFlight = undefined;});
       if (clock.now() - lastCleanupAt >= 30_000) {lastCleanupAt = clock.now(); await audio.cleanup();}
     } catch {
       engine.setStatus('story', {state: 'error', lastObservedAt: clock.iso(), message: 'An update could not be saved. The previous safe recap remains available.', action: 'Check local storage'});
     } finally {ticking = false;}
   };
+  const scheduleTick = () => {if (!tickFlight) tickFlight = tick().finally(() => {tickFlight = undefined;});};
   return {
     engine, owner, audio, media, channel, scope, auth: twitch.auth,
     routers: {auth: twitch.authRouter, owner: ownerRouter, overlay: createOverlayRouter({engine, clock}), media: createMediaRouter(media, mediaAuthorization)},
@@ -117,13 +141,13 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
       await media.initialize(); await audio.cleanup();
       await twitch.start();
       scheduler.start();
-      interval = setInterval(() => {void tick();}, 1000); interval.unref();
-      void tick();
+      interval = setInterval(scheduleTick, 1000); interval.unref();
+      scheduleTick();
     },
     async close() {
       if (stopped) return; stopped = true;
       if (interval) clearInterval(interval);
-      await twitch.stop(); await scheduler.stop(); await cloud.close(); await engine.idle();
+      await twitch.stop(); await scheduler.stop(); await cloud.close(); await tickFlight; await safetyFlight; await engine.idle();
     },
   };
 }

@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   recoverDomainState, reduceDomain, canonical, canDispatch,
   type DomainState, type DomainEvent, type DomainEffect, type GenerationRequest,
 } from '../../core/index.js';
-import { safetyAllowsPublication, type Channel, type Clock, type EventEnvelope, type OwnerSnapshot, type Scope, type Settings, type Source, type SourceStatus, type StoryProvider, type Safety } from '../../shared/contracts/index.js';
+import { GroundedClaimSchema, safetyAllowsPublication, type Channel, type Clock, type EventEnvelope, type OwnerSnapshot, type Scope, type Settings, type Source, type SourceStatus, type StoryProvider, type Safety } from '../../shared/contracts/index.js';
 import { createStorage, type WorkLease } from '../storage/index.js';
 import type { SafetyService } from '../providers/safety.js';
 import type { OpenAIStoryProvider } from '../providers/story.js';
@@ -21,7 +21,7 @@ export type DispatchOptions = {
 export type RuntimeStorage = ReturnType<typeof createStorage>;
 export type EngineOptions = {
   channel: Channel; scope: Scope; storage: RuntimeStorage; clock: Clock; updates: RevisionStream;
-  safety: SafetyService; story: StoryProvider & Partial<Pick<OpenAIStoryProvider, 'review' | 'present'>>;
+  safety: SafetyService; story: StoryProvider & Partial<Pick<OpenAIStoryProvider, 'review' | 'present' | 'proposeLore' | 'presentLore'>>;
   isOwnEcho?: (messageId: string) => boolean;
   onEffects?: (sessionId: string, effects: readonly DomainEffect[], state: DomainState) => void;
 };
@@ -122,17 +122,26 @@ export class StoryEngine {
     await this.dispatch(id, {type: 'closing', endedAt: occurredAt});
   }
   resolveSession(occurredAt: string, streamId?: string): {id: string; startedAt: string} | null {
-    const sessions = this.repository.listSessions(this.scope, {limit: 50});
     const at = Date.parse(occurredAt);
-    const selected = streamId ? sessions.find(session => session.twitchStreamId === streamId) : sessions.find(session => Date.parse(session.startedAt) <= at && (!session.endedAt || at <= Date.parse(session.endedAt)));
-    return selected ? {id: selected.id, startedAt: selected.startedAt} : null;
+    const matches = (session: ReturnType<RuntimeStorage['repository']['getSession']>) => streamId ? session.twitchStreamId === streamId : Date.parse(session.startedAt) <= at && (!session.endedAt || at <= Date.parse(session.endedAt));
+    const open = this.repository.listOpenSessions(this.scope).find(matches);
+    if (open) return {id: open.id, startedAt: open.startedAt};
+    let cursor: {startedAt: string; id: string} | undefined;
+    for (;;) {
+      const page = this.repository.listSessions(this.scope, {limit: 50, cursor});
+      const selected = page.find(matches);
+      if (selected) return {id: selected.id, startedAt: selected.startedAt};
+      if (page.length < 50) return null;
+      cursor = {id: page.at(-1)!.id, startedAt: page.at(-1)!.startedAt};
+    }
   }
   private async reviewMetadata(sessionId: string, title: string, category: string, envelope?: EventEnvelope): Promise<void> {
     const values = await this.safety.inspectBatch([{id: 'title', text: title}, {id: 'category', text: category}]);
     const safeTitle = values.find(value => value.id === 'title'), safeCategory = values.find(value => value.id === 'category');
     const safety = safeTitle && safeCategory && safetyAllowsPublication(safeTitle.safety) && safetyAllowsPublication(safeCategory.safety) ? safeTitle.safety : held;
     const session = this.repository.getSession(this.scope, sessionId);
-    await this.dispatch(sessionId, {type: 'metadata', title: safeTitle?.text ?? '', category: safeCategory?.text ?? '', atMs: Math.max(0, this.clock.now() - Date.parse(session.startedAt)), safety}, envelope ? {envelope} : {});
+    const observedAt = envelope ? Date.parse(envelope.occurredAt) : this.clock.now();
+    await this.dispatch(sessionId, {type: 'metadata', title: safeTitle?.text ?? '', category: safeCategory?.text ?? '', atMs: Math.max(0, observedAt - Date.parse(session.startedAt)), safety}, envelope ? {envelope: {...envelope, payload: {type: 'metadata'}}} : {});
   }
   allowed(input: {sessionId: string; privacyEpoch: number; dependencyRefs: {id: string; revision: number}[]}): boolean {
     try {return canDispatch(this.state(input.sessionId), input);} catch {return false;}
@@ -193,12 +202,30 @@ export class StoryEngine {
       signal.throwIfAborted();
       const state = await this.dispatch(job.sessionId, {type: 'generation.result', ticket: request.ticket, patch: cleaned, safety: checked[0]?.safety ?? held, ...(grounding ? {grounding} : {})});
       const chapter = state.chapters.find(chapter => chapter.id === request.entityId);
-      if (chapter && this.options.story.present && this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) {
-        const claimRefs = cleaned.claims.map(claim => ({id: claim.id, revision: state.nodes[claim.id]?.revision ?? 0}));
-        const presentations = await this.options.story.present(cleaned.claims, {entityId: chapter.id, revision: chapter.revision, eligibleAt: chapter.eligibleAt, claimRefs}, this.safety, signal);
+      if (chapter && chapter.revision === request.ticket.baseEntityRevision + 1 && chapter.ownerEditRevision === request.ticket.ownerEditRevision && this.options.story.present && this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) {
+        // The reducer namespaces accepted claim IDs. Translate the committed claims, not provider-local IDs.
+        const committedClaims = chapter.claimIds.map(id => GroundedClaimSchema.parse(state.nodes[id]?.body));
+        const claimRefs = chapter.claimIds.map(id => ({id, revision: state.nodes[id]!.revision}));
+        const presentations = await this.options.story.present(committedClaims, {entityId: chapter.id, revision: chapter.revision, eligibleAt: chapter.eligibleAt, claimRefs}, this.safety, signal);
         for (const language of ['en', 'ru'] as const) {
           const value = presentations[language];
           await this.dispatch(job.sessionId, {type: 'presentation', entityId: chapter.id, baseRevision: chapter.revision, ownerRevision: chapter.ownerEditRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: chapter.dependencyRefs, current: {...value.current, sourceTimeMs: chapter.maxDependencyEndMs, maxDependencyEndMs: chapter.maxDependencyEndMs}});
+        }
+      }
+      if (this.options.story.proposeLore && this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) {
+        const registered = new Set(request.ticket.inputRefs.map(ref => `${ref.id}:${ref.revision}`));
+        const phrases = state.phrases.filter(phrase => phrase.actors.length >= 2 && phrase.refs.every(ref => registered.has(`${ref.id}:${ref.revision}`)) && !state.lore.some(lore => lore.term === phrase.term && lore.originKind !== 'unknown')).slice(-5).map(phrase => ({
+          id: `lore:${createHash('sha256').update(job.sessionId).update(':').update(phrase.term).digest('hex').slice(0, 32)}`, term: phrase.term, aliases: phrase.aliases,
+        }));
+        if (phrases.length) {
+          // Lore failure does not delay an already accepted chapter or a raid.
+          try {
+            const proposals = await this.options.story.proposeLore(prepared, phrases, this.safety, signal);
+            if (this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) for (const proposal of proposals.value.candidates) {
+              await this.dispatch(job.sessionId, {type: 'lore.propose', ...proposal, exposureRefs: request.ticket.inputRefs, language: request.ticket.recapLanguage});
+              await this.presentOwnerLore(job.sessionId, proposal.id, signal);
+            }
+          } catch {signal.throwIfAborted();}
         }
       }
       this.setStatus('story', {state: 'ready', lastObservedAt: this.clock.iso(), message: null, action: null});
@@ -220,6 +247,17 @@ export class StoryEngine {
       if (language === state.settings.recapLanguage) continue;
       const value = presentations[language];
       await this.dispatch(sessionId, {type: 'presentation', entityId, baseRevision: chapter.revision, ownerRevision: chapter.ownerEditRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: chapter.dependencyRefs, current: {...value.current, sourceTimeMs: chapter.maxDependencyEndMs, maxDependencyEndMs: chapter.maxDependencyEndMs}});
+    }
+  }
+  async presentOwnerLore(sessionId: string, entityId: string, signal?: AbortSignal): Promise<void> {
+    if (!this.options.story.presentLore) return;
+    const state = this.state(sessionId), lore = state.lore.find(value => value.id === entityId);
+    if (!lore || !['confirmed', 'published'].includes(lore.status) || !safetyAllowsPublication(lore.safety)) return;
+    const originRefs = state.nodes[entityId]?.supports ?? [];
+    const presentations = await this.options.story.presentLore({term: lore.term, explanation: lore.explanation, originRefs}, this.safety, signal);
+    for (const language of ['en', 'ru'] as const) {
+      const value = presentations[language];
+      await this.dispatch(sessionId, {type: 'lore.presentation', id: entityId, baseRevision: lore.revision, privacyEpoch: state.session.privacyEpoch, language, term: value.term, explanation: value.explanation, safety: value.safety, inputRefs: [{id: entityId, revision: lore.revision}, ...lore.dependencyRefs]});
     }
   }
   async idle(): Promise<void> {await this.chain;}

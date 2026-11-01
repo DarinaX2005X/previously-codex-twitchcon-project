@@ -3,3 +3,4 @@ export * from './story.js';
 export * from './safety.js';
 export * from './transcription.js';
 export * from './narration.js';
+export * from './lore.js';

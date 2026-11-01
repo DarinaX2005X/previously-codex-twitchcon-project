@@ -48,10 +48,22 @@ describe('local cloud runtime bridge',()=>{
     h.setTime(95_000);expect(await h.bridge.tick()).toBe('acknowledged');const heartbeat=await h.requests.at(-1)!.json();expect(heartbeat.snapshots).toEqual([]);expect((await h.service.readSnapshot(h.scope.channelId)).asOf).toBe(before.asOf);
     expect(await h.bridge.tick()).toBe('idle');expect(h.storage.repository.getPublicationState(h.scope).publishSeq).toBe(sequence+1);
   });
+  it('revalidates an expired persisted live lease on startup before showing ready',async()=>{
+    const h=harness();await h.seed();await h.flush();h.setTime(200_000);h.restart();
+    expect(h.engine.statuses().cloud.state).toBe('delayed');expect(h.storage.repository.getPublicationState(h.scope).publishSeq).toBeGreaterThan(h.storage.repository.getPublicationState(h.scope).ackSeq);
+    await h.flush();expect(h.engine.statuses().cloud.state).toBe('ready');
+  });
   it('retains frozen body across runtime restart and a lost cloud ACK',async()=>{
     let first=true;const h=harness({transport:async(request,handler)=>{const response=await handler(request);if(first){first=false;throw new Error('ACK lost');}return response;}});
     await h.seed();expect(await h.bridge.tick()).toBe('retry');expect(h.engine.statuses().cloud.state).toBe('error');const firstBody=await h.requests[0].text();h.restart();h.setTime(88_000);await h.flush();
     const matching=await Promise.all(h.requests.slice(1).map(r=>r.text()));expect(matching).toContain(firstBody);expect(h.engine.statuses().cloud.state).toBe('ready');
+  });
+  it('recovers an old frozen initial publication with a separate fresh heartbeat before reporting ready',async()=>{
+    let offline=true;const h=harness({transport:async(request,handler)=>{if(offline)throw new Error('Offline before first publish');return handler(request);}});
+    await h.seed();expect(await h.bridge.tick()).toBe('retry');const original=await h.requests[0].text();h.setTime(185_000);offline=false;
+    expect(await h.bridge.tick()).toBe('acknowledged');expect(await h.requests[1].text()).toBe(original);expect(h.engine.statuses().cloud.state).toBe('delayed');
+    await expect(h.service.readSnapshot(h.scope.channelId)).rejects.toMatchObject({code:'live_recap_unavailable'});
+    expect(await h.bridge.tick()).toBe('acknowledged');expect((await h.requests[2].json()).snapshots).toEqual([]);expect(h.engine.statuses().cloud.state).toBe('ready');expect((await h.service.readSnapshot(h.scope.channelId)).chapters).toHaveLength(1);
   });
   it('does not accept an in-flight stale ACK after Forget and retracts its cloud body next',async()=>{
     let release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);let started!:()=>void;const sent=new Promise<void>(resolve=>started=resolve);let first=true;

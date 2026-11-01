@@ -7,14 +7,14 @@ export interface SchedulerRepository {
   finishJob(scope: Scope, id: string, leaseToken: string, state: 'done' | 'failed' | 'unknown_outcome', nextAtMs?: number): boolean;
 }
 export type JobResult = {state: 'done' | 'failed' | 'unknown_outcome'; retryAtMs?: number};
-export type JobLane = {scope: Scope; kinds: string[]; concurrency: number; sessionId?: string; execute(job: WorkLease, signal: AbortSignal): Promise<JobResult>};
+export type JobLane = {scope: Scope; kinds: string[]; concurrency: number; sessionId?: string; retryOnShutdown?: boolean; execute(job: WorkLease, signal: AbortSignal): Promise<JobResult>};
 
 /** SQLite owns pending work. Only a fixed number of active leases live in memory. */
 export class BoundedScheduler {
   private timer: ReturnType<typeof setInterval> | undefined;
   private readonly active = new Map<Promise<void>, {controller: AbortController; lane: JobLane; job: WorkLease; renewal: ReturnType<typeof setInterval>}>();
   private stopped = false;
-  constructor(private readonly repository: SchedulerRepository, private readonly lanes: JobLane[], private readonly onError: () => void = () => {}) {
+  constructor(private readonly repository: SchedulerRepository, private readonly lanes: JobLane[], private readonly onError: () => void = () => {}, private readonly now: () => number = Date.now) {
     if (lanes.length > 32 || lanes.some(lane => !Number.isInteger(lane.concurrency) || lane.concurrency < 1 || lane.concurrency > 2 || !lane.kinds.length)) throw new Error('Scheduler lanes exceed their configured bounds.');
   }
   start(): void {
@@ -59,7 +59,7 @@ export class BoundedScheduler {
       clearInterval(renewal);
       controller.abort();
       // A dispatched external effect may have happened. Persist ambiguity before closing storage.
-      try {this.repository.finishJob(lane.scope, job.id, job.leaseToken, 'unknown_outcome');} catch {this.onError();}
+      try {this.repository.finishJob(lane.scope, job.id, job.leaseToken, lane.retryOnShutdown ? 'failed' : 'unknown_outcome', lane.retryOnShutdown ? this.now() : undefined);} catch {this.onError();}
     }
     // Undispatched jobs remain queued in SQLite; no in-memory queue is discarded.
   }

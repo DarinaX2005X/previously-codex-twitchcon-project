@@ -81,6 +81,7 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
       await engine.dispatch(snapshot.session.id,{type:'cloud.ack',revision:snapshot.revision,at:ack.lastSyncedAt});
       options.updates?.publish({...scope,event:'publication.synced',data:{sessionId:snapshot.session.id,revision:snapshot.revision}});
     }
+    if(operation.operation==='snapshot'&&operation.activeSessionId&&(!operation.liveLeaseUntil||Date.parse(operation.liveLeaseUntil)<=clock.now()))enqueueHeartbeat(true);
     settled();
   }
   const port:PublicationRepository={
@@ -96,18 +97,18 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
   };
   let publisher:LocalPublisher|null=null;
   if(enabled){
-    try{publisher=new LocalPublisher({repository:port,scope,publicOrigin:options.publicOrigin!,secret:options.sharedSecret!,now:()=>clock.now(),buildOperation,validate,onAck,fetch:(input,init)=>{const signals=[lifetime.signal,...(init?.signal?[init.signal]:[])];return(options.fetch??fetch)(input,{...init,signal:AbortSignal.any(signals)});}});settled();}
+    try{publisher=new LocalPublisher({repository:port,scope,publicOrigin:options.publicOrigin!,secret:options.sharedSecret!,now:()=>clock.now(),buildOperation,validate,onAck,fetch:(input,init)=>{const signals=[lifetime.signal,...(init?.signal?[init.signal]:[])];return(options.fetch??fetch)(input,{...init,signal:AbortSignal.any(signals)});}});enqueueHeartbeat();settled();}
     catch{status('error','Public recap configuration needs attention.','Check public recap setup');}
   }else status('unconfigured',scope.runId==='live'?'Configure the public recap to publish safe updates.':'Replay stays local; cloud publication is disabled.');
 
-  function enqueueHeartbeat(){
+  function enqueueHeartbeat(force=false){
     if(!publisher||closed)return;
     const current=sync(),marker=repository.controlGet<HeartbeatMarker>(scope,HEARTBEAT),activeSessionId=activeForCloud();
     if(!activeSessionId||current.pendingPrivacy)return;
     // At most one pending heartbeat. A terminal expired heartbeat may be replaced by a new empty-body lease update.
     const terminalOnly=marker?.terminal&&marker.publishSeq===current.publishSeq;
     if(current.publishSeq>current.ackSeq&&!terminalOnly)return;
-    if(clock.now()-Math.max(marker?.atMs??0,current.lastSyncedAtMs??0)<10_000)return;
+    if(!force&&clock.now()-Math.max(marker?.atMs??0,current.lastSyncedAtMs??0)<10_000)return;
     const atMs=clock.now(),created=repository.preparePublication(scope,{sessionId:activeSessionId,kind:'publish',businessKey:`cloud-heartbeat:${activeSessionId}:${Math.floor(atMs/10_000)}`,payload:{heartbeat:true},priority:-100});
     repository.controlPut(scope,HEARTBEAT,{publishSeq:created.publishSeq,sessionId:activeSessionId,atMs,terminal:false} satisfies HeartbeatMarker);
   }

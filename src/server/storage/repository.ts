@@ -131,8 +131,8 @@ export class SqliteRepository {
   private tombstoned(scope: Scope, source: Source): boolean {
     return !!this.db.get(`SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND (
       kind='session' OR (kind='source' AND target_id=?) OR (kind='message' AND target_id=?) OR
-      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND from_ms<=? AND to_ms>=?)) LIMIT 1`,
-    ...this.scope(scope), source.sessionId, source.id, source.externalMessageId, source.actorId,source.endMs,source.endMs,source.startMs);
+      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND ranges_overlap(from_ms,to_ms,?,?))) LIMIT 1`,
+    ...this.scope(scope), source.sessionId, source.id, source.externalMessageId, source.actorId,source.startMs,source.startMs,source.endMs);
   }
   private sessionForgotten(scope:Scope,sessionId:string):boolean {
     return !!this.db.get("SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND kind='session' LIMIT 1",...this.scope(scope),sessionId);
@@ -143,7 +143,7 @@ export class SqliteRepository {
       const old = this.db.get('SELECT id FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?',...this.scope(event),event.origin,event.externalId);
       if (old) return {accepted:false,eventId:String(old.id)};
       if (event.sessionId) this.session(event,event.sessionId);
-      this.db.run('INSERT INTO events(channel_id,run_id,id,session_id,external_id,origin,kind,occurred_at,received_at,offset_ms,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)',...this.scope(event),event.eventId,event.sessionId,event.externalId,event.origin,event.kind,event.occurredAt,event.receivedAt,event.sessionOffsetMs,json(event.payload));
+      this.db.run('INSERT INTO events(channel_id,run_id,id,session_id,external_id,origin,kind,occurred_at,received_at,offset_ms,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)',...this.scope(event),event.eventId,event.sessionId,event.externalId,event.origin,event.kind,event.occurredAt,event.receivedAt,event.sessionOffsetMs,event.payload===null ? null : json(event.payload));
       let redacted = event.sessionId!==null && this.sessionForgotten(event,event.sessionId);
       for (const source of effects.sources ?? []) {
         if (source.channelId !== event.channelId || source.runId !== event.runId || source.sessionId !== event.sessionId) throw new StorageError('inaccessible','Source scope does not match its event.');
@@ -423,10 +423,14 @@ export class SqliteRepository {
       this.db.raw.exec('CREATE TEMP TABLE IF NOT EXISTS affected(id TEXT PRIMARY KEY); DELETE FROM affected; CREATE TEMP TABLE IF NOT EXISTS affected_sessions(id TEXT PRIMARY KEY); DELETE FROM affected_sessions;');
       this.db.run('INSERT INTO affected_sessions VALUES(?)',sessionId);
       for(const id of sourceIds)this.db.run('INSERT OR IGNORE INTO affected SELECT id FROM sources WHERE channel_id=? AND run_id=? AND session_id=? AND id=?',...this.scope(scope),sessionId,id);
+      this.db.run(`INSERT OR IGNORE INTO affected SELECT e.id FROM entities e WHERE e.channel_id=? AND e.run_id=? AND e.session_id=? AND e.kind='media'
+        AND EXISTS(SELECT 1 FROM sources s JOIN affected a ON a.id=s.id WHERE s.channel_id=e.channel_id AND s.run_id=e.run_id AND ranges_overlap(s.start_ms,s.end_ms,e.start_ms,e.end_ms))`,...this.scope(scope),sessionId);
       this.db.run(`INSERT OR IGNORE INTO affected WITH RECURSIVE descendants(id) AS (SELECT id FROM affected UNION SELECT d.child_id FROM dependencies d JOIN descendants a ON a.id=d.parent_id WHERE d.channel_id=? AND d.run_id=?) SELECT id FROM descendants`,...this.scope(scope));
       for(const table of ['entities','jobs','outbox','generation_jobs'])this.db.run(`INSERT OR IGNORE INTO affected_sessions SELECT session_id FROM ${table} WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)`,...this.scope(scope));
       const hiddenEntityIds=this.db.all('SELECT id FROM entities WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)',...this.scope(scope)).map(row=>String(row.id));
-      this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND id IN (SELECT event_id FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected))',...this.scope(scope),...this.scope(scope));
+      const externalClipActions:{clipId:string;manageUrl:string}[]=[];
+      for(const row of this.db.all("SELECT body FROM entities WHERE channel_id=? AND run_id=? AND kind IN ('media','moment') AND id IN (SELECT id FROM affected) AND body IS NOT NULL",...this.scope(scope))){const value=JSON.parse(String(row.body)) as {clipId?:unknown};if(typeof value.clipId==='string')externalClipActions.push({clipId:value.clipId,manageUrl:'https://dashboard.twitch.tv/content/clips'});}
+      this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND (id IN (SELECT id FROM affected) OR id IN (SELECT event_id FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)))',...this.scope(scope),...this.scope(scope));
       this.db.run("UPDATE entities SET body=NULL,status='hidden',revision=revision+1 WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)",...this.scope(scope));
       this.db.run("UPDATE publication_candidates SET body=NULL,status='invalid' WHERE channel_id=? AND run_id=? AND (id IN (SELECT id FROM affected) OR entity_id IN (SELECT id FROM affected))",...this.scope(scope));
       this.db.run('DELETE FROM public_pointers WHERE channel_id=? AND run_id=? AND (entity_id IN (SELECT id FROM affected) OR candidate_id IN (SELECT id FROM affected))',...this.scope(scope));
@@ -439,7 +443,7 @@ export class SqliteRepository {
       this.db.run("UPDATE publication_candidates SET body=NULL,status='invalid' WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions) AND status='pending'",...this.scope(scope));
       this.db.run('UPDATE publication_sync SET pending_privacy=1 WHERE channel_id=? AND run_id=?',...this.scope(scope));
       const session=this.getSession(scope,sessionId),affectedSessionIds=this.db.all('SELECT id FROM affected_sessions').map(row=>String(row.id));
-      const receipt:InvalidationReceipt={revision:session.publicationRevision,privacyEpoch:session.privacyEpoch,hiddenEntityIds,rebuildStatus:'queued',publicSync:'pending',externalClipActions:[]};
+      const receipt:InvalidationReceipt={revision:session.publicationRevision,privacyEpoch:session.privacyEpoch,hiddenEntityIds,rebuildStatus:'queued',publicSync:'pending',externalClipActions};
       this.insertWork('outbox',scope,{sessionId,kind:'retract',businessKey:`source-revision:${options.idempotencyKey}`,payload:{sessionId,revision:receipt.revision,privacyEpoch:receipt.privacyEpoch,affectedIds:hiddenEntityIds,affectedSessionIds},priority:1000});
       this.db.run('INSERT INTO privacy_receipts VALUES(?,?,?,?,?)',...this.scope(scope),options.idempotencyKey,requestHash,json(receipt));
       return receipt;
@@ -459,8 +463,8 @@ export class SqliteRepository {
       switch(target.kind) {
         case 'source': where='id=?';params=[target.id];targetId=target.id;break;
         case 'message':where='external_message_id=?';params=[target.externalMessageId];targetId=target.externalMessageId;break;
-        case 'user':where='actor_id=? AND end_ms<=?';params=[target.actorId,integer(target.throughMs)];targetId=target.actorId;toMs=target.throughMs;break;
-        case 'interval':where='start_ms<=? AND end_ms>=?';params=[integer(target.toMs),integer(target.fromMs)];fromMs=target.fromMs;toMs=target.toMs;if(fromMs>toMs)throw new StorageError('invalid_input','Privacy interval is invalid.');break;
+        case 'user':where='actor_id=? AND start_ms<=?';params=[target.actorId,integer(target.throughMs)];targetId=target.actorId;toMs=target.throughMs;break;
+        case 'interval':where='ranges_overlap(start_ms,end_ms,?,?)';params=[integer(target.fromMs),integer(target.toMs)];fromMs=target.fromMs;toMs=target.toMs;if(fromMs>toMs)throw new StorageError('invalid_input','Privacy interval is invalid.');break;
         case 'session':where='1=1';break;
         case 'term':where='0=1';targetId=normalizeBlockedTerm(target.term);break;
         case 'entity':where='0=1';targetId=target.id;break;
@@ -479,13 +483,18 @@ export class SqliteRepository {
       if (target.kind==='entity') this.db.run('INSERT OR IGNORE INTO affected SELECT id FROM entities WHERE channel_id=? AND run_id=? AND session_id=? AND id=?',...this.scope(scope),target.sessionId,target.id);
       if (target.kind==='term') {
         for (const row of this.db.raw.prepare("SELECT id,body FROM entities WHERE channel_id=? AND run_id=? AND kind='lore' AND status='active'").iterate(...this.scope(scope))) {
-          if (row.body && this.loreTerms(JSON.parse(String(row.body))).includes(targetId!)) this.db.run('INSERT OR IGNORE INTO affected VALUES(?)',String(row.id));
+          if (row.body && this.loreTerms(JSON.parse(String(row.body))).includes(targetId!)) {
+            this.db.run('INSERT OR IGNORE INTO affected VALUES(?)',String(row.id));
+            const body=JSON.parse(String(row.body)) as {term?:string;aliases?:string[];firstSeenMs?:number};
+            const entity=this.getEntity(scope,String(row.id))!;
+            this.controlPut(scope,`blocked-lore:${String(row.id)}`,{id:String(row.id),sessionId:entity.sessionId,revision:entity.revision+1,term:body.term ?? targetId,aliases:body.aliases ?? [],firstSeenMs:body.firstSeenMs ?? 0,status:'blocked'});
+          }
         }
       }
       // Media can expose speech/chat independent of its caption; overlap is a separate root.
       this.db.run(`INSERT OR IGNORE INTO affected SELECT e.id FROM entities e WHERE e.channel_id=? AND e.run_id=? AND e.session_id=? AND e.kind='media'
-        AND (EXISTS (SELECT 1 FROM sources s JOIN affected a ON a.id=s.id WHERE s.channel_id=e.channel_id AND s.run_id=e.run_id AND s.start_ms<=e.end_ms AND s.end_ms>=e.start_ms)
-        ${target.kind==='interval' ? 'OR (e.start_ms<=? AND e.end_ms>=?)' : ''})`,...this.scope(scope),target.sessionId,...(target.kind==='interval' ? [target.toMs,target.fromMs] : []));
+        AND (EXISTS (SELECT 1 FROM sources s JOIN affected a ON a.id=s.id WHERE s.channel_id=e.channel_id AND s.run_id=e.run_id AND ranges_overlap(s.start_ms,s.end_ms,e.start_ms,e.end_ms))
+        ${target.kind==='interval' ? 'OR ranges_overlap(e.start_ms,e.end_ms,?,?)' : ''})`,...this.scope(scope),target.sessionId,...(target.kind==='interval' ? [target.fromMs,target.toMs] : []));
       this.db.run(`INSERT OR IGNORE INTO affected WITH RECURSIVE descendants(id) AS (SELECT id FROM affected UNION SELECT d.child_id FROM dependencies d JOIN descendants a ON a.id=d.parent_id WHERE d.channel_id=? AND d.run_id=?) SELECT id FROM descendants`,...this.scope(scope));
       const hiddenEntityIds=this.db.all('SELECT id FROM entities WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)',...this.scope(scope)).map(row=>String(row.id));
       const externalClipActions:{clipId:string;manageUrl:string}[]=[];
@@ -493,7 +502,7 @@ export class SqliteRepository {
         const body=row.body ? JSON.parse(String(row.body)) as {clipId?:unknown;manageUrl?:unknown} : null;
         if (typeof body?.clipId==='string') externalClipActions.push({clipId:body.clipId,manageUrl:'https://dashboard.twitch.tv/content/clips'});
       }
-      this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND id IN (SELECT event_id FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected))',...this.scope(scope),...this.scope(scope));
+      this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND (id IN (SELECT id FROM affected) OR id IN (SELECT event_id FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)))',...this.scope(scope),...this.scope(scope));
       this.db.run("UPDATE sources SET text=NULL,status='deleted',revision=revision+1 WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected) AND status<>'deleted'",...this.scope(scope));
       this.db.run("UPDATE entities SET body=NULL,status='hidden',revision=revision+1 WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)",...this.scope(scope));
       this.db.run("UPDATE publication_candidates SET body=NULL,status='invalid' WHERE channel_id=? AND run_id=? AND (id IN (SELECT id FROM affected) OR entity_id IN (SELECT id FROM affected))",...this.scope(scope));

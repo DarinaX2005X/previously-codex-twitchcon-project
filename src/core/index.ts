@@ -3,3 +3,4 @@ export * from './evidence.js';
 export * from './reducer.js';
 export * from './recap.js';
 export * from './recovery.js';
+export * from './lore-presentations.js';

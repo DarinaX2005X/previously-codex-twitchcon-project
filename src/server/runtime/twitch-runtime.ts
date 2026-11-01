@@ -3,7 +3,7 @@ import {Router} from 'express';
 import type {DomainEffect,DomainMedia,DomainState} from '../../core/types.js';
 import type {Channel,Clock,EventEnvelope,Moment,PublicSnapshot,Scope,Session,VersionRef} from '../../shared/contracts/index.js';
 import {bindControlStore,createTwitchAuth,type AuthOptions} from '../auth/index.js';
-import type {PrivateMediaCache,MediaInput} from '../media/cache.js';
+import type {PrivateMediaCache,MediaDescriptor} from '../media/cache.js';
 import {TwitchBanSync,TwitchEffects,TwitchEventSub,TwitchHelix,composeReply,parseCommand,type ChatCommand,type ConnectionState,type EffectContext,type EventSubOptions,type TwitchClip,type TwitchStream} from '../twitch/index.js';
 import type {RuntimeConfig} from './config.js';
 import type {RuntimeStorage,StoryEngine} from './engine.js';
@@ -14,11 +14,12 @@ type EnginePort=Pick<StoryEngine,'state'|'dispatch'|'ingest'|'observeStream'|'re
 type EventSubPort=Pick<TwitchEventSub,'start'|'stop'|'status'>;
 type ClipContext=EffectContext&{momentId?:string;key?:string;publicationRevision?:number|null;previousApproved?:boolean};
 type PreviousSelection={clip:TwitchClip;status:'candidate'|'preparing'|'ready'|'unavailable'|'rejected';sessionId:string|null;reason?:string};
+type PreviousPermission={id:string;revision:number;selectionRevision:number;clip:TwitchClip;mediaId:string;approved:boolean;state:'queued'|'running'|'ready'|'failed'|'revoked';leaseUntilMs:number|null;durationMs:number|null;attachments:{sessionId:string;mediaId:string}[]};
 type Gap={since:number;until:number|null};
 export interface TwitchRuntimeOptions {
   config:Pick<RuntimeConfig,'twitch'|'origin'|'sessionSecret'|'publicOrigin'>;
   scope:Scope;channel:Channel;storage:RuntimeStorage;engine:EnginePort;updates:RevisionStream;clock:Clock;
-  media?:Pick<PrivateMediaCache,'prepare'|'revoke'>;
+  media?:Pick<PrivateMediaCache,'prepare'|'revoke'|'alias'>;
   markerEnabled?:boolean;publicUrl?:string;
   fetch?:typeof fetch;helix?:TwitchHelix;
   eventSubFactory?:(options:EventSubOptions)=>EventSubPort;
@@ -35,10 +36,19 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
   if(scope.runId!=='live'||scope.channelId!==channel.id||!/^\d+$/.test(channel.id))throw new Error('Twitch runtime requires the configured numeric live channel');
   if(!config.twitch.clientId||!config.twitch.clientSecret||!config.sessionSecret||!storage.tokenVault)throw new Error('Complete Twitch and local session configuration before constructing the integration');
   const control=bindControlStore(storage.repository,scope),repository=storage.repository;
-  let running=false,tickBusy=false,networkStarting:Promise<void>|null=null,previousBusy=false;
+  let running=false,tickBusy=false,networkStarting:Promise<void>|null=null,previousBusy=false,tickFlight:Promise<void>|null=null;
   let connection:{state:ConnectionState;quotesReady:boolean;reason?:string}={state:'disconnected',quotesReady:false};
   let lastFailure:string|null=null;
   const publicUrl=options.publicUrl??config.publicOrigin;
+  const permissionId=(clipId:string)=>`previous:${digest(clipId).slice(0,32)}`;
+  const permissionKey=(id:string)=>`twitch:previous-permission:${id}`;
+  const permissions=()=>control.get<string[]>('twitch:previous-permissions')??[];
+  const revokePermission=(clipId:string)=>{
+    const id=permissionId(clipId),permission=control.get<PreviousPermission>(permissionKey(id));
+    if(permission&&permission.state!=='revoked')control.put(permissionKey(id),{...permission,revision:permission.revision+1,state:'revoked',approved:false,leaseUntilMs:null});
+    control.put(`twitch:clip-block:${clipId}`,true);
+    const settings=repository.getSettings(scope);if(settings.earlyWelcomeClipId===clipId)repository.updateSettings(scope,settings.revision,{earlyWelcomeClipId:null});
+  };
   const sessionPages=function*():Generator<Session>{
     let cursor:{startedAt:string;id:string}|undefined;
     for(;;){const rows=repository.listSessions(scope,{limit:50,cursor});for(const row of rows)yield row;if(rows.length<50)return;const last=rows.at(-1)!;cursor={startedAt:last.startedAt,id:last.id};}
@@ -60,7 +70,11 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     const pending=[...refs],seen=new Set<string>();
     while(pending.length){if(seen.size>1000)return false;const ref=pending.pop()!;if(seen.has(ref.id))continue;seen.add(ref.id);
       const source=state.sources.find(source=>source.id===ref.id)??repository.getSource(scope,ref.id);
-      if(source){if(source.status!=='active'||source.revision!==ref.revision)return false;if(source.kind==='chat'&&(!source.actorId||!bans.allows(source.actorId)))return false;continue;}
+      if(source){if(source.status!=='active'||source.revision!==ref.revision)return false;if(source.kind==='chat'){
+        if(!source.actorId||!bans.allows(source.actorId))return false;
+        const absolute=Date.parse(repository.getSession(scope,source.sessionId).startedAt)+source.endMs;
+        if(absolute<=(control.get<number>('twitch:chat-cleared-through')??-Infinity))return false;
+      }continue;}
       const node=state.nodes[ref.id];if(!node||!node.active||node.revision!==ref.revision)return false;pending.push(...node.supports,...node.exposedTo);
     }return true;
   };
@@ -81,12 +95,12 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     }catch{return false;}
   };
   const mediaId=(input:ClipContext,clipId?:string)=>input.momentId?`moment-media:${digest([input.sessionId,input.momentId]).slice(0,32)}`:`previous-media:${digest([input.sessionId,clipId]).slice(0,32)}`;
-  const revokeMedia=async(id:string,clipId?:string)=>{if(clipId)control.put(`twitch:clip-block:${clipId}`,true);await options.media?.revoke(id);};
+  const revokeMedia=async(id:string,clipId?:string)=>{if(clipId)revokePermission(clipId);await options.media?.revoke(id);};
   const onClip=async(input:EffectContext&{clip:TwitchClip|null;status:'pending'|'ready'|'unavailable'|'revoked';reason?:string;previousSession?:boolean})=>{
     const extended=input as ClipContext&typeof input,id=mediaId(extended,input.clip?.id);
     if(input.previousSession){const selection=control.get<PreviousSelection>('twitch:previous');if(selection?.clip.id===input.clip?.id)control.put('twitch:previous',{...selection,status:input.status==='ready'?'ready':input.status==='pending'?'preparing':'unavailable',reason:input.reason});}
     if(input.status==='revoked'){await revokeMedia(id,input.clip?.id);return;}
-    if(!engine.allowed(input)){if(input.clip)control.put(`twitch:clip-block:${input.clip.id}`,true);await options.media?.revoke(id);return;}
+    if(!engine.allowed(input)){if(input.clip)revokePermission(input.clip.id);await options.media?.revoke(id);return;}
     const prepared=control.get<{durationMs:number}>(`twitch:media:${id}`);
     const state=engine.state(input.sessionId);
     const media:DomainMedia={id,revision:1,momentId:extended.momentId??null,refs:input.dependencyRefs,captureStartMs:input.captureStartMs??0,captureEndMs:input.captureEndMs??0,durationMs:prepared?.durationMs??Math.round((input.clip?.duration??0)*1000),state:input.status,kind:'video',previousSession:Boolean(input.previousSession),ownerApproved:input.previousSession?extended.previousApproved===true:true,...(input.clip?{clipId:input.clip.id,manageUrl:'https://dashboard.twitch.tv/content/clips',clip:{id:input.clip.id,url:input.clip.url,embedUrl:input.clip.embed_url}}:{})};
@@ -109,25 +123,29 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
   const refreshPrevious=async()=>{
     if(previousBusy||!running||!authService.status().connected)return;previousBusy=true;
     try{const id=liveId();const before=id?repository.getSession(scope,id).startedAt:clock.iso();const candidate=await effects.previousCandidate(before);const current=control.get<PreviousSelection>('twitch:previous');
+      if(!running)return;
       if(candidate){if(current?.clip.id!==candidate.id||current.status==='candidate')control.put('twitch:previous',{clip:candidate,status:'candidate',sessionId:null} satisfies PreviousSelection);}
       else if(!current||current.status==='candidate')control.delete('twitch:previous');
       control.put('twitch:previous-checked',clock.now());
     }catch{lastFailure='Previous clips could not be checked. Retry from Twitch setup.';}finally{previousBusy=false;}
   };
   const observeStream=async(stream:TwitchStream|null,occurredAt:string,streamId?:string)=>{
+    if(!running)return;
     if(stream){
       for(const session of sessionPages())if(session.status==='live'&&session.twitchStreamId!==stream.id){repository.cancelSessionEffects(scope,session.id);await engine.observeStream(null,stream.started_at,session.twitchStreamId??undefined);}
     }
     await engine.observeStream(stream,occurredAt,streamId);
     if(!stream){const id=streamId?engine.resolveSession(occurredAt,streamId)?.id:engine.resolveSession(occurredAt)?.id;if(id)repository.cancelSessionEffects(scope,id);}
     if(!control.get<number>('twitch:previous-checked')||clock.now()-(control.get<number>('twitch:previous-checked')??0)>300000)await refreshPrevious();
+    if(stream)await attachApproved(`stream_${stream.id}`);
   };
   const onStatus=(state:ConnectionState,detail:{quotesReady:boolean;gapSince:string|null;reason?:string})=>{
     connection={state,quotesReady:detail.quotesReady,reason:detail.reason};
     if(!detail.quotesReady)bans.suspend();
     if(state==='gap')control.put('twitch:gap',{since:control.get<Gap>('twitch:gap')?.since??Date.parse(detail.gapSince??clock.iso()),until:null} satisfies Gap);
     if(state==='active'){const gap=control.get<Gap>('twitch:gap');if(gap&&gap.until===null)control.put('twitch:gap',{...gap,until:clock.now()});}
-    engine.setStatus('chat',{state:state==='active'&&detail.quotesReady?'ready':state==='gap'?'delayed':state==='revoked'?'error':state==='disconnected'?'disconnected':'connecting',lastObservedAt:clock.iso(),message:state==='gap'?'Chat coverage has a gap. Reconnecting and checking bans.':state==='revoked'?'Twitch permissions changed. Reconnect Twitch.':state==='active'?null:'Connecting Twitch and checking channel restrictions.',action:state==='revoked'?'Reconnect Twitch':null});
+    engine.setStatus('chat',{state:state==='active'&&detail.quotesReady?'ready':state==='gap'?'delayed':state==='revoked'?'error':state==='disconnected'?'disconnected':'connecting',lastObservedAt:clock.iso(),message:state==='gap'?'Chat coverage has a gap. Reconnecting and checking bans.':state==='revoked'?'Twitch permissions changed. Reconnect Twitch.':state==='disconnected'?'Twitch is disconnected.':state==='active'?null:'Connecting Twitch and checking channel restrictions.',action:state==='revoked'||state==='disconnected'?'Reconnect Twitch':null});
+    if(state==='revoked')lastFailure='Twitch permissions changed. Reconnect Twitch.';
     if(state==='revoked'&&detail.reason==='authorization_revoked')authService.tokens.disconnect();
   };
   const safeReply=(state:DomainState,command:ChatCommand):{snapshot:PublicSnapshot|null;refs:VersionRef[];blocked:boolean}=>{
@@ -150,7 +168,18 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     const key=`twitch:ingest:${digest(envelope.externalId)}`;if(!control.claim(key,'processing',clock.now()+7*86400000))return;
     try{
       const payload=record(envelope.payload);
-      if(envelope.kind==='channel.ban'||envelope.kind==='channel.unban'){
+      if(envelope.kind==='channel.chat.message_delete'){
+        const messageId=String(payload.message_id??'');if(!messageId)throw new ApiError(400,'invalid_twitch_event','The deleted message identifier is missing.');
+        control.put(`twitch:deleted-message:${digest(messageId)}`,true);
+        const source=repository.getSource(scope,`chat:${messageId}`);
+        if(source)await engine.ingest({...envelope,sessionId:source.sessionId,sessionOffsetMs:source.endMs});
+        else {for(const session of sessionPages())if(session.startedAt<=envelope.occurredAt)await engine.dispatch(session.id,{type:'privacy',target:{kind:'message',sessionId:session.id,externalMessageId:messageId}},{idempotencyKey:`twitch-delete:${digest([envelope.externalId,session.id])}`,requestBody:{messageId}});await engine.ingest({...envelope,kind:'twitch.message_delete.observed',payload:null});}
+      }else if(envelope.kind==='channel.chat.clear_user_messages'){
+        const actor=String(payload.target_user_id??'');if(!/^\d+$/.test(actor))throw new ApiError(400,'invalid_twitch_event','The cleared actor identifier is missing.');
+        const cutoff=Date.parse(envelope.occurredAt);control.put(`twitch:actor-cleared:${actor}`,Math.max(cutoff,control.get<number>(`twitch:actor-cleared:${actor}`)??0));
+        for(const session of sessionPages())if(Date.parse(session.startedAt)<=cutoff){const target={kind:'user' as const,sessionId:session.id,actorId:actor,throughMs:clamp(cutoff-Date.parse(session.startedAt))};await engine.dispatch(session.id,{type:'privacy',target},{idempotencyKey:`twitch-clear-user:${digest([envelope.externalId,session.id])}`,requestBody:target});}
+        await engine.ingest({...envelope,kind:'twitch.clear_user.observed',payload:null});
+      }else if(envelope.kind==='channel.ban'||envelope.kind==='channel.unban'){
         const actor=String(payload.user_id??'');
         if(envelope.kind==='channel.ban')await bans.ban({user_id:actor,banned_at:typeof payload.banned_at==='string'?payload.banned_at:envelope.occurredAt,ends_at:typeof payload.ends_at==='string'?payload.ends_at:null,is_permanent:payload.is_permanent===true});
         else if(await bans.unban({user_id:actor}))await mutateAcrossSessions(actor,null);
@@ -160,8 +189,11 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
         const actor=typeof payload.chatter_user_id==='string'?payload.chatter_user_id:'';
         const text=record(payload.message).text;
         const echo=typeof payload.message_id==='string'&&effects.isOwnEcho(payload.message_id);
-        const contentAllowed=Boolean(state&&!state.settings.listeningPaused&&connection.quotesReady&&bans.ready()&&!echo&&actor&&bans.allows(actor)&&!payload.late);
+        const deleted=typeof payload.message_id==='string'&&control.get(`twitch:deleted-message:${digest(payload.message_id)}`)!==null;
+        const cleared=actor&&Date.parse(envelope.occurredAt)<=(control.get<number>(`twitch:actor-cleared:${actor}`)??-Infinity);
+        const contentAllowed=Boolean(state&&!state.settings.listeningPaused&&connection.quotesReady&&bans.ready()&&!echo&&!deleted&&!cleared&&actor&&bans.allows(actor)&&!payload.late);
         const accepted=envelope.kind==='channel.chat.message'&&!contentAllowed?{...envelope,payload:{quotesReady:false}}:envelope;
+        if(envelope.kind==='channel.chat.clear')control.put('twitch:chat-cleared-through',Math.max(Date.parse(envelope.occurredAt),control.get<number>('twitch:chat-cleared-through')??0));
         if(envelope.kind==='channel.raid'&&state&&!state.settings.autoRaid)await engine.ingest({...envelope,kind:'twitch.raid.observed',payload:null});else await engine.ingest(accepted);
         if(publicUrl&&state&&envelope.kind==='channel.chat.message'&&contentAllowed&&typeof text==='string'){
           const command=parseCommand(text);if(command){const fresh=engine.state(state.session.id),reply=safeReply(fresh,command);const input={sessionId:state.session.id,privacyEpoch:fresh.session.privacyEpoch,dependencyRefs:reply.refs,publicationRevision:fresh.published?.revision??null,message:composeReply(command,reply.snapshot,fresh.settings.recapLanguage,publicUrl,reply.blocked),actorId:actor,key:`command:${envelope.externalId}`};effects.enqueueChat(input);}
@@ -172,56 +204,122 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     }catch(error){control.delete(key);throw error;}
   }
   const eventSub=(options.eventSubFactory??(input=>new TwitchEventSub(input)))({channelId:channel.id,runId:'live',helix,control,ingest,resolveSession:engine.resolveSession.bind(engine),onStream:observeStream,bans,status:onStatus,now:clock.now.bind(clock)});
-  const queueRevoke=(sessionId:string,id:string,clipId?:string)=>{if(clipId)control.put(`twitch:clip-block:${clipId}`,true);repository.enqueueJob(scope,{sessionId,kind:'twitch.media.revoke',businessKey:`twitch-media-revoke:${id}`,payload:{id,clipId},priority:1000});};
+  const queueRevoke=(sessionId:string,id:string,clipId?:string)=>{if(clipId)revokePermission(clipId);repository.enqueueJob(scope,{sessionId,kind:'twitch.media.revoke',businessKey:`twitch-media-revoke:${id}`,payload:{id,clipId},priority:1000});};
   const onEffects=(sessionId:string,domainEffects:readonly DomainEffect[],state:DomainState)=>{
     // clip.request is persisted atomically by storage as twitch.clip.intent; tick converts it once.
     if(state.session.status!=='live')repository.cancelSessionEffects(scope,sessionId);
     for(const effect of domainEffects){
-      if(effect.type==='clip.cleanup')control.put(`twitch:clip-block:${effect.clipId}`,true);
+      if(effect.type==='clip.cleanup')revokePermission(effect.clipId);
       if(effect.type==='privacy'||effect.type==='cancel')for(const item of state.media)if(item.state==='revoked'||item.momentId&&!state.moments.some(moment=>moment.id===item.momentId))queueRevoke(sessionId,item.id,item.clipId);
     }
   };
-  const allowsMedia=(input:Omit<MediaInput,'url'>)=>{
+  const allowsMedia=(input:MediaDescriptor)=>{
+    if(input.sessionId===null){
+      const binding=input.channelApproval;if(binding.channelId!==scope.channelId)return false;
+      const permission=control.get<PreviousPermission>(permissionKey(binding.id));
+      if(!permission||permission.revision!==binding.revision||permission.state==='revoked'||control.get(`twitch:clip-block:${permission.clip.id}`))return false;
+      // SQLite's privacy transaction is authoritative even if post-commit cleanup/permission writes failed.
+      if(permission.attachments.some(attachment=>repository.getEntity(scope,attachment.mediaId)?.status!=='active'))return false;
+      // The preview source remains owner-only at the HTTP guard. Scene aliases require explicit Use.
+      return input.id===permission.mediaId||permission.approved&&input.id.startsWith('previous-scene:');
+    }
     if(!engine.allowed(input))return false;const state=engine.state(input.sessionId);
     const media=state.media.find(media=>media.id===input.id);if(media?.state==='revoked'||media?.momentId&&!state.moments.some(moment=>moment.id===media.momentId))return false;
     if(media?.clipId&&control.get(`twitch:clip-block:${media.clipId}`))return false;
     return safeRefs(state,input.dependencyRefs);
   };
-  const tick=async()=>{
+  const attachApproved=async(sessionId:string)=>{
+    if(!options.media)return;
+    for(const id of permissions()){
+      const permission=control.get<PreviousPermission>(permissionKey(id));if(!permission||permission.state!=='ready')continue;
+      const state=engine.state(sessionId);
+      if(!permission.approved){const prior=state.media.find(media=>media.previousSession&&media.clipId===permission.clip.id&&media.ownerApproved);if(prior)await engine.dispatch(sessionId,{type:'media',media:{...prior,ownerApproved:false,state:'unavailable'},privacyEpoch:state.session.privacyEpoch});continue;}
+      if(state.media.some(media=>media.previousSession&&media.clipId===permission.clip.id&&media.state==='ready'&&media.ownerApproved))continue;
+      if(control.get(`twitch:clip-block:${permission.clip.id}`)||Date.parse(permission.clip.created_at)>=Date.parse(state.session.startedAt))continue;
+      if(permission.attachments.length>=50&&!permission.attachments.some(item=>item.sessionId===sessionId)){lastFailure='Choose another previous clip before reusing this asset in more sessions.';continue;}
+      const aliasId=`previous-scene:${digest([sessionId,permission.id]).slice(0,32)}`;
+      await options.media.alias(permission.mediaId,aliasId);
+      const latest=control.get<PreviousPermission>(permissionKey(id));if(!latest||latest.state!=='ready'||!latest.approved||latest.revision!==permission.revision){await options.media.revoke(aliasId);continue;}
+      const media:DomainMedia={id:aliasId,revision:1,momentId:null,refs:[],captureStartMs:0,captureEndMs:Math.ceil(permission.clip.duration*1000),durationMs:permission.durationMs??Math.ceil(permission.clip.duration*1000),state:'ready',kind:'video',previousSession:true,ownerApproved:true,clipId:permission.clip.id,manageUrl:'https://dashboard.twitch.tv/content/clips',clip:{id:permission.clip.id,url:permission.clip.url,embedUrl:permission.clip.embed_url}};
+      // Save the authorization relationship before committing the scene entity. A failed commit stays closed.
+      control.put(permissionKey(id),{...latest,attachments:[...latest.attachments.filter(item=>item.sessionId!==sessionId),{sessionId,mediaId:aliasId}].slice(-50)});
+      await engine.dispatch(sessionId,{type:'media',media,privacyEpoch:state.session.privacyEpoch},{idempotencyKey:`previous-attach:${digest([sessionId,id,permission.revision,permission.selectionRevision])}`,requestBody:{sessionId,approvalId:id,revision:permission.revision,selectionRevision:permission.selectionRevision}});
+      const after=control.get<PreviousPermission>(permissionKey(id));if(after?.revision===permission.revision&&after.state!=='revoked')control.put(permissionKey(id),{...after,attachments:[...after.attachments.filter(item=>item.sessionId!==sessionId),{sessionId,mediaId:aliasId}].slice(-50)});
+    }
+  };
+  const prepareChannelPrevious=async()=>{
+    for(const id of permissions()){
+      const permission=control.get<PreviousPermission>(permissionKey(id));if(!permission)continue;
+      if(permission.state==='revoked'){
+        await options.media?.revoke(permission.mediaId);for(const attachment of permission.attachments)await options.media?.revoke(attachment.mediaId);
+        control.put('twitch:previous-permissions',permissions().filter(value=>value!==id));continue;
+      }
+      if(!running||!authService.status().connected||permission.state!=='queued'&&!(permission.state==='running'&&(permission.leaseUntilMs??0)<=clock.now()))continue;
+      if(!options.media){control.put(permissionKey(id),{...permission,state:'failed'});continue;}
+      const claimed={...permission,state:'running' as const,leaseUntilMs:clock.now()+30000};control.put(permissionKey(id),claimed);
+      const renewal=setInterval(()=>{const current=control.get<PreviousPermission>(permissionKey(id));if(current?.revision===claimed.revision&&current.state==='running')control.put(permissionKey(id),{...current,leaseUntilMs:clock.now()+30000});},10000);renewal.unref();
+      try{
+        const url=await helix.downloadUrl(permission.clip.id);if(!url||!running||!authService.status().connected)throw new Error('download_unavailable');
+        const result=await options.media.prepare({id:permission.mediaId,url,kind:'video',mimeType:'video/mp4',sessionId:null,privacyEpoch:0,dependencyRefs:[],channelApproval:{channelId:scope.channelId,id:permission.id,revision:permission.revision},captureStartMs:0,captureEndMs:Math.ceil(permission.clip.duration*1000)});
+        const current=control.get<PreviousPermission>(permissionKey(id));if(!current||current.revision!==claimed.revision||current.state==='revoked'){await options.media.revoke(permission.mediaId);continue;}
+        control.put(permissionKey(id),{...current,state:'ready',durationMs:result.durationMs,leaseUntilMs:null});
+        const selection=control.get<PreviousSelection>('twitch:previous');if(selection?.clip.id===permission.clip.id)control.put('twitch:previous',{...selection,status:'ready'});
+        const active=liveId();if(active)await attachApproved(active);
+      }catch{
+        const current=control.get<PreviousPermission>(permissionKey(id));if(current?.revision===claimed.revision&&current.state!=='revoked')control.put(permissionKey(id),{...current,state:'failed',leaseUntilMs:null});
+        const selection=control.get<PreviousSelection>('twitch:previous');if(selection?.clip.id===permission.clip.id)control.put('twitch:previous',{...selection,status:'unavailable',reason:'download_unavailable'});
+      }finally{clearInterval(renewal);}
+      break; // One channel-bound download per tick; persisted queued records survive restart.
+    }
+  };
+  const runTick=async()=>{
     if(!running||tickBusy)return;tickBusy=true;
     try{
       const revoke=repository.claimJob(scope,{kinds:['twitch.media.revoke']});if(revoke){const value=record(revoke.payload);try{await revokeMedia(String(value.id),typeof value.clipId==='string'?value.clipId:undefined);repository.finishJob(scope,revoke.id,revoke.leaseToken,'done');}catch{repository.finishJob(scope,revoke.id,revoke.leaseToken,'failed',clock.now()+5000);}}
       const gap=control.get<Gap>('twitch:gap');if(gap?.until!==null&&gap?.until!==undefined){for(const session of sessionPages()){const start=Date.parse(session.startedAt),end=session.endedAt?Date.parse(session.endedAt):gap.until;if(start>gap.until||end<gap.since)continue;const body={type:'gap' as const,startMs:clamp(gap.since-start),endMs:clamp(Math.min(gap.until,end)-start)};await engine.dispatch(session.id,body,{idempotencyKey:`twitch-gap:${digest([session.id,gap])}`,requestBody:body});}control.delete('twitch:gap');}
+      await prepareChannelPrevious();
       if(!authService.status().connected)return;
       await bans.tick();const active=liveId();if(active){const state=engine.state(active);for(const actor of state.bannedActors.filter(actor=>bans.allows(actor)).slice(0,10))await mutateAcrossSessions(actor,null);}
+      if(active)await attachApproved(active);
       const intent=repository.claimJob(scope,{kinds:['twitch.clip.intent']});if(intent){
         const value=record(intent.payload),moment=value.moment as Moment|undefined;const state=engine.state(intent.sessionId);
         if(!moment||intent.privacyEpoch!==state.session.privacyEpoch||!state.moments.some(item=>item.id===moment.id)){repository.finishJob(scope,intent.id,intent.leaseToken,'failed');}
         else{
           const at=clamp(clock.now()-Date.parse(state.session.startedAt));const context:ClipContext&{key:string;auto:boolean;autoEnabled:boolean}={sessionId:intent.sessionId,privacyEpoch:intent.privacyEpoch,dependencyRefs:moment.dependencyRefs,captureStartMs:Math.max(0,at-85000),captureEndMs:Math.min(172800000,at+5000),momentId:moment.id,key:`clip:${moment.id}:${intent.privacyEpoch}`,auto:true,autoEnabled:state.settings.autoClips};
-          const id=effects.enqueueClip(context);if(!id)await onClip({...context,clip:null,status:'unavailable',reason:'clip_not_eligible_or_cooldown'});repository.finishJob(scope,intent.id,intent.leaseToken,id?'done':'failed');
+          const id=repository.runIdempotentControl(scope,`twitch-clip-convert:${intent.id}`,{momentId:moment.id,privacyEpoch:intent.privacyEpoch},()=>{const result=effects.enqueueClip(context);repository.finishJob(scope,intent.id,intent.leaseToken,result?'done':'failed');return result;});if(!id)await onClip({...context,clip:null,status:'unavailable',reason:'clip_not_eligible_or_cooldown'});
         }
       }
       await effects.tick();
     }catch{setFailure('A Twitch task could not be completed. Saved context remains available.');}finally{tickBusy=false;}
   };
-  const preparePrevious=async(clipId:string,sessionId:string,approved:boolean)=>{
+  const tick=()=>{if(tickFlight)return tickFlight;tickFlight=runTick().finally(()=>{tickFlight=null;});return tickFlight;};
+  const preparePrevious=async(clipId:string,sessionId:string|null,approved:boolean,idempotencyKey?:string)=>{
     const selection=control.get<PreviousSelection>('twitch:previous');if(!selection||selection.clip.id!==clipId||control.get(`twitch:clip-block:${clipId}`))throw new ApiError(404,'previous_clip_unavailable','This previous clip is unavailable.');
-    const state=engine.state(sessionId);if(Date.parse(selection.clip.created_at)>=Date.parse(state.session.startedAt))throw new ApiError(409,'previous_clip_session','Choose a clip from before this stream.');
-    control.put('twitch:previous',{...selection,status:'preparing',sessionId});
-    const context:ClipContext={sessionId,privacyEpoch:state.session.privacyEpoch,dependencyRefs:[],captureStartMs:0,captureEndMs:Math.ceil(selection.clip.duration*1000),previousApproved:approved};
-    const ready=await effects.preparePrevious(selection.clip,context);return {ready,previousSession:true,ownerApproved:approved};
+    if(sessionId){const state=engine.state(sessionId);if(Date.parse(selection.clip.created_at)>=Date.parse(state.session.startedAt))throw new ApiError(409,'previous_clip_session','Choose a clip from before this stream.');}
+    const body={clipId,sessionId,approved},id=permissionId(clipId);
+    repository.runIdempotentControl(scope,`previous-prepare:${idempotencyKey??digest(body)}`,body,()=>{
+      const existing=control.get<PreviousPermission>(permissionKey(id));if(existing?.state==='revoked')throw new ApiError(409,'previous_clip_revoked','This clip was revoked. Choose another clip.');
+      const index=permissions();if(!index.includes(id)&&index.length>=3)throw new ApiError(429,'previous_clip_capacity','Finish or reject an existing clip preview first.');
+      if(approved)for(const otherId of index){if(otherId===id)continue;const other=control.get<PreviousPermission>(permissionKey(otherId));if(other?.approved)control.put(permissionKey(otherId),{...other,approved:false,selectionRevision:other.selectionRevision+1});}
+      const value:PreviousPermission=existing?{...existing,approved:existing.approved||approved,selectionRevision:existing.selectionRevision+(approved&&!existing.approved?1:0),state:existing.state==='failed'?'queued':existing.state}:{id,revision:1,selectionRevision:1,clip:selection.clip,mediaId:`previous-preview:${digest([channel.id,clipId]).slice(0,32)}`,approved,state:'queued',leaseUntilMs:null,durationMs:null,attachments:[]};
+      if(approved){const settings=repository.getSettings(scope);if(settings.earlyWelcomeClipId!==clipId)repository.updateSettings(scope,settings.revision,{earlyWelcomeClipId:clipId});}
+      control.put(permissionKey(id),value);if(!index.includes(id))control.put('twitch:previous-permissions',[...index,id]);control.put('twitch:previous',{...selection,status:value.state==='ready'?'ready':'preparing',sessionId});return {id};
+    });
+    const permission=control.get<PreviousPermission>(permissionKey(id))!;
+    const active=liveId();updates.publish({...scope,event:'snapshot.changed',data:{sessionId:active,revision:active?engine.state(active).revision:0}});
+    return {jobId:id,status:permission.state==='ready'?'ready' as const:'queued' as const,mediaId:permission.mediaId,previousSession:true,ownerApproved:permission.approved};
   };
   const ownerRouter=Router();ownerRouter.use(authService.ownerRouter);
   ownerRouter.get('/twitch/previous-clip',(_req,res)=>{const selected=control.get<PreviousSelection>('twitch:previous');res.json({candidate:selected,previousSession:true,checkedAt:control.get<number>('twitch:previous-checked')});});
   ownerRouter.post('/twitch/previous-clip/refresh',async(_req,res,next)=>{try{await refreshPrevious();res.json({candidate:control.get<PreviousSelection>('twitch:previous')});}catch(error){next(error);}});
-  ownerRouter.post('/twitch/previous-clip/prepare',async(req,res,next)=>{try{if(typeof req.body?.clipId!=='string'||typeof req.body?.sessionId!=='string'||typeof req.body?.use!=='boolean')throw new ApiError(400,'invalid_clip_selection','Choose a previous clip and whether to use it.');res.json(await preparePrevious(req.body.clipId,req.body.sessionId,req.body.use));}catch(error){next(error);}});
-  ownerRouter.post('/twitch/previous-clip/reject',(req,res,next)=>{const selection=control.get<PreviousSelection>('twitch:previous');if(!selection||selection.clip.id!==req.body?.clipId){next(new ApiError(404,'previous_clip_unavailable','This previous clip is unavailable.'));return;}control.put(`twitch:clip-block:${selection.clip.id}`,true);control.put('twitch:previous',{...selection,status:'rejected'});if(selection.sessionId)queueRevoke(selection.sessionId,mediaId({sessionId:selection.sessionId,privacyEpoch:0,dependencyRefs:[]},selection.clip.id),selection.clip.id);res.sendStatus(204);});
+  ownerRouter.post('/twitch/previous-clip/prepare',async(req,res,next)=>{try{if(typeof req.body?.clipId!=='string'||req.body.sessionId!==null&&req.body.sessionId!==undefined&&typeof req.body.sessionId!=='string'||typeof req.body?.use!=='boolean')throw new ApiError(400,'invalid_clip_selection','Choose a previous clip and whether to use it.');res.status(202).json(await preparePrevious(req.body.clipId,req.body.sessionId??null,req.body.use,typeof req.headers['idempotency-key']==='string'?req.headers['idempotency-key']:undefined));}catch(error){next(error);}});
+  ownerRouter.post('/twitch/previous-clip/reject',async(req,res,next)=>{try{const selection=control.get<PreviousSelection>('twitch:previous');if(!selection||selection.clip.id!==req.body?.clipId)throw new ApiError(404,'previous_clip_unavailable','This previous clip is unavailable.');revokePermission(selection.clip.id);control.put('twitch:previous',{...selection,status:'rejected'});for(const session of sessionPages())for(const media of engine.state(session.id).media.filter(media=>media.clipId===selection.clip.id&&media.state!=='revoked')){queueRevoke(session.id,media.id,selection.clip.id);await engine.dispatch(session.id,{type:'privacy',target:{kind:'entity',sessionId:session.id,id:media.id},reason:'previous_clip_rejected'});}res.sendStatus(204);}catch(error){next(error);}});
   return {
     auth:authService.auth,authRouter:authService.router,ownerRouter,routers:{auth:authService.router,owner:ownerRouter},ingest,onEffects,tick,allowsMedia,isOwnEcho:(id:string)=>effects.isOwnEcho(id),
+    permitsOverlayMedia(id:string){const active=liveId();if(!active)return false;const state=engine.state(active),media=state.media.find(media=>media.id===id);if(!media||media.state!=='ready'||!media.ownerApproved||!state.playbacks.some(playback=>['queued','preparing','playing'].includes(playback.status)&&playback.plan?.media.some(item=>item.id===id)))return false;if(media.previousSession&&media.clipId){const permission=control.get<PreviousPermission>(permissionKey(permissionId(media.clipId)));if(!permission?.approved||permission.state!=='ready')return false;}return engine.allowed({sessionId:active,privacyEpoch:state.session.privacyEpoch,dependencyRefs:[{id:media.id,revision:media.revision}]});},
     status:()=>({...authService.status(),connection:{...connection},lastFailure,previousClip:control.get<PreviousSelection>('twitch:previous')?.status??'none'}),
     previousCandidate:()=>control.get<PreviousSelection>('twitch:previous'),refreshPrevious,preparePrevious,
     async start(){if(running)return;running=true;try{await authService.start();await connect();}catch{setFailure('Reconnect Twitch to continue.');}},
-    async stop(){running=false;authService.stop();await stopNetwork();},
+    async stop(){running=false;authService.stop();await stopNetwork();await tickFlight;},
   };
 }

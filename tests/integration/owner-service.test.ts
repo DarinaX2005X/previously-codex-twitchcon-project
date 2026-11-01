@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createStorage } from '../../src/server/storage/index.js';
 import { StoryEngine } from '../../src/server/runtime/engine.js';
 import { RuntimeOwnerService } from '../../src/server/runtime/owner-service.js';
@@ -11,12 +14,13 @@ import type { Safety, Source, StoryPatch } from '../../src/shared/contracts/inde
 const start=Date.parse('2026-11-02T00:00:00Z');
 const allowed:Safety={moderation:'allowed',pii:'allowed',checkedAt:new Date(start).toISOString(),reason:null};
 const resources:ReturnType<typeof createStorage>[]=[];
-afterEach(()=>{for(const storage of resources.splice(0))storage.close();});
-function harness(options:{deferReview?:boolean;session?:boolean;safeReview?:boolean}={}) {
+const directories:string[]=[];
+afterEach(()=>{for(const storage of resources.splice(0))storage.close();for(const directory of directories.splice(0)){if(!resolve(directory).startsWith(resolve(tmpdir())+sep))throw new Error('Unexpected test directory');rmSync(directory,{recursive:true,force:true});}});
+function harness(options:{deferReview?:boolean;session?:boolean;safeReview?:boolean;path?:string;transientReview?:boolean}={}) {
   let now=start+10_000;
   const reviewResolvers:((value:{decision:'allow';spans:[]})=>void)[]=[];
-  const safety=new SafetyService({classify:async()=>options.deferReview?await new Promise(resolve=>{reviewResolvers.push(resolve);}):{decision:options.safeReview?'allow':'review',spans:[]}}, {moderate:async()=>options.safeReview?'allowed':'unavailable'},()=>now);
-  const storage=createStorage({path:':memory:',now:()=>now});resources.push(storage);
+  const safety=new SafetyService({classify:async()=>{if(options.transientReview)throw new Error('Fixture provider unavailable');return options.deferReview?await new Promise(resolve=>{reviewResolvers.push(resolve);}):{decision:options.safeReview?'allow':'review',spans:[]};}}, {moderate:async()=>options.safeReview?'allowed':'unavailable'},()=>now);
+  const storage=createStorage({path:options.path??':memory:',now:()=>now});resources.push(storage);
   const scope={channelId:'channel',runId:'live'},channel={id:'channel',login:'fixture',displayName:'Authored fixture'};
   const engine=new StoryEngine({scope,channel,storage,clock:{now:()=>now,iso:()=>new Date(now).toISOString()},updates:new RevisionStream(),safety,story:{propose:async()=>{throw new Error('No provider calls in service tests.');}}});
   storage.repository.updateSettings(scope,0,{listeningPaused:false});
@@ -24,7 +28,7 @@ function harness(options:{deferReview?:boolean;session?:boolean;safeReview?:bool
   const principal:Principal={...scope,role:'owner',actorId:'owner',sessionId:'auth-session',expiresAtMs:start+1_000_000};
   const service=new RuntimeOwnerService(engine);
   const context=(key='mutation-key-0001',baseRevision=1)=>({principal,idempotencyKey:key,baseRevision});
-  return {engine,storage,scope,principal,service,context,set(ms:number){now=start+ms;},release(){for(const resolve of reviewResolvers.splice(0))resolve({decision:'allow',spans:[]});},async seed(){
+  return {engine,storage,scope,principal,service,context,set(ms:number){now=start+ms;},release(){for(const resolve of reviewResolvers.splice(0))resolve({decision:'allow',spans:[]});},async runReview(){const job=storage.repository.claimJob(scope,{kinds:['owner.review']});expect(job).not.toBeNull();const result=await service.executeReview(job!,new AbortController().signal);storage.repository.finishJob(scope,job!.id,job!.leaseToken,result.state,result.retryAtMs);return result;},async seed(){
     const source:Source={...scope,id:'speech',sessionId:'session',revision:1,kind:'speech',startMs:9000,endMs:10000,actorId:null,languageCodes:['en'],timePrecision:'chunk',text:'I am testing note persistence.',status:'active',externalMessageId:null,moderation:'allowed'};
     const state=await engine.dispatch('session',{type:'source',source}),ticket=state.pendingGeneration!.ticket;
     const patch:StoryPatch={sessionId:'session',baseRevision:ticket.baseEntityRevision,action:'new_chapter',title:'Testing persistence',claims:[{id:'goal',text:source.text!,role:'goal',support:[{id:source.id,revision:1}],attribution:'streamer',epistemic:'explicit'}],relations:[],currentAttemptId:null,language:'en',missingContext:[]};
@@ -72,18 +76,71 @@ describe('owner service integration',()=>{
   it('holds unavailable safety results and fences review replies after Forget',async()=>{
     const h=harness({deferReview:true}),seed=await h.seed(),chapter=seed.chapters[0];
     await h.service.editChapter(h.context('edit-review-key',chapter.revision),chapter.id,{summary:'Owner correction awaiting review.'});
+    const job=h.storage.repository.claimJob(h.scope,{kinds:['owner.review']});expect(job).not.toBeNull();
+    const execution=h.service.executeReview(job!,new AbortController().signal);
     await h.service.privacy(h.context('forget-review-key'),{target:{kind:'entity',sessionId:'session',id:chapter.id},reason:'Remove this chapter'});
-    h.release();await new Promise(resolve=>setImmediate(resolve));await h.engine.dispatch('session',{type:'tick'});
+    h.release();await execution;await h.engine.dispatch('session',{type:'tick'});
     expect(h.engine.state('session').chapters).toHaveLength(0);expect(h.engine.state('session').published?.chapters).toHaveLength(0);
     expect(h.storage.budget.status().usedMicroUsd).toBe(0);
   });
   it('publishes a separately reviewed owner correction without a second hold and retains owner provenance',async()=>{
     const h=harness({safeReview:true}),seed=await h.seed(),chapter=seed.chapters[0];
     await h.service.editChapter(h.context('safe-edit-key',chapter.revision),chapter.id,{summary:'The owner confirmed the reload behavior.'});
-    await new Promise(resolve=>setImmediate(resolve));await h.engine.dispatch('session',{type:'tick'});
+    expect(h.engine.state('session').chapters[0].safety.moderation).toBe('pending');
+    await h.runReview();await h.engine.dispatch('session',{type:'tick'});
     const reviewed=h.engine.state('session');expect(reviewed.chapters[0].safety.moderation).toBe('allowed');
     expect(reviewed.published?.chapters[0].summary).toBe('The owner confirmed the reload behavior.');
     expect(reviewed.sources.some(s=>s.kind==='owner_statement'&&s.moderation==='allowed')).toBe(true);
+    expect(h.storage.budget.status().usedMicroUsd).toBe(0);
+  });
+  it('resumes an owner review after closing and reopening SQLite before the worker dispatches',async()=>{
+    const directory=mkdtempSync(join(tmpdir(),'previously-owner-review-'));directories.push(directory);const path=join(directory,'review.sqlite');
+    const h=harness({safeReview:true,path}),seed=await h.seed(),chapter=seed.chapters[0];
+    await h.service.editChapter(h.context('restart-review-key',chapter.revision),chapter.id,{summary:'A durable owner correction.'});
+    expect(h.storage.repository.pendingJobCount(h.scope,'session',['owner.review'])).toBe(1);
+    resources.splice(resources.indexOf(h.storage),1);h.storage.close();
+    const storage=createStorage({path,now:h.engine.clock.now});resources.push(storage);
+    const engine=new StoryEngine({scope:h.scope,channel:h.engine.channel,storage,clock:h.engine.clock,safety:h.engine.safety,updates:new RevisionStream(),story:{propose:async()=>{throw new Error('No provider calls.');}}});
+    const service=new RuntimeOwnerService(engine),job=storage.repository.claimJob(h.scope,{kinds:['owner.review']});expect(job).not.toBeNull();
+    expect(JSON.stringify(job!.payload)).not.toContain('A durable owner correction.');
+    const result=await service.executeReview(job!,new AbortController().signal);expect(result).toEqual({state:'done'});
+    expect(storage.repository.finishJob(h.scope,job!.id,job!.leaseToken,result.state)).toBe(true);
+    expect(engine.state('session').published?.chapters[0].summary).toBe('A durable owner correction.');
+    expect(storage.repository.pendingJobCount(h.scope,'session',['owner.review'])).toBe(0);
+  });
+  it('reviews a durable owner source after its raw text leaves the bounded checkpoint window',async()=>{
+    const h=harness({safeReview:true}),seed=await h.seed(),chapter=seed.chapters[0];
+    await h.service.editChapter(h.context('historical-review-key',chapter.revision),chapter.id,{summary:'A correction retained by its provenance.'});
+    const before=h.engine.state('session'),source=before.sources.find(value=>value.kind==='owner_statement')!;
+    const evicted=structuredClone(before),{text:_text,...evidenceMetadata}=source;
+    // The reducer uses this metadata representation when an evidenced source leaves its 500-item raw window.
+    evicted.sources=evicted.sources.filter(value=>value.id!==source.id);
+    evicted.nodes[source.id]={id:source.id,revision:source.revision,kind:'provider_cache',supports:[],exposedTo:[],startMs:source.startMs,endMs:source.endMs,active:true,body:{evidenceMetadata}};
+    evicted.revision++;
+    h.storage.repository.applyDomainTransition(h.scope,'session',{expectedRevision:before.revision,expectedPrivacyEpoch:before.session.privacyEpoch,transition:{state:evicted,effects:[]}});
+    expect(h.engine.state('session').sources.some(value=>value.id===source.id)).toBe(false);
+    expect(await h.runReview()).toEqual({state:'done'});
+    expect(h.engine.state('session').published?.chapters[0].summary).toBe('A correction retained by its provenance.');
+    expect(h.storage.repository.getSource(h.scope,source.id)?.revision).toBe(source.revision+1);
+  });
+  it('drops a queued review forgotten before its first safety dispatch',async()=>{
+    const h=harness({safeReview:true}),seed=await h.seed(),chapter=seed.chapters[0];
+    await h.service.editChapter(h.context('queued-review-key',chapter.revision),chapter.id,{summary:'Forget this queued correction.'});
+    const job=h.storage.repository.claimJob(h.scope,{kinds:['owner.review']});expect(job).not.toBeNull();
+    await h.service.privacy(h.context('queued-forget-key'),{target:{kind:'entity',sessionId:'session',id:chapter.id},reason:'Remove before review'});
+    expect(await new RuntimeOwnerService(h.engine).executeReview(job!,new AbortController().signal)).toEqual({state:'done'});
+    expect(h.engine.state('session').chapters).toHaveLength(0);expect(h.engine.state('session').published?.chapters).toHaveLength(0);
+    expect(h.storage.repository.pendingJobCount(h.scope,'session',['owner.review'])).toBe(0);
+  });
+  it('backs off transient safety failures for at most three attempts then leaves an explicit held result',async()=>{
+    const h=harness({transientReview:true}),seed=await h.seed(),chapter=seed.chapters[0];
+    await h.service.editChapter(h.context('retry-review-key',chapter.revision),chapter.id,{summary:'Waiting for review.'});
+    expect(await h.runReview()).toEqual({state:'failed',retryAtMs:start+87000});
+    expect(h.storage.repository.claimJob(h.scope,{kinds:['owner.review']})).toBeNull();
+    h.set(87000);expect(await h.runReview()).toEqual({state:'failed',retryAtMs:start+91000});
+    h.set(91000);expect(await h.runReview()).toEqual({state:'failed'});
+    const held=h.engine.state('session').chapters[0];expect(held.publicationState).toBe('held');expect(held.safety.reason).toBe('owner_review_unavailable');
+    expect(h.engine.state('session').published?.chapters).toHaveLength(0);expect(h.storage.repository.claimJob(h.scope,{kinds:['owner.review']})).toBeNull();
     expect(h.storage.budget.status().usedMicroUsd).toBe(0);
   });
   it('accepts owner corrections to a finalized session while keeping the new wording held',async()=>{
@@ -118,13 +175,19 @@ describe('owner service integration',()=>{
   });
   it('reviews lore edits as owner statements before confirming an origin',async()=>{
     const h=harness({safeReview:true});
+    const presentationCalls:[string,string][]=[];
+    (h.engine as typeof h.engine & {presentOwnerLore(sessionId:string,entityId:string):Promise<void>}).presentOwnerLore=async(sessionId,entityId)=>{
+      expect(h.engine.state(sessionId).lore.find(l=>l.id===entityId)?.safety.moderation).toBe('allowed');
+      presentationCalls.push([sessionId,entityId]);throw new Error('Fixture alternate presentation unavailable');
+    };
     for(let index=0;index<2;index++)await h.engine.dispatch('session',{type:'source',phrase:'tiny dragon',source:{...h.scope,id:`chat:${index}`,sessionId:'session',revision:1,kind:'chat',startMs:1000+index,endMs:1000+index,actorId:`viewer:${index}`,languageCodes:['en'],timePrecision:'event',text:'tiny dragon',status:'active',externalMessageId:`message:${index}`,moderation:'allowed'}});
     await h.engine.dispatch('session',{type:'lore.propose',id:'lore:dragon',term:'tiny dragon',explanation:'The origin has not been confirmed.',originRefs:[],safety:allowed});
     const lore=h.engine.state('session').lore[0];
     await h.service.editLore(h.context('lore-edit-key',lore.revision),lore.id,{explanation:'The streamer named the small mascot.',aliases:['little dragon'],originMs:1000});
-    await new Promise(resolve=>setImmediate(resolve));await h.engine.dispatch('session',{type:'tick'});
+    expect(await h.runReview()).toEqual({state:'done'});await h.engine.dispatch('session',{type:'tick'});
     const reviewed=h.engine.state('session').lore[0];expect(reviewed.originKind).toBe('owner_confirmed');expect(reviewed.safety.moderation).toBe('allowed');
     expect(reviewed.explanation).toBe('The streamer named the small mascot.');expect(reviewed.aliases).toEqual(['little dragon']);
+    expect(presentationCalls).toEqual([['session',lore.id]]);
   });
   it('bounds source pages and intervals and only previews the published projection',async()=>{
     const h=harness();expect(h.service.previewRecap(h.principal,'session')).toBeNull();await h.seed();

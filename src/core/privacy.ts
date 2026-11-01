@@ -31,6 +31,7 @@ export function invalidateDomain(state:DomainState,target:PrivacyTarget,effects:
   state.memory=state.memory.filter(m=>!affected.has(m.id)&&!m.refs.some(r=>affected.has(r.id)));
   state.chapters=state.chapters.filter(c=>!affected.has(c.id));
   state.lore=state.lore.flatMap(l=>!affected.has(l.id)?[l]:target.kind==='term'?[{...l,revision:l.revision+1,explanation:'',originMs:null,originKind:'unknown' as const,momentId:null,maxDependencyEndMs:0,status:'blocked' as const,dependencyRefs:[],safety:{moderation:'unavailable' as const,pii:'review' as const,checkedAt:null,reason:null}}]:[]);
+  state.lorePresentations=state.lorePresentations.filter(p=>!affected.has(p.id)&&!affected.has(p.entityId)&&!p.inputRefs.some(ref=>affected.has(ref.id)));
   state.moments=state.moments.filter(m=>!affected.has(m.id));
   state.candidates=state.candidates.filter(c=>!affected.has(c.id)&&!affected.has(c.entityId)&&!c.inputRefs.some(r=>affected.has(r.id)));
   state.phrases=state.phrases.filter(p=>!p.refs.some(r=>affected.has(r.id)));

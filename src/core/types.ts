@@ -6,6 +6,7 @@ export type DerivedNode = { id: string; revision: number; kind: NodeKind; suppor
 export type MemoryFact = { id: string; text: string; refs: VersionRef[]; role: GroundedClaim['role']; firstAtMs: number; lastAtMs: number };
 export type GroundingReview = { acceptedClaimIds: string[]; acceptedRelationKeys: string[]; issues?: string[] };
 export type StoryCandidate = { id: string; entityId: string; revision: number; ownerRevision: number; privacyEpoch: number; inputRefs: VersionRef[]; eligibleAtMs: number; chapter: Chapter; current: CurrentState|null; currentNodeId?: string; safety: Safety; language: RecapLanguage; status: 'pending'|'published'|'rejected'; };
+export type LorePresentation = { kind:'lore'; id:string; entityId:string; entityRevision:number; language:RecapLanguage; term:string; explanation:string; safety:Safety; inputRefs:VersionRef[]; privacyEpoch:number; eligibleAtMs:number; maxDependencyEndMs:number };
 export type GenerationRequest = { ticket: GenerationTicket; entityId: string; reason: 'current'|'chapter'|'metadata'|'topic'|'final'; packet: EvidencePacket; requestedAtMs: number; sourceRevision: number };
 export type ReactionWindow = { startMs: number; actors: Record<string, number>; count: number; emotes: number; laughter: number; clipIt: number; refs: VersionRef[] };
 export type PhraseObservation = { term: string; aliases: string[]; firstMs: number; lastMs: number; actors: string[]; refs: VersionRef[] };
@@ -14,7 +15,7 @@ export type DomainState = {
   version: 1; revision: number; channel: Channel; session: Session; settings: Settings;
   metadataReviewed: boolean;
   sources: Source[]; nodes: Record<string, DerivedNode>; memory: MemoryFact[]; chapters: Chapter[];
-  lore: Lore[]; moments: Moment[]; media: DomainMedia[]; candidates: StoryCandidate[];
+  lore: Lore[]; lorePresentations:LorePresentation[]; moments: Moment[]; media: DomainMedia[]; candidates: StoryCandidate[];
   published: PublicSnapshot|null; current: CurrentState|null; activeChapterId: string|null;
   ownerRevisions: Record<string, number>; ownerLocks: string[]; suppressedIds: string[];
   editorialExcludedRefs: VersionRef[];
@@ -44,15 +45,16 @@ export type DomainEvent =
   | { type: 'settings'; settings: Settings; baseRevision: number }
   | { type: 'chat.clear'; throughMs: number }
   | { type: 'owner.edit'; entityId: string; baseRevision: number; source: Source; title: string; summary: string; safety: Safety; language?: RecapLanguage; pinned?: boolean }
-  | { type: 'owner.review'; entityId: string; ownerRevision: number; sourceId: string; sourceRevision: number; title: string; summary: string; safety: Safety; language?: RecapLanguage; current?: CurrentState }
+  | { type: 'owner.review'; entityId: string; ownerRevision: number; sourceId: string; sourceRevision: number; privacyEpoch?: number; title: string; summary: string; safety: Safety; language?: RecapLanguage; current?: CurrentState }
   | { type: 'owner.pin'; entityId: string; baseRevision: number; pinned: boolean }
   | { type: 'candidate.safety'; candidateId: string; safety: Safety }
   | { type: 'presentation'; entityId: string; baseRevision: number; ownerRevision: number; language: RecapLanguage; title: string; summary: string; safety: Safety; inputRefs: VersionRef[]; current?: CurrentState }
   | { type: 'language'; language: RecapLanguage }
-  | { type: 'lore.propose'; id: string; term: string; aliases?: string[]; explanation: string; originRefs: VersionRef[]; safety: Safety; grounding?: GroundingReview }
-  | { type: 'lore.confirm'; id: string; baseRevision: number; source: Source; explanation: string; safety: Safety }
-  | { type: 'lore.edit'; id: string; baseRevision: number; source: Source; term?: string; explanation: string; aliases?: string[]; originMs?: number|null }
-  | { type: 'lore.review'; id: string; baseRevision: number; sourceId: string; sourceRevision: number; term?: string; explanation: string; aliases?: string[]; originMs?: number|null; safety: Safety }
+  | { type: 'lore.propose'; id: string; term: string; aliases?: string[]; explanation: string; originRefs: VersionRef[]; exposureRefs?: VersionRef[]; safety: Safety; grounding?: GroundingReview; language?:RecapLanguage }
+  | { type: 'lore.confirm'; id: string; baseRevision: number; source: Source; explanation: string; safety: Safety; language?:RecapLanguage }
+  | { type: 'lore.edit'; id: string; baseRevision: number; source: Source; term?: string; explanation: string; aliases?: string[]; originMs?: number|null; language?:RecapLanguage }
+  | { type: 'lore.review'; id: string; baseRevision: number; sourceId: string; sourceRevision: number; privacyEpoch?: number; term?: string; explanation: string; aliases?: string[]; originMs?: number|null; safety: Safety; language?:RecapLanguage }
+  | { type: 'lore.presentation'; id:string; baseRevision:number; privacyEpoch:number; language:RecapLanguage; term:string; explanation:string; safety:Safety; inputRefs:VersionRef[] }
   | { type: 'term.unblock'; term: string }
   | { type: 'moment.save'; id?: string; atMs: number; label?: string; sourceRefs?: VersionRef[] }
   | { type: 'media'; media: DomainMedia; privacyEpoch: number }
@@ -64,6 +66,7 @@ export type DomainEvent =
   | { type: 'gap'; startMs: number; endMs: number };
 export type DomainEffect =
   | { type: 'generation.request'; request: GenerationRequest }
+  | { type: 'owner.review.request'; kind: 'chapter'|'lore'; entityId: string; entityRevision: number; ownerRevision?: number; sourceId: string; sourceRevision: number; privacyEpoch: number; dependencyRefs: VersionRef[] }
   | { type: 'source.persist'; source: Source }
   | { type: 'entity.upsert'; node: DerivedNode }
   | { type: 'candidate.save'; candidate: StoryCandidate }

@@ -25,7 +25,7 @@ export function canDispatch(state:DomainState,input:{sessionId:string;privacyEpo
   return input.sessionId===state.session.id&&input.privacyEpoch===state.session.privacyEpoch&&input.dependencyRefs.every(ref=>{
     if(!isRefActive(state,ref))return false;
     const node=state.nodes[ref.id];
-    if(node?.kind==='presentation'){const candidate=state.candidates.find(c=>c.id===ref.id);return !!candidate&&candidate.status==='published'&&candidate.privacyEpoch===state.session.privacyEpoch&&candidate.ownerRevision===(state.ownerRevisions[candidate.entityId]??0)&&candidate.inputRefs.every(r=>isRefActive(state,r));}
+    if(node?.kind==='presentation'){const candidate=state.candidates.find(c=>c.id===ref.id);return !!candidate&&candidate.status==='published'&&candidate.ownerRevision===(state.ownerRevisions[candidate.entityId]??0)&&candidate.inputRefs.every(r=>isRefActive(state,r));}
     if(node?.kind==='media'){const media=state.media.find(m=>m.id===ref.id);return !!media&&media.state==='ready'&&media.ownerApproved;}
     return true;
   });

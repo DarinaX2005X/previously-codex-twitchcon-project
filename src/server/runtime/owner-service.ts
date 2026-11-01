@@ -4,7 +4,8 @@ import type { DomainEvent, DomainState } from '../../core/types.js';
 import type { Channel, Chapter, Clock, EventEnvelope, InvalidationReceipt, Lore, Moment, OwnerSnapshot, PlaybackRef, RecapPlan, Safety, Scope, Settings, Source } from '../../shared/contracts/index.js';
 import { safetyAllowsPublication, SettingsSchema } from '../../shared/contracts/index.js';
 import type { SafetyService } from '../providers/safety.js';
-import type { createStorage, SqliteRepository } from '../storage/index.js';
+import type { createStorage, SqliteRepository, WorkLease } from '../storage/index.js';
+import type { JobResult } from './scheduler.js';
 import { ApiError } from './errors.js';
 import type { ChapterPatch, LorePatch, OwnerMutation, OwnerRevisionMutation, OwnerService, PlaybackAck, SessionQuery, SettingsPatch, SourceQuery } from './owner-routes.js';
 import type { Principal } from './security.js';
@@ -22,6 +23,7 @@ export interface OwnerEnginePort {
   dispatch(sessionId: string, event: DomainEvent, options?: OwnerDispatchOptions): Promise<DomainState>;
   statuses(): OwnerSnapshot['status'];
   presentOwnerChapter?(sessionId: string, entityId: string): Promise<void>;
+  presentOwnerLore?(sessionId: string, entityId: string): Promise<void>;
 }
 type ResultRef = {kind: 'chapter'|'lore'|'moment'|'playback'; sessionId: string; id: string} | {kind: 'settings'} | {kind: 'receipt'; value: InvalidationReceipt} | {kind: 'void'};
 type MutationRecord = {hash: string; result?: ResultRef};
@@ -95,12 +97,50 @@ export class RuntimeOwnerService implements OwnerService {
     const at=Math.max(0,Math.min(172_800_000,this.engine.clock.now()-Date.parse(state.session.startedAt)));
     return {...this.engine.scope,id:`owner:${randomUUID()}`,sessionId:state.session.id,revision:1,kind:'owner_statement',startMs:at,endMs:at,actorId:principal.actorId,languageCodes:[state.settings.recapLanguage],timePrecision:'event',text,status:'active',externalMessageId:null,moderation:'pending'};
   }
-  private async review(fields: {id: string; text: string}[]) {
-    try {const reviewed=await this.engine.safety.inspectBatch(fields);if(reviewed.length!==fields.length || fields.some(f=>!reviewed.some(r=>r.id===f.id)))throw new Error('Incomplete review');return reviewed;}
+  private async review(fields: {id: string; text: string}[],signal?: AbortSignal) {
+    try {const reviewed=await this.engine.safety.inspectBatch(fields,signal);if(reviewed.length!==fields.length || fields.some(f=>!reviewed.some(r=>r.id===f.id)))throw new Error('Incomplete review');return reviewed;}
     catch {return fields.map(field=>({...field,safety:{moderation:'unavailable',pii:'review',checkedAt:this.engine.clock.iso(),reason:'safety_unavailable'} as Safety}));}
   }
   private combined(results: {safety: Safety}[]): Safety {
     return {moderation:results.some(r=>r.safety.moderation==='blocked')?'blocked':results.every(r=>r.safety.moderation==='allowed')?'allowed':'unavailable',pii:results.every(r=>['allowed','redacted'].includes(r.safety.pii))?(results.some(r=>r.safety.pii==='redacted')?'redacted':'allowed'):'review',checkedAt:this.engine.clock.iso(),reason:results.find(r=>r.safety.reason)?.safety.reason??null};
+  }
+  /** Durable jobs contain only identifiers; text is read from the current private state for each attempt. */
+  async executeReview(job: WorkLease,signal: AbortSignal): Promise<JobResult> {
+    type ReviewRequest={kind:'chapter'|'lore';entityId:string;entityRevision:number;ownerRevision?:number;sourceId:string;sourceRevision:number;privacyEpoch:number};
+    const value=job.payload as Partial<ReviewRequest>|null;
+    if(job.kind!=='owner.review'||!value||!['chapter','lore'].includes(value.kind??'')||typeof value.entityId!=='string'||typeof value.sourceId!=='string'||!Number.isSafeInteger(value.entityRevision)||!Number.isSafeInteger(value.sourceRevision)||value.privacyEpoch!==job.privacyEpoch)return {state:'failed'};
+    const request=value as ReviewRequest;
+    const current=()=>{
+      const state=this.state(job.sessionId),source=this.engine.repository.getSource(this.engine.scope,request.sourceId);
+      if(state.session.privacyEpoch!==request.privacyEpoch||!source||source.sessionId!==job.sessionId||source.kind!=='owner_statement'||source.revision!==request.sourceRevision||source.status!=='active')return null;
+      const chapter=request.kind==='chapter'?state.chapters.find(c=>c.id===request.entityId):undefined;
+      const lore=request.kind==='lore'?state.lore.find(l=>l.id===request.entityId):undefined;
+      const entity=chapter??lore;
+      if(!entity||!entity.dependencyRefs.some(ref=>ref.id===source.id&&ref.revision===source.revision)||chapter&&(chapter.ownerEditRevision!==request.ownerRevision||chapter.publicationState!=='held')||lore&&(lore.revision!==request.entityRevision||lore.status!=='held'))return null;
+      return {state,source,chapter,lore};
+    };
+    if(signal.aborted||!this.engine.repository.renewJob(this.engine.scope,job.id,job.leaseToken))return {state:'done'};
+    const before=current();if(!before)return {state:'done'};
+    const fields=before.chapter?[{id:'title',text:before.chapter.title},{id:'summary',text:before.chapter.summary}]:[{id:'term',text:before.lore!.term},{id:'explanation',text:before.lore!.explanation},...before.lore!.aliases.map((text,index)=>({id:`alias:${index}`,text}))];
+    const results=await this.review(fields,signal);
+    if(signal.aborted||!this.engine.repository.renewJob(this.engine.scope,job.id,job.leaseToken))return {state:'done'};
+    const after=current();if(!after)return {state:'done'};
+    const safety=this.combined(results),unavailable=results.some(result=>result.safety.moderation==='unavailable'&&['safety_unavailable','moderation_unavailable','provider_unavailable'].includes(result.safety.reason??''));
+    if(unavailable&&job.attempts<3)return {state:'failed',retryAtMs:this.engine.clock.now()+2000*2**Math.max(0,job.attempts-1)};
+    if(unavailable)safety.reason='owner_review_unavailable';
+    if(after.chapter){
+      const reviewed=await this.engine.dispatch(job.sessionId,{type:'owner.review',entityId:request.entityId,ownerRevision:request.ownerRevision!,sourceId:request.sourceId,sourceRevision:request.sourceRevision,privacyEpoch:request.privacyEpoch,title:results.find(r=>r.id==='title')!.text,summary:results.find(r=>r.id==='summary')!.text,safety});
+      if(safetyAllowsPublication(safety)&&reviewed.chapters.some(c=>c.id===request.entityId&&c.ownerEditRevision===request.ownerRevision)){
+        // A failed alternate presentation cannot revoke the already committed primary review.
+        try {await this.engine.presentOwnerChapter?.(job.sessionId,request.entityId);} catch { /* Alternate language remains held. */ }
+      }
+    }else{
+      const reviewed=await this.engine.dispatch(job.sessionId,{type:'lore.review',id:request.entityId,baseRevision:request.entityRevision,sourceId:request.sourceId,sourceRevision:request.sourceRevision,privacyEpoch:request.privacyEpoch,term:results.find(r=>r.id==='term')!.text,explanation:results.find(r=>r.id==='explanation')!.text,aliases:after.lore!.aliases.map((_,index)=>results.find(r=>r.id===`alias:${index}`)!.text),originMs:after.lore!.originMs,safety});
+      if(safetyAllowsPublication(safety)&&reviewed.lore.some(l=>l.id===request.entityId&&l.revision===request.entityRevision+1&&safetyAllowsPublication(l.safety))){
+        try {await this.engine.presentOwnerLore?.(job.sessionId,request.entityId);} catch { /* The reviewed original remains available; the alternate language stays held. */ }
+      }
+    }
+    return {state:unavailable?'failed':'done'};
   }
   bootstrap(principal: Principal): OwnerSnapshot {this.authorize(principal); const id=this.engine.activeSessionId();return this.snapshot(id ? this.state(id) : null);}
   getSession(principal: Principal,id: string): OwnerSnapshot {this.authorize(principal);return this.snapshot(this.state(id));}
@@ -137,11 +177,6 @@ export class RuntimeOwnerService implements OwnerService {
       if(patch.title!==undefined||patch.summary!==undefined){
         const title=patch.title??chapter.title,summary=patch.summary??chapter.summary,source=this.statement(state,context.principal,summary);
         next=await this.engine.dispatch(state.session.id,{type:'owner.edit',entityId:id,baseRevision:chapter.revision,source,title,summary,safety:pending,pinned:patch.pinned},{...this.options(context,{operation:'chapter.edit',id,patch,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});
-        const edited=next.chapters.find(c=>c.id===id)!;
-        void this.review([{id:'title',text:title},{id:'summary',text:summary}]).then(async results=>{
-          const safety=this.combined(results),reviewed=await this.engine.dispatch(state.session.id,{type:'owner.review',entityId:id,ownerRevision:edited.ownerEditRevision,sourceId:source.id,sourceRevision:source.revision,title:results.find(r=>r.id==='title')!.text,summary:results.find(r=>r.id==='summary')!.text,safety});
-          if(safetyAllowsPublication(safety)&&reviewed.chapters.some(c=>c.id===id&&c.ownerEditRevision===edited.ownerEditRevision))await this.engine.presentOwnerChapter?.(state.session.id,id);
-        }).catch(()=>undefined);
       }
       if(patch.pinned!==undefined&&patch.title===undefined&&patch.summary===undefined)await this.engine.dispatch(state.session.id,{type:'owner.pin',entityId:id,baseRevision:next.chapters.find(c=>c.id===id)!.revision,pinned:patch.pinned},{...this.options(context,{operation:'chapter.edit',id,patch,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});
       return {kind:'chapter',sessionId:state.session.id,id};
@@ -161,9 +196,7 @@ export class RuntimeOwnerService implements OwnerService {
     return this.mutate(context,operation,{id,patch},async()=>{
       const {state}=this.entity(id,'lore'),lore=state.lore.find(l=>l.id===id);if(!lore||lore.revision!==context.baseRevision)throw conflict();
       const value={term:patch.term??lore.term,explanation:patch.explanation??lore.explanation,aliases:patch.aliases??lore.aliases,originMs:patch.originMs===undefined?lore.originMs:patch.originMs},source=this.statement(state,context.principal,value.explanation);
-      const next=await this.engine.dispatch(state.session.id,{type:'lore.edit',id,baseRevision:lore.revision,source,...value},{...this.options(context,{operation,id,patch,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});
-      const edited=next.lore.find(l=>l.id===id)!;
-      void this.review([{id:'term',text:value.term},{id:'explanation',text:value.explanation},...value.aliases.map((text,index)=>({id:`alias:${index}`,text}))]).then(async results=>{await this.engine.dispatch(state.session.id,{type:'lore.review',id,baseRevision:edited.revision,sourceId:source.id,sourceRevision:source.revision,term:results.find(r=>r.id==='term')!.text,explanation:results.find(r=>r.id==='explanation')!.text,aliases:value.aliases.map((_,index)=>results.find(r=>r.id===`alias:${index}`)!.text),originMs:value.originMs,safety:this.combined(results)});}).catch(()=>undefined);
+      await this.engine.dispatch(state.session.id,{type:'lore.edit',id,baseRevision:lore.revision,source,...value},{...this.options(context,{operation,id,patch,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});
       return {kind:'lore',sessionId:state.session.id,id};
     });
   }
@@ -192,4 +225,4 @@ export class RuntimeOwnerService implements OwnerService {
     return this.mutate(context,`playback.${action}`,{id,input},async()=>{const {state}=this.entity(id,'playback');const playback=state.playbacks.find(p=>p.id===id);if(!playback||['ended','cancelled','skipped'].includes(playback.status))return {kind:'void'};await this.engine.dispatch(state.session.id,{type:'playback',id,action},this.options(context,{operation:`playback.${action}`,id,input}));return {kind:'void'};});
   }
 }
-export const createOwnerService = (engine: OwnerEnginePort): OwnerService => new RuntimeOwnerService(engine);
+export const createOwnerService = (engine: OwnerEnginePort): RuntimeOwnerService => new RuntimeOwnerService(engine);

@@ -47,6 +47,13 @@ describe('private publication CAS and read policy',()=>{
     await publish(service,{...base(2),operation:'snapshot',snapshots:[],activeSessionId:'episode1',liveLeaseUntil:new Date(NOW+40_000).toISOString()});
     expect((await service.readSnapshot(channelId)).asOf).toBe(s.asOf);time(NOW+40_000);await expect(service.readSnapshot(channelId)).rejects.toMatchObject({code:'live_recap_unavailable'});
   });
+  it('accepts an old frozen snapshot without stretching its expired lease',async()=>{
+    const {service,time}=setup(),op=publication();time(NOW+120_000);await publish(service,op);
+    expect((await service.getHead(channelId))?.head.liveLeaseUntil).toBe(op.liveLeaseUntil);
+    await expect(service.readSnapshot(channelId)).rejects.toMatchObject({code:'live_recap_unavailable'});
+    await publish(service,{...base(2),operation:'snapshot',snapshots:[],activeSessionId:'episode1',liveLeaseUntil:new Date(NOW+150_000).toISOString()});
+    expect((await service.readSnapshot(channelId)).asOf).toBe(op.snapshots[0].asOf);
+  });
   it('privacy replacement keeps the active safe episode visible under its existing lease',async()=>{
     const {service}=setup();await publish(service,publication());const safe=snapshot('episode1',2);safe.privacyEpoch=1;safe.chapters=[];
     await publish(service,{...base(2,1),operation:'retract',sessionIds:['episode1'],exportIds:[],snapshots:[safe]});

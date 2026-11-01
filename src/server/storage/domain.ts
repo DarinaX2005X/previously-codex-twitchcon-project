@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DomainState, DerivedNode, StoryCandidate, GenerationRequest } from '../../core/types.js';
-import type { Scope, Source, VersionRef, EventEnvelope, PrivacyTarget, InvalidationReceipt } from '../../shared/contracts/index.js';
+import type { Scope, Source, VersionRef, EventEnvelope, PrivacyTarget, InvalidationReceipt, Lore } from '../../shared/contracts/index.js';
 import { EventEnvelopeSchema, SourceSchema, SessionSchema, SettingsSchema, ChapterSchema, PublicSnapshotSchema, GenerationTicketSchema, safetyAllowsPublication } from '../../shared/contracts/index.js';
 import type { SqliteRepository } from './repository.js';
 import { StorageDatabase, StorageError, integer, json } from './database.js';
@@ -55,11 +55,44 @@ export class DomainPersistence {
       switch(row.kind){case 'source':case 'entity':tombstones.push({kind:row.kind,sessionId,id});break;case 'message':tombstones.push({kind:'message',sessionId,externalMessageId:id});break;case 'user':tombstones.push({kind:'user',sessionId,actorId:id,throughMs:Number(row.to_ms)});break;case 'interval':tombstones.push({kind:'interval',sessionId,fromMs:Number(row.from_ms),toMs:Number(row.to_ms)});break;case 'session':tombstones.push({kind:'session',sessionId});break;}
     }
     const capture=this.db.get('SELECT epoch FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=?',...this.scoped(scope),sessionId);
-    return {...checkpoint,channel:{id:scope.channelId,login:String(channel.login),displayName:String(channel.login)},session,settings,sources,entities,candidates,published:checkpoint.checkpoint?.published ?? null,tombstones,blockedTerms:this.repository.listBlockedTerms(scope,sessionId,{limit:500}),bannedActors:this.db.all('SELECT actor_id FROM channel_bans WHERE channel_id=? AND run_id=? ORDER BY actor_id LIMIT 1000',...this.scoped(scope)).map(row=>String(row.actor_id)),captureEpoch:Number(capture?.epoch ?? checkpoint.checkpoint?.captureEpoch ?? 0),chatClearThroughMs:this.repository.controlGet<number>(scope,`chat-clear:${sessionId}`)};
+    const blockedLore:Lore[]=[];
+    for(const row of this.db.all("SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key LIKE 'blocked-lore:%' ORDER BY key LIMIT 500",...this.scoped(scope))) {
+      const stub=JSON.parse(String(row.body)) as {id:string;sessionId:string;revision:number;term:string;aliases:string[];firstSeenMs:number;status:'blocked'|'observed'};
+      if(stub.sessionId===sessionId)blockedLore.push({...stub,explanation:'',originMs:null,originKind:'unknown',momentId:null,maxDependencyEndMs:0,dependencyRefs:[],safety:{moderation:'unavailable',pii:'review',checkedAt:null,reason:null}});
+    }
+    return {...checkpoint,channel:{id:scope.channelId,login:String(channel.login),displayName:String(channel.login)},session,settings,sources,entities,candidates,published:checkpoint.checkpoint?.published ?? null,tombstones,blockedTerms:this.repository.listBlockedTerms(scope,sessionId,{limit:500}),bannedActors:this.db.all('SELECT actor_id FROM channel_bans WHERE channel_id=? AND run_id=? ORDER BY actor_id LIMIT 1000',...this.scoped(scope)).map(row=>String(row.actor_id)),captureEpoch:Number(capture?.epoch ?? checkpoint.checkpoint?.captureEpoch ?? 0),chatClearThroughMs:this.repository.controlGet<number>(scope,`chat-clear:${sessionId}`),blockedLore};
   }
   private activeRef(scope:Scope,ref:VersionRef):boolean {
     const row=this.db.get('SELECT revision,status FROM sources WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),ref.id) ?? this.db.get('SELECT revision,status FROM entities WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),ref.id);
     return !!row && row.status==='active' && Number(row.revision)===ref.revision;
+  }
+  private eventContext(scope:Scope,event:EventEnvelope<unknown>,privacyEpoch:number):VersionRef[]|null {
+    const payload=event.payload && typeof event.payload==='object' ? event.payload as Record<string,unknown> : {},type=typeof payload.type==='string' ? payload.type : event.kind;
+    if(type==='generation.result'){
+      const ticket=GenerationTicketSchema.safeParse(payload.ticket);if(!ticket.success)return null;
+      const value=ticket.data,job=this.db.get('SELECT ticket,status FROM generation_jobs WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),value.jobId);
+      if(value.channelId!==scope.channelId || value.runId!==scope.runId || value.sessionId!==event.sessionId || value.privacyEpoch!==privacyEpoch || !job || job.status!=='registered' || canonical(JSON.parse(String(job.ticket)))!==canonical(value) || !value.inputRefs.every(ref=>this.activeRef(scope,ref)))return null;
+      return value.inputRefs;
+    }
+    if(['source.safety','owner.review','lore.review'].includes(type)){
+      const id=type==='source.safety' ? payload.id : payload.sourceId,revision=type==='source.safety' ? payload.baseRevision : payload.sourceRevision;
+      if(typeof id!=='string' || typeof revision!=='number' || !this.activeRef(scope,{id,revision}))return null;
+      if(type==='owner.review' && typeof payload.entityId==='string'){
+        const entity=this.repository.getEntity(scope,payload.entityId);if(!entity || entity.status!=='active' || entity.ownerRevision!==payload.ownerRevision)return null;
+      }
+      return [{id,revision}];
+    }
+    if(type==='presentation'){
+      if(typeof payload.entityId!=='string')return null;const entity=this.repository.getEntity(scope,payload.entityId);
+      if(!entity || entity.status!=='active' || entity.revision!==payload.baseRevision || entity.ownerRevision!==payload.ownerRevision)return null;
+      return [{id:entity.id,revision:entity.revision}];
+    }
+    if(type==='media'){
+      if(payload.privacyEpoch!==privacyEpoch)return null;
+      const media=payload.media as {refs?:VersionRef[]}|undefined;if(!media || !Array.isArray(media.refs) || !media.refs.every(ref=>this.activeRef(scope,ref)))return null;
+      return media.refs;
+    }
+    return [];
   }
   private edges(scope:Scope,id:string,refs:VersionRef[],kind:'supports'|'exposed_to') {
     if(refs.length>500)throw new StorageError('capacity','Dependency set exceeds its limit.');
@@ -81,6 +114,7 @@ export class DomainPersistence {
     } else if(this.repository.getEntity(scope,source.id))throw new StorageError('conflict','Source ID is already used by an entity.');
     const {text:_text,...metadata}=source;
     this.db.run(`INSERT INTO sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET event_id=excluded.event_id,revision=excluded.revision,kind=excluded.kind,start_ms=excluded.start_ms,end_ms=excluded.end_ms,actor_id=excluded.actor_id,external_message_id=excluded.external_message_id,status=excluded.status,text=excluded.text,metadata=excluded.metadata`,...this.scoped(scope),source.id,source.sessionId,eventId,source.revision,source.kind,source.startMs,source.endMs,source.actorId,source.externalMessageId,source.status,source.status==='deleted' ? null : source.text,json(metadata,32768));
+    if(source.status==='deleted')this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),eventId);
   }
   private nodes(scope:Scope,state:DomainState,nodes:DerivedNode[],ownerAction:boolean) {
     const final=[...new Map(nodes.map(node=>[node.id,node])).values()];
@@ -154,7 +188,9 @@ export class DomainPersistence {
       if(state.session.id!==sessionId || state.session.channelId!==scope.channelId || state.session.runId!==scope.runId || state.channel.id!==scope.channelId || !SessionSchema.safeParse(state.session).success || !SettingsSchema.safeParse(state.settings).success || ![before.revision,before.revision+1].includes(state.revision))throw new StorageError('invalid_input','Domain checkpoint does not match its scope or revision.');
       if(state.sources.length>500 || state.chapters.length>300 || state.lore.length>50 || state.moments.length>200 || state.memory.length>64 || state.candidates.length>1200 || effects.length>5000)throw new StorageError('capacity','Domain checkpoint exceeds its bounds.');
       const eventId=existingEvent ? String(existingEvent.id) : event.eventId;
-      if(!existingEvent)this.repository.ingest(event);
+      const initialEventRefs=this.eventContext(scope,event,before.privacyEpoch);
+      if(!existingEvent)this.repository.ingest(initialEventRefs===null ? {...event,payload:null} : event);
+      else if(initialEventRefs===null)this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),eventId);
       const sourceChanges=[...new Map(effects.filter(effect=>effect.type==='source.persist').map(effect=>[effect.source.id,effect.source])).values()];
       const receipts:InvalidationReceipt[]=[];
       for(const [index,effect] of effects.entries())if(effect.type==='privacy')receipts.push(this.repository.invalidate(scope,effect.target,{idempotencyKey:`domain-privacy:${hash([mutationKey,index])}`,reason:'privacy'}));
@@ -170,8 +206,16 @@ export class DomainPersistence {
       for(const term of before.checkpoint?.blockedTerms ?? [])if(!state.blockedTerms.includes(term))this.repository.unblockTerm(scope,term);
       for(const source of sourceChanges){if(source.sessionId!==sessionId)throw new StorageError('inaccessible','Source belongs to another session.');this.source(scope,eventId,source);}
       const payload=event.payload && typeof event.payload==='object' ? event.payload as {type?:unknown} : {};
-      const ownerAction=event.kind.startsWith('owner.') || event.kind.startsWith('lore.') || typeof payload.type==='string' && (payload.type.startsWith('owner.') || payload.type.startsWith('lore.')) || Object.entries(state.ownerRevisions).some(([id,revision])=>revision>(before.checkpoint?.ownerRevisions[id] ?? 0));
+      const ownerAction=event.kind.startsWith('owner.') || event.kind.startsWith('lore.') || typeof payload.type==='string' && (payload.type.startsWith('owner.') || payload.type.startsWith('lore.')) || sourceChanges.some(source=>source.kind==='owner_statement') || Object.entries(state.ownerRevisions).some(([id,revision])=>revision>(before.checkpoint?.ownerRevisions[id] ?? 0));
       this.nodes(scope,state,effects.filter(effect=>effect.type==='entity.upsert').map(effect=>effect.node),ownerAction);
+      for(const lore of state.lore)if(lore.explanation==='' && ['blocked','observed'].includes(lore.status)){
+        const entity=this.repository.getEntity(scope,lore.id);
+        if(entity?.kind==='lore' && entity.status!=='active'){
+          if(lore.revision<entity.revision || lore.revision>entity.revision+1)throw new StorageError('conflict','Lore control revision changed.');
+          this.db.run('UPDATE entities SET revision=? WHERE channel_id=? AND run_id=? AND id=?',lore.revision,...this.scoped(scope),lore.id);
+          this.repository.controlPut(scope,`blocked-lore:${lore.id}`,{id:lore.id,sessionId,revision:lore.revision,term:lore.term,aliases:lore.aliases,firstSeenMs:lore.firstSeenMs,status:lore.status});
+        }
+      }
       const oldSettings=this.repository.getSettings(scope);
       if(input.settingsPatch){const settings=this.repository.updateSettings(scope,input.settingsPatch.baseRevision,input.settingsPatch.patch);if(canonical({...state.settings,revision:settings.revision})!==canonical(settings))throw new StorageError('conflict','Settings and domain transition disagree.');state.settings=settings;}
       else if(canonical({...state.settings,revision:oldSettings.revision})!==canonical(oldSettings))state.settings=this.repository.updateSettings(scope,oldSettings.revision,state.settings);
@@ -192,6 +236,11 @@ export class DomainPersistence {
       }
       for(const effect of effects){
         if(effect.type==='generation.request')this.generation(scope,sessionId,effect.request);
+        if(effect.type==='owner.review.request'){
+          const id=`owner-review:${hash([scope,sessionId,effect.entityId,effect.ownerRevision ?? 0,effect.sourceId,effect.sourceRevision,effect.privacyEpoch]).slice(0,40)}`;
+          if(effect.privacyEpoch!==state.session.privacyEpoch)throw new StorageError('conflict','Owner review epoch changed.');
+          this.repository.enqueueJob(scope,{id,sessionId,kind:'owner.review',businessKey:id,payload:effect,dependencyRefs:effect.dependencyRefs});
+        }
         if(effect.type==='cancel')for(const id of effect.ids){for(const table of ['jobs','outbox'])this.db.run(`UPDATE ${table} SET state='cancelled',payload=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND id=? AND state IN ('queued','running')`,...this.scoped(scope),id);this.db.run("UPDATE generation_jobs SET status='cancelled' WHERE channel_id=? AND run_id=? AND id=? AND status='registered'",...this.scoped(scope),id);}
         if(effect.type==='publication' && effect===lastPublication){
           const snapshot={...effect.snapshot,privacyEpoch:state.session.privacyEpoch,revision:state.session.publicationRevision};
@@ -206,6 +255,8 @@ export class DomainPersistence {
       }
       if(before.checkpoint?.pendingGeneration && !state.pendingGeneration)this.db.run("UPDATE generation_jobs SET status='committed' WHERE channel_id=? AND run_id=? AND id=? AND status='registered'",...this.scoped(scope),before.checkpoint.pendingGeneration.ticket.jobId);
       if(receipts.length){const last=receipts.at(-1)!;state.lastReceipt={...last,revision:state.session.publicationRevision,hiddenEntityIds:[...new Set(receipts.flatMap(receipt=>receipt.hiddenEntityIds))],externalClipActions:receipts.flatMap(receipt=>receipt.externalClipActions)};}
+      const eventRefs=[...new Map([...(initialEventRefs ?? []).filter(ref=>this.activeRef(scope,ref)),...effects.flatMap(effect=>effect.type==='entity.upsert'&&effect.node.active ? [{id:effect.node.id,revision:effect.node.revision}] : effect.type==='source.persist'&&effect.source.status==='active' ? [{id:effect.source.id,revision:effect.source.revision}] : [])].map(ref=>[ref.id,ref])).values()];
+      this.edges(scope,eventId,eventRefs,'exposed_to');
       // Validate persisted source/node versions again before retaining a sensitive checkpoint.
       for(const source of state.sources){const saved=this.repository.getSource(scope,source.id);if(saved && (source.revision!==saved.revision || source.text!==saved.text || source.status!==saved.status))throw new StorageError('conflict','Checkpoint contains stale source content.');}
       const body=json(state,CHECKPOINT_BYTES);

@@ -2,8 +2,9 @@ import { describe,it,expect,vi } from 'vitest';
 import { mkdtempSync,rmSync,writeFileSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import express from 'express';
-import { PrivateMediaCache,createFFmpegProbe,createMediaRouter,parseByteRange,type MediaInput } from '../../src/server/media/index.js';
+import { PrivateMediaCache,createFFmpegProbe,createMediaRouter,parseByteRange,type MediaInput,type MediaDescriptor } from '../../src/server/media/index.js';
 import { encodeWav } from '../../src/server/audio/wav.js';
+import { createStorage } from '../../src/server/storage/index.js';
 const input:MediaInput={id:'asset',url:'https://clips.example/authorized',kind:'audio',sessionId:'s',privacyEpoch:0,dependencyRefs:[],captureStartMs:0,captureEndMs:1000};
 const temp=()=>mkdtempSync(join(process.cwd(),'tests/audio/media-'));
 const bytes=encodeWav(new Float32Array(8000).fill(0.1),8000);
@@ -16,5 +17,24 @@ describe('private media lifecycle',()=>{
  it('visibility invalidation during preparation prevents any ready result',async()=>{const dir=temp();let visible=true;try{const cache=new PrivateMediaCache({directory:dir,allowedHosts:['clips.example'],visible:()=>visible,fetch:vi.fn(async()=>new Response(new Uint8Array(bytes))),probe:async()=>{visible=false;return {durationMs:1000,mimeType:'audio/wav'};}});await expect(cache.prepare(input)).rejects.toMatchObject({code:'revoked'});await expect(cache.get('asset')).rejects.toMatchObject({code:'unavailable'});}finally{rmSync(dir,{recursive:true,force:true});}});
  it('rejects multi-ranges/unsatisfiable ranges and handles suffix range',()=>{expect(parseByteRange('bytes=-20',100)).toEqual({start:80,end:99,partial:true});expect(()=>parseByteRange('bytes=100-',100)).toThrow();expect(()=>parseByteRange('bytes=0-5,10-20',100)).toThrow();});
  it('cleans partial files after restart and maps authored disk-full failure to capacity',async()=>{const dir=temp();try{writeFileSync(join(dir,'deadbeef.part'),'partial');const cache=new PrivateMediaCache({directory:dir,allowedHosts:['clips.example'],visible:()=>true,fetch:vi.fn(async()=>new Response(new Uint8Array(bytes))),probe:async()=>{throw Object.assign(new Error('Private disk path'),{code:'ENOSPC'});}});await cache.initialize();expect(readdirSync(dir)).not.toContain('deadbeef.part');await expect(cache.prepare(input)).rejects.toMatchObject({code:'capacity',message:'Media capacity.'});expect(readdirSync(dir).filter(file=>file.endsWith('.part'))).toHaveLength(0);}finally{rmSync(dir,{recursive:true,force:true});}});
+ it('prepares approved channel media without an episode and rechecks persisted approval across restart',async()=>{
+   const dir=temp(),scope={channelId:'123',runId:'live'},database=join(dir,'state.sqlite'),key=Buffer.alloc(32,7);let storage=createStorage({path:database,encryptionKey:key});
+   try{storage.repository.ensureChannel(scope,'streamer');storage.repository.controlPut(scope,'approval:previous',{revision:1,approved:true});
+     const previous:MediaInput={id:'previous',url:input.url,kind:'audio',sessionId:null,privacyEpoch:0,dependencyRefs:[],channelApproval:{channelId:scope.channelId,id:'previous',revision:1},captureStartMs:0,captureEndMs:1000};
+     const visible=(asset:MediaDescriptor)=>{if(asset.sessionId!==null||asset.channelApproval.channelId!==scope.channelId)return false;const approval=storage.repository.controlGet<{revision:number;approved:boolean}>(scope,'approval:'+asset.channelApproval.id);return !!approval?.approved&&approval.revision===asset.channelApproval.revision;};
+     const fetcher=vi.fn(async()=>new Response(new Uint8Array(bytes))),options={directory:join(dir,'cache'),allowedHosts:['clips.example'],visible,fetch:fetcher,probe:async()=>({durationMs:1000,mimeType:'audio/wav'})};
+     const cache=new PrivateMediaCache(options);const record=await cache.prepare(previous);expect(record.sessionId).toBeNull();expect(record.channelApproval).toEqual(previous.channelApproval);expect(storage.repository.listSessions(scope)).toEqual([]);
+     const linked=await cache.alias('previous','previous-session-one');expect(linked).toMatchObject({id:'previous-session-one',sessionId:null,channelApproval:previous.channelApproval,aliasOf:'previous'});expect(fetcher).toHaveBeenCalledTimes(1);
+     storage.close();storage=createStorage({path:database,encryptionKey:key});const restarted=new PrivateMediaCache(options);expect((await restarted.get('previous-session-one')).record.channelApproval).toEqual(previous.channelApproval);
+     storage.repository.controlPut(scope,'approval:previous',{revision:2,approved:false});await expect(restarted.get('previous')).rejects.toMatchObject({code:'revoked'});await expect(restarted.get('previous-session-one')).rejects.toMatchObject({code:'revoked'});
+     restarted.protect('previous-session-one',Date.now()+30000);await restarted.revoke('previous');await restarted.revoke('previous-session-one');expect(readdirSync(join(dir,'cache')).filter(file=>file.endsWith('.media'))).toHaveLength(0);
+     const afterCleanup=new PrivateMediaCache(options);await expect(afterCleanup.get('previous-session-one')).rejects.toMatchObject({code:'revoked'});expect(storage.repository.listSessions(scope)).toEqual([]);
+   }finally{storage.close();rmSync(dir,{recursive:true,force:true});}
+ });
+ it('holds channel preparation when approval changes during decode and prevents alias after revocation',async()=>{
+   const dir=temp();let revision=1;const previous:MediaInput={id:'previous',url:input.url,kind:'audio',sessionId:null,privacyEpoch:0,dependencyRefs:[],channelApproval:{channelId:'123',id:'approval',revision:1},captureStartMs:0,captureEndMs:1000};
+   try{const cache=new PrivateMediaCache({directory:dir,allowedHosts:['clips.example'],visible:asset=>asset.sessionId===null&&asset.channelApproval.revision===revision,fetch:vi.fn(async()=>new Response(new Uint8Array(bytes))),probe:async()=>{revision=2;return {durationMs:1000,mimeType:'audio/wav'};}});await expect(cache.prepare(previous)).rejects.toMatchObject({code:'revoked'});await expect(cache.alias('previous','attached')).rejects.toMatchObject({code:'unavailable'});expect(readdirSync(dir).filter(file=>file.endsWith('.media')||file.endsWith('.part'))).toHaveLength(0);}finally{rmSync(dir,{recursive:true,force:true});}
+ });
+ it('applies byte/file caps to aliases and refuses protected-cache overflow without downloading again',async()=>{const dir=temp();const fetcher=vi.fn(async()=>new Response(new Uint8Array(bytes)));try{const cache=new PrivateMediaCache({directory:dir,allowedHosts:['clips.example'],visible:()=>true,maxFiles:1,fetch:fetcher,probe:async()=>({durationMs:1000,mimeType:'audio/wav'})});await cache.prepare(input);cache.protect(input.id,Date.now()+30000);await expect(cache.alias(input.id,'attached')).rejects.toMatchObject({code:'capacity'});expect(fetcher).toHaveBeenCalledTimes(1);expect((await cache.get(input.id)).record.state).toBe('ready');expect(readdirSync(dir).filter(file=>file.endsWith('.part'))).toHaveLength(0);}finally{rmSync(dir,{recursive:true,force:true});}});
 });
 

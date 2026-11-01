@@ -184,4 +184,20 @@ describe('integration-facing editorial and recovery contracts',()=>{
   it('ends playing scenes by clock and grants the queued welcome its own preparation timeout',()=>{
     const h=harness();h.set(200000);for(const id of ['first','second'])h.send({type:'recap.trigger',trigger:{id,sessionId:'session',reason:'raid',occurredAt:h.clock.iso()}});const first=h.state.playbacks[0]!.id;h.send({type:'playback',id:first,action:'prepared'});h.set(200300);h.send({type:'playback',id:first,action:'start'});h.set(205300);const done=h.send({type:'tick'});expect(h.state.playbacks).toHaveLength(1);expect(h.state.playbacks[0]?.id).toBe('playback:second');expect(h.state.playbacks[0]?.status).toBe('preparing');expect(done.effects.some(e=>e.type==='playback.prepare'&&e.playback.id==='playback:second')).toBe(true);h.set(206799);h.send({type:'tick'});expect(h.state.playbacks).toHaveLength(1);h.set(206800);h.send({type:'tick'});expect(h.state.playbacks).toHaveLength(0);
   });
+  it('cannot report complete while accepted last speech still waits for safety review',()=>{
+    for(const moderation of ['pending','unavailable'] as const){
+      const h=published();h.set(95000);h.source('unchecked-tail','The note finally survives reload.',95000,{moderation});h.set(100000);h.send({type:'closing',endedAt:h.clock.iso()});h.finish();h.set(190000);h.send({type:'tail.drained'});expect(h.state.session.status).toBe('closing');h.set(340000);h.send({type:'tick'});expect(h.state.session.status).toBe('finalized');expect(h.state.published!.gaps.length).toBeGreaterThan(0);expect(h.state.published!.chapters.some(c=>c.summary.includes('finally survives'))).toBe(false);
+      const late=h.send({type:'source.safety',id:'unchecked-tail',baseRevision:1,text:'The note finally survives reload.',safety:allowed});expect(late.effects).toContainEqual({type:'held',reason:'session_finalized',entityId:'unchecked-tail'});
+    }
+  });
+  it('records two reviewed phrase actors without double-counting their pending chat signals',()=>{
+    const h=harness();for(const [i,actorId] of ['one','two'].entries()){h.set(1000+i);h.source(`pending-chat${i}`,'BRICK',1000+i,{kind:'chat',actorId,moderation:'pending'});}expect(h.state.phrases).toHaveLength(0);expect(h.state.openWindow?.count).toBe(2);
+    for(let i=0;i<2;i++)h.send({type:'source.safety',id:`pending-chat${i}`,baseRevision:1,text:'BRICK',safety:allowed});expect(h.state.phrases[0]?.actors).toHaveLength(2);expect(h.state.phrases[0]?.refs.every(r=>r.revision===2)).toBe(true);expect(h.state.openWindow?.count).toBe(2);
+  });
+  it('records a durable fenced owner-review intent without raw text',()=>{
+    const h=published(),chapter=h.state.chapters[0]!,source={...h.state.sources[0]!,id:'review-source',kind:'owner_statement' as const,text:'PRIVATE-REVIEW-CONTENT',moderation:'pending' as const};const result=h.send({type:'owner.edit',entityId:chapter.id,baseRevision:chapter.revision,source,title:'Review',summary:'PRIVATE-REVIEW-CONTENT',safety:pending});const effect=result.effects.find(e=>e.type==='owner.review.request');expect(effect).toMatchObject({kind:'chapter',entityId:chapter.id,ownerRevision:1,sourceId:'review-source',sourceRevision:1,privacyEpoch:0});expect(JSON.stringify(effect)).not.toContain('PRIVATE-REVIEW-CONTENT');
+  });
+  it('rejects an older asynchronous metadata review after a newer channel update',()=>{
+    const h=harness();h.set(20000);h.send({type:'metadata',title:'New topic',category:'Development',atMs:20000,safety:allowed});h.send({type:'metadata',title:'Old topic',category:'Development',atMs:10000,safety:allowed});expect(h.state.session.title).toBe('New topic');expect(h.state.session.metadataMaxDependencyEndMs).toBe(20000);
+  });
 });

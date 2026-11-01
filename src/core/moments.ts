@@ -40,7 +40,12 @@ export function observeChat(state:DomainState,source:Source,effects:DomainEffect
   // Count each actor once per signal; an actor cannot manufacture a crowd with repetition.
   if(prior===0){if(signals?.emote)w.emotes++;if(signals?.laughter||/\b(lol|lmao|haha|хаха)\b/iu.test(source.text))w.laughter++;if(signals?.clipIt||/\bclip (?:it|that)\b/iu.test(source.text))w.clipIt++;}
   if(w.refs.length<100)w.refs.push(refOf(source));state.openWindow=w;
-  if(!phrase)return;const term=normalizeTerm(phrase);
+  if(phrase)observePhrase(state,source,phrase);
+}
+/** Reviewed text contributes lore observations without counting its chat reaction a second time. */
+export function observePhrase(state:DomainState,source:Source,phrase:string):void {
+  if(source.kind!=='chat'||!source.actorId||!source.text||source.text.trim().startsWith('!'))return;
+  const term=normalizeTerm(phrase);
   if(!term||term.length>120||term.startsWith('!')||!/[\p{L}\p{N}]/u.test(term)||blockedPhrase(state,term))return;
   let entry=state.phrases.find(p=>p.term===term||p.aliases.includes(term));
   if(!entry){entry={term,aliases:[],firstMs:source.startMs,lastMs:source.endMs,actors:[],refs:[]};state.phrases.push(entry);}
