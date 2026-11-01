@@ -154,7 +154,7 @@ export class SqliteRepository {
     this.session(scope,sessionId);
     return this.db.all('SELECT term FROM blocked_terms WHERE channel_id=? AND run_id=? AND term>? ORDER BY term LIMIT ?',...this.scope(scope),options.afterTerm ?? '',Math.min(integer(options.limit ?? 100,1),500)).map(row=>String(row.term));
   }
-  /** Upgrade-only reconciliation: a block saved under the old session scope becomes channel-wide. */
+  /** Idempotent startup reconciliation also resumes an interrupted global-block upgrade. */
   reconcileLegacyTermBlocks():void {
     const matches=new Map<string,{scope:Scope;sessionId:string;term:string}>();
     for(const row of this.db.raw.prepare("SELECT channel_id,run_id,session_id,body FROM entities WHERE kind='lore' AND status='active' AND body IS NOT NULL").iterate()) {
@@ -242,10 +242,19 @@ export class SqliteRepository {
       const eligible=Date.parse(ticket.eligibleAt);
       if (!Number.isFinite(eligible)) throw new StorageError('invalid_input','Candidate eligibility time is invalid.');
       const candidateId=randomUUID(),revision=entity.revision+1;
+      // Previous chapter text is valid model context, but the mutable chapter cannot be
+      // the candidate's version fence after this commit increments its revision.
+      // Preserve that exact context as an immutable graph node. Its link to the chapter
+      // keeps owner edits/deletion transitive, while later ordinary drafts do not expire it.
+      const selfRef=ticket.inputRefs.find(ref=>ref.id===entity.id);
+      const contextId=`context:${candidateId}`;
+      if(selfRef) this.insertEntity(ticket,{id:contextId,sessionId:ticket.sessionId,kind:'provider_cache',body:{originalRef:selfRef,body:entity.body},refs:[selfRef]});
+      const candidateRef=(ref:VersionRef):VersionRef=>ref.id===entity.id ? {id:contextId,revision:1} : ref;
       this.db.run('UPDATE entities SET revision=?,body=? WHERE channel_id=? AND run_id=? AND id=?',revision,json(patch),...this.scope(ticket),entity.id);
       this.db.run('INSERT INTO publication_candidates VALUES(?,?,?,?,?,?,?,?,?,\'pending\',0,?)',...this.scope(ticket),candidateId,ticket.sessionId,entity.id,revision,entity.ownerRevision,ticket.privacyEpoch,eligible,json(patch));
-      this.edges(ticket,candidateId,ticket.inputRefs,'exposed_to'); this.edges(ticket,entity.id,ticket.inputRefs,'exposed_to');
-      this.edges(ticket,candidateId,supports,'supports');
+      this.edges(ticket,candidateId,ticket.inputRefs.map(candidateRef),'exposed_to');
+      this.edges(ticket,entity.id,ticket.inputRefs.filter(ref=>ref.id!==entity.id),'exposed_to');
+      this.edges(ticket,candidateId,supports.map(candidateRef),'supports');
       this.db.run("UPDATE generation_jobs SET status='committed' WHERE channel_id=? AND run_id=? AND id=?",...this.scope(ticket),ticket.jobId);
       return {committed:true,candidateId,revision};
     });
@@ -374,6 +383,9 @@ export class SqliteRepository {
       this.db.run('INSERT INTO affected_sessions VALUES(?)',target.sessionId);
       for (const table of ['entities','jobs','outbox','generation_jobs']) this.db.run(`INSERT OR IGNORE INTO affected_sessions SELECT session_id FROM ${table} WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)`,...this.scope(scope));
       this.db.run('UPDATE sessions SET privacy_epoch=privacy_epoch+1,publication_revision=publication_revision+1 WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected_sessions)',...this.scope(scope));
+      // Old-epoch drafts cannot pass the publication fence; release their pending slots.
+      // Already published unaffected content stays available through its independent pointer.
+      this.db.run("UPDATE publication_candidates SET status='invalid',body=NULL WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions) AND status='pending'",...this.scope(scope));
       this.db.run('UPDATE channels SET privacy_revision=privacy_revision+1 WHERE channel_id=? AND run_id=?',...this.scope(scope));
       // Epoch cancellation conservatively clears all in-flight bodies in this session.
       for (const table of ['jobs','outbox'] as const) this.db.run(`UPDATE ${table} SET state='cancelled',payload=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions) AND state IN ('queued','running','failed','unknown_outcome')`,...this.scope(scope));

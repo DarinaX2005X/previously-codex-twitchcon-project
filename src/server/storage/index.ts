@@ -12,7 +12,7 @@ export function createStorage(options:{path:string;now?:()=>number;encryptionKey
   const db=new StorageDatabase(options.path,options.maxBytes),now=options.now ?? Date.now;
   try {
     const repository=new SqliteRepository(db,now);
-    if(db.reconcileGlobalTerms)repository.reconcileLegacyTermBlocks();
+    repository.reconcileLegacyTermBlocks();
     return {
       repository,
       sessions:new SessionStore(db,now),

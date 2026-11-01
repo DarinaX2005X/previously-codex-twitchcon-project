@@ -300,4 +300,35 @@ describe('real SQLite storage boundaries',()=>{
     expect(storage.repository.getEntity(scope,'rollback-pin')).toMatchObject({revision:1,pinned:false});
     expect(storage.repository.getSession(scope,'s1').publicationRevision).toBe(1);
   });
+  it('commits and publishes previous chapter context while newer self-context drafts remain held',()=>{
+    seed();
+    const firstTicket={...ticket('self-context-first'),inputRefs:[{id:'source1',revision:1},{id:'chapter1',revision:1}]};
+    storage.repository.registerGeneration(firstTicket,'chapter1');const first=storage.repository.commitStory(firstTicket,patch());
+    expect(first.committed).toBe(true);storage.repository.markCandidateSafe(scope,first.candidateId!,{moderation:'allowed',pii:'allowed'});
+    now+=45000;
+    const secondTicket={...ticket('self-context-second',2),inputRefs:[{id:'source1',revision:1},{id:'chapter1',revision:2}]};
+    storage.repository.registerGeneration(secondTicket,'chapter1');const second=storage.repository.commitStory(secondTicket,patch(2));
+    expect(second.committed).toBe(true);storage.repository.markCandidateSafe(scope,second.candidateId!,{moderation:'allowed',pii:'allowed'});
+    now+=30000;
+    expect(storage.repository.publishEligible(scope,'chapter1')?.candidateId).toBe(first.candidateId);
+    expect(storage.repository.getPublished(scope,'chapter1')).toMatchObject({title:'private evidence'});
+    storage.repository.invalidate(scope,{kind:'source',sessionId:'s1',id:'source1'},{idempotencyKey:'self-context-forget',reason:'privacy'});
+    expect(storage.repository.getPublished(scope,'chapter1')).toBeNull();
+    const check=new DatabaseSync(path);
+    expect(check.prepare("SELECT COUNT(*) AS n FROM entities WHERE id LIKE 'context:%' AND body IS NOT NULL").get()?.n).toBe(0);check.close();
+  });
+  it('reclaims obsolete-epoch candidate slots after an unrelated privacy event',()=>{
+    seed();
+    for(let i=1;i<=4;i++) {
+      const t=ticket(`pending-${i}`,i);storage.repository.registerGeneration(t,'chapter1');expect(storage.repository.commitStory(t,patch(i)).committed).toBe(true);
+    }
+    storage.repository.invalidate(scope,{kind:'message',sessionId:'s1',externalMessageId:'unrelated-never-seen'},{idempotencyKey:'unrelated-privacy',reason:'privacy'});
+    expect(storage.repository.getSource(scope,'source1')?.status).toBe('active');
+    const fresh={...ticket('fresh-epoch',5),privacyEpoch:1};storage.repository.registerGeneration(fresh,'chapter1');
+    const committed=storage.repository.commitStory(fresh,patch(5));expect(committed.committed).toBe(true);
+    storage.repository.markCandidateSafe(scope,committed.candidateId!,{moderation:'allowed',pii:'allowed'});now+=75000;
+    expect(storage.repository.publishEligible(scope,'chapter1')?.candidateId).toBe(committed.candidateId);
+    const check=new DatabaseSync(path);
+    expect(check.prepare("SELECT COUNT(*) AS n FROM publication_candidates WHERE privacy_epoch=0 AND status='pending'").get()?.n).toBe(0);check.close();
+  });
 });
