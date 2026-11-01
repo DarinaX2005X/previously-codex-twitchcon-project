@@ -1,12 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Scope, Source, Session, EventEnvelope, VersionRef, GenerationTicket, StoryPatch, PrivacyTarget, InvalidationReceipt, CommitResult } from '../../shared/contracts/index.js';
+import type { Scope, Source, Session, Settings, EventEnvelope, VersionRef, GenerationTicket, StoryPatch, PrivacyTarget, InvalidationReceipt, CommitResult } from '../../shared/contracts/index.js';
 import { SourceSchema, EventEnvelopeSchema, GenerationTicketSchema, StoryPatchSchema, PrivacyTargetSchema } from '../../shared/contracts/index.js';
 import { StorageDatabase, StorageError, integer, json } from './database.js';
+import { ControlPersistence } from './control.js';
+import type { MutationReceipt } from './domain-types.js';
 
 export type WorkInput = {id?: string; sessionId: string; kind: string; businessKey: string; payload: unknown; priority?: number; nextAtMs?: number; dependencyRefs?: VersionRef[]};
-export type WorkLease = {id: string; sessionId: string; kind: string; payload: unknown; privacyEpoch: number; leaseToken: string; leaseUntilMs: number; attempts: number; publishSeq: number|null};
+export type WorkLease = {id: string; sessionId: string; kind: string; payload: unknown; privacyEpoch: number; leaseToken: string; leaseUntilMs: number; attempts: number; publishSeq: number|null;frozenPublication?:{body:string;bodyHash:string}};
 export type EntityInput = {id: string; sessionId: string; kind: 'claim'|'relation'|'chapter'|'current_state'|'presentation'|'lore'|'moment'|'media'|'playback'|'provider_cache'|'export'; body: unknown; refs: VersionRef[]; startMs?: number; endMs?: number};
 export type PrivacyOptions = {idempotencyKey: string; reason: string};
+export type AcceptedAudio={sessionId:string;actorId:string;leaseEpoch:number;captureEpoch:number;sequence:number;sha256:string;startMs:number;endMs:number;sampleRate:number;rawPath:string;receivedAtMs:number;privacyEpoch:number};
 export const normalizeBlockedTerm=(term:string):string=>term.normalize('NFKC').toLowerCase().replace(/\s+/gu,' ').trim();
 const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
 function canonical(value: unknown): string {
@@ -16,7 +19,38 @@ function canonical(value: unknown): string {
 }
 
 export class SqliteRepository {
-  constructor(private readonly db: StorageDatabase, private readonly now: () => number) {}
+  private readonly controls:ControlPersistence;
+  constructor(private readonly db: StorageDatabase, private readonly now: () => number) {this.controls=new ControlPersistence(db,now);}
+  controlGet<T=unknown>(scope:Scope,key:string):T|null{return this.controls.get<T>(scope,key);}
+  controlPut(scope:Scope,key:string,value:unknown,expiresAtMs?:number):void{this.controls.put(scope,key,value,expiresAtMs);}
+  controlDelete(scope:Scope,key:string):boolean{return this.controls.delete(scope,key);}
+  controlTake<T=unknown>(scope:Scope,key:string):T|null{return this.controls.take<T>(scope,key);}
+  controlClaim(scope:Scope,key:string,value:unknown,expiresAtMs?:number):boolean{return this.controls.claim(scope,key,value,expiresAtMs);}
+  controlUpdate<T>(scope:Scope,key:string,updater:(current:T|null)=>T|null,expiresAtMs?:number):T|null{return this.controls.update(scope,key,updater,expiresAtMs);}
+  getSettings(scope:Scope):Settings{return this.controls.settings(scope);}
+  updateSettings(scope:Scope,baseRevision:number,patch:Partial<Omit<Settings,'revision'>>,options?:{idempotencyKey:string;requestBody:unknown}):Settings {
+    return this.db.transaction(()=>{
+      if(options) {
+        const old=this.getDomainMutation(scope,options.idempotencyKey,options.requestBody);
+        if(old){if(old.kind!=='settings')throw new StorageError('conflict','Mutation key was used for another operation.');return this.getSettings(scope);}
+      }
+      const settings=this.controls.updateSettings(scope,baseRevision,patch);
+      if(options)this.recordDomainMutation(scope,options.idempotencyKey,options.requestBody,{kind:'settings',sessionId:null,revision:settings.revision});
+      return settings;
+    });
+  }
+  getDomainMutation(scope:Scope,key:string,requestBody:unknown):MutationReceipt|null {
+    if(!key || key.length>160)throw new StorageError('invalid_input','Mutation key exceeds its limit.');
+    const marker=this.controlGet<{requestHash:string;result:MutationReceipt}>(scope,`mutation:${digest(key)}`);
+    if(!marker)return null;
+    if(marker.requestHash!==digest(requestBody))throw new StorageError('conflict','Idempotency key was already used for a different request.');
+    return marker.result;
+  }
+  recordDomainMutation(scope:Scope,key:string,requestBody:unknown,result:MutationReceipt):void {
+    const previous=this.getDomainMutation(scope,key,requestBody);
+    if(previous)return;
+    this.controlPut(scope,`mutation:${digest(key)}`,{requestHash:digest(requestBody),result});
+  }
   private scope(scope: Scope) { return [scope.channelId, scope.runId] as const; }
   private session(scope: Scope, id: string) {
     const row = this.db.get('SELECT * FROM sessions WHERE channel_id=? AND run_id=? AND id=?', ...this.scope(scope), id);
@@ -59,7 +93,7 @@ export class SqliteRepository {
     const rows = this.db.all(`SELECT id,started_at,ended_at,status FROM sessions WHERE channel_id=? AND run_id=?
       ${cursor ? 'AND (started_at>? OR (started_at=? AND id>?))' : ''} ORDER BY started_at,id LIMIT ?`,
     ...this.scope(scope), ...(cursor ? [cursor.startedAt,cursor.startedAt,cursor.id] : []), limit);
-    return rows.map(row => ({id: String(row.id),startedAt: String(row.started_at),endedAt: row.ended_at,status: String(row.status)}));
+    return rows.map(row => this.getSession(scope,String(row.id)));
   }
   private ref(scope: Scope, ref: VersionRef): boolean {
     const source = this.db.get('SELECT revision,status FROM sources WHERE channel_id=? AND run_id=? AND id=?', ...this.scope(scope),ref.id);
@@ -87,7 +121,7 @@ export class SqliteRepository {
       const old = this.db.get('SELECT id FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?',...this.scope(event),event.origin,event.externalId);
       if (old) return {accepted:false,eventId:String(old.id)};
       if (event.sessionId) this.session(event,event.sessionId);
-      this.db.run('INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?,?,?)',...this.scope(event),event.eventId,event.sessionId,event.externalId,event.origin,event.kind,event.occurredAt,event.receivedAt,event.sessionOffsetMs,json(event.payload));
+      this.db.run('INSERT INTO events(channel_id,run_id,id,session_id,external_id,origin,kind,occurred_at,received_at,offset_ms,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)',...this.scope(event),event.eventId,event.sessionId,event.externalId,event.origin,event.kind,event.occurredAt,event.receivedAt,event.sessionOffsetMs,json(event.payload));
       let redacted = event.sessionId!==null && this.sessionForgotten(event,event.sessionId);
       for (const source of effects.sources ?? []) {
         if (source.channelId !== event.channelId || source.runId !== event.runId || source.sessionId !== event.sessionId) throw new StorageError('inaccessible','Source scope does not match its event.');
@@ -115,10 +149,10 @@ export class SqliteRepository {
     const row = this.db.get('SELECT * FROM sources WHERE channel_id=? AND run_id=? AND id=?',...this.scope(scope),id);
     return row ? {...JSON.parse(String(row.metadata)),revision:Number(row.revision),status:row.status,text:row.text} as Source : null;
   }
-  listSources(scope: Scope,sessionId: string,options: {limit?:number;cursor?:{startMs:number;id:string}} = {}): Source[] {
+  listSources(scope: Scope,sessionId: string,options: {limit?:number;cursor?:{startMs:number;id:string};fromMs?:number;toMs?:number} = {}): Source[] {
     this.session(scope,sessionId);
     const limit = Math.min(integer(options.limit ?? 100,1),500), cursor=options.cursor;
-    const rows=this.db.all(`SELECT * FROM sources WHERE channel_id=? AND run_id=? AND session_id=? ${cursor ? 'AND (start_ms>? OR (start_ms=? AND id>?))' : ''} ORDER BY start_ms,id LIMIT ?`,...this.scope(scope),sessionId,...(cursor ? [cursor.startMs,cursor.startMs,cursor.id] : []),limit);
+    const rows=this.db.all(`SELECT * FROM sources WHERE channel_id=? AND run_id=? AND session_id=? ${cursor ? 'AND (start_ms>? OR (start_ms=? AND id>?))' : ''} ${options.fromMs!==undefined ? 'AND end_ms>=?' : ''} ${options.toMs!==undefined ? 'AND start_ms<=?' : ''} ORDER BY start_ms,id LIMIT ?`,...this.scope(scope),sessionId,...(cursor ? [cursor.startMs,cursor.startMs,cursor.id] : []),...(options.fromMs!==undefined ? [integer(options.fromMs)] : []),...(options.toMs!==undefined ? [integer(options.toMs)] : []),limit);
     return rows.map(row=>({...JSON.parse(String(row.metadata)),revision:Number(row.revision),status:row.status,text:row.text} as Source));
   }
   saveEntity(scope: Scope,input: EntityInput): void {
@@ -153,6 +187,23 @@ export class SqliteRepository {
   listBlockedTerms(scope:Scope,sessionId:string,options:{limit?:number;afterTerm?:string}={}):string[] {
     this.session(scope,sessionId);
     return this.db.all('SELECT term FROM blocked_terms WHERE channel_id=? AND run_id=? AND term>? ORDER BY term LIMIT ?',...this.scope(scope),options.afterTerm ?? '',Math.min(integer(options.limit ?? 100,1),500)).map(row=>String(row.term));
+  }
+  unblockTerm(scope:Scope,term:string):boolean {
+    return this.db.transaction(()=>{
+      const normalized=normalizeBlockedTerm(term),changed=this.db.run('DELETE FROM blocked_terms WHERE channel_id=? AND run_id=? AND term=?',...this.scope(scope),normalized).changes===1;
+      if(changed)for(const row of this.db.all('SELECT session_id,body,revision FROM domain_checkpoints WHERE channel_id=? AND run_id=? AND body IS NOT NULL',...this.scope(scope))) {
+        const body=JSON.parse(String(row.body)) as {blockedTerms?:string[];revision:number};
+        body.blockedTerms=(body.blockedTerms ?? []).filter(value=>normalizeBlockedTerm(value)!==normalized);body.revision=Number(row.revision)+1;
+        this.db.run('UPDATE domain_checkpoints SET revision=?,body=?,updated_at_ms=? WHERE channel_id=? AND run_id=? AND session_id=?',body.revision,json(body,8_388_608),this.now(),...this.scope(scope),String(row.session_id));
+      }
+      return changed;
+    });
+  }
+  sourcePolicy(scope:Scope,source:Source):'active'|'deleted'|'quarantined' {
+    if(this.tombstoned(scope,source) || (source.actorId && this.db.get('SELECT 1 FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?',...this.scope(scope),source.actorId)))return 'deleted';
+    const cutoff=this.controlGet<number>(scope,`chat-clear:${source.sessionId}`);
+    if(source.kind==='chat' && cutoff!==null && source.startMs<=cutoff)return 'quarantined';
+    return 'active';
   }
   /** Idempotent startup reconciliation also resumes an interrupted global-block upgrade. */
   reconcileLegacyTermBlocks():void {
@@ -194,7 +245,7 @@ export class SqliteRepository {
       if (!row) return null;
       const token=randomUUID();
       this.db.run(`UPDATE ${table} SET state='running',lease_token=?,lease_until_ms=?,attempts=attempts+1 WHERE channel_id=? AND run_id=? AND id=?`,token,now+leaseMs,...this.scope(scope),String(row.id));
-      return {id:String(row.id),sessionId:String(row.session_id),kind:String(row.kind),payload:row.payload === null ? null : JSON.parse(String(row.payload)) as unknown,privacyEpoch:Number(row.privacy_epoch),leaseToken:token,leaseUntilMs:now+leaseMs,attempts:Number(row.attempts)+1,publishSeq:row.publish_seq == null ? null : Number(row.publish_seq)};
+      return {id:String(row.id),sessionId:String(row.session_id),kind:String(row.kind),payload:row.payload === null ? null : JSON.parse(String(row.payload)) as unknown,privacyEpoch:Number(row.privacy_epoch),leaseToken:token,leaseUntilMs:now+leaseMs,attempts:Number(row.attempts)+1,publishSeq:row.publish_seq == null ? null : Number(row.publish_seq),...(row.frozen_body ? {frozenPublication:{body:String(row.frozen_body),bodyHash:String(row.frozen_hash)}} : {})};
     });
   }
   claimJob(scope:Scope,options:{kinds?:string[];leaseMs?:number;sessionId?:string} = {}) { return this.claim('jobs',scope,options); }
@@ -326,6 +377,38 @@ export class SqliteRepository {
       return true;
     });
   }
+  /** Invalidates exposed old versions without tombstoning the corrected/quarantined source. */
+  invalidateSourceVersions(scope:Scope,sessionId:string,sourceIds:string[],options:PrivacyOptions):InvalidationReceipt {
+    return this.db.transaction(()=>{
+      this.session(scope,sessionId);if(sourceIds.length>500)throw new StorageError('capacity','Source revision batch exceeds its limit.');
+      const requestHash=digest({sessionId,sourceIds:[...sourceIds].sort(),operation:'source_revision'});
+      const previous=this.db.get('SELECT request_hash,receipt FROM privacy_receipts WHERE channel_id=? AND run_id=? AND idempotency_key=?',...this.scope(scope),options.idempotencyKey);
+      if(previous){if(previous.request_hash!==requestHash)throw new StorageError('conflict','Source revision key was already used.');return JSON.parse(String(previous.receipt)) as InvalidationReceipt;}
+      this.db.raw.exec('CREATE TEMP TABLE IF NOT EXISTS affected(id TEXT PRIMARY KEY); DELETE FROM affected; CREATE TEMP TABLE IF NOT EXISTS affected_sessions(id TEXT PRIMARY KEY); DELETE FROM affected_sessions;');
+      this.db.run('INSERT INTO affected_sessions VALUES(?)',sessionId);
+      for(const id of sourceIds)this.db.run('INSERT OR IGNORE INTO affected SELECT id FROM sources WHERE channel_id=? AND run_id=? AND session_id=? AND id=?',...this.scope(scope),sessionId,id);
+      this.db.run(`INSERT OR IGNORE INTO affected WITH RECURSIVE descendants(id) AS (SELECT id FROM affected UNION SELECT d.child_id FROM dependencies d JOIN descendants a ON a.id=d.parent_id WHERE d.channel_id=? AND d.run_id=?) SELECT id FROM descendants`,...this.scope(scope));
+      for(const table of ['entities','jobs','outbox','generation_jobs'])this.db.run(`INSERT OR IGNORE INTO affected_sessions SELECT session_id FROM ${table} WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)`,...this.scope(scope));
+      const hiddenEntityIds=this.db.all('SELECT id FROM entities WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)',...this.scope(scope)).map(row=>String(row.id));
+      this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND id IN (SELECT event_id FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected))',...this.scope(scope),...this.scope(scope));
+      this.db.run("UPDATE entities SET body=NULL,status='hidden',revision=revision+1 WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)",...this.scope(scope));
+      this.db.run("UPDATE publication_candidates SET body=NULL,status='invalid' WHERE channel_id=? AND run_id=? AND (id IN (SELECT id FROM affected) OR entity_id IN (SELECT id FROM affected))",...this.scope(scope));
+      this.db.run('DELETE FROM public_pointers WHERE channel_id=? AND run_id=? AND (entity_id IN (SELECT id FROM affected) OR candidate_id IN (SELECT id FROM affected))',...this.scope(scope));
+      this.db.run('UPDATE sessions SET privacy_epoch=privacy_epoch+1,publication_revision=publication_revision+1 WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected_sessions)',...this.scope(scope));
+      this.db.run('UPDATE channels SET privacy_revision=privacy_revision+1 WHERE channel_id=? AND run_id=?',...this.scope(scope));
+      this.db.run('UPDATE domain_checkpoints SET body=NULL,revision=revision+1,privacy_epoch=(SELECT privacy_epoch FROM sessions s WHERE s.channel_id=domain_checkpoints.channel_id AND s.run_id=domain_checkpoints.run_id AND s.id=domain_checkpoints.session_id),updated_at_ms=? WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions)',this.now(),...this.scope(scope));
+      for(const table of ['jobs','outbox'])this.db.run(`UPDATE ${table} SET state='cancelled',payload=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions) AND state IN ('queued','running','failed','unknown_outcome')`,...this.scope(scope));
+      this.db.run('UPDATE outbox SET frozen_body=NULL,frozen_hash=NULL WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions)',...this.scope(scope));
+      this.db.run("UPDATE generation_jobs SET status='cancelled' WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions) AND status='registered'",...this.scope(scope));
+      this.db.run("UPDATE publication_candidates SET body=NULL,status='invalid' WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions) AND status='pending'",...this.scope(scope));
+      this.db.run('UPDATE publication_sync SET pending_privacy=1 WHERE channel_id=? AND run_id=?',...this.scope(scope));
+      const session=this.getSession(scope,sessionId),affectedSessionIds=this.db.all('SELECT id FROM affected_sessions').map(row=>String(row.id));
+      const receipt:InvalidationReceipt={revision:session.publicationRevision,privacyEpoch:session.privacyEpoch,hiddenEntityIds,rebuildStatus:'queued',publicSync:'pending',externalClipActions:[]};
+      this.insertWork('outbox',scope,{sessionId,kind:'retract',businessKey:`source-revision:${options.idempotencyKey}`,payload:{sessionId,revision:receipt.revision,privacyEpoch:receipt.privacyEpoch,affectedIds:hiddenEntityIds,affectedSessionIds},priority:1000});
+      this.db.run('INSERT INTO privacy_receipts VALUES(?,?,?,?,?)',...this.scope(scope),options.idempotencyKey,requestHash,json(receipt));
+      return receipt;
+    });
+  }
   invalidate(scope:Scope,target:PrivacyTarget,options:PrivacyOptions):InvalidationReceipt {
     if (!PrivacyTargetSchema.safeParse(target).success || !options.idempotencyKey || options.idempotencyKey.length>160) throw new StorageError('invalid_input','Privacy request does not match the shared contract.');
     const requestHash=digest({target,reason:options.reason});
@@ -383,17 +466,20 @@ export class SqliteRepository {
       this.db.run('INSERT INTO affected_sessions VALUES(?)',target.sessionId);
       for (const table of ['entities','jobs','outbox','generation_jobs']) this.db.run(`INSERT OR IGNORE INTO affected_sessions SELECT session_id FROM ${table} WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected)`,...this.scope(scope));
       this.db.run('UPDATE sessions SET privacy_epoch=privacy_epoch+1,publication_revision=publication_revision+1 WHERE channel_id=? AND run_id=? AND id IN (SELECT id FROM affected_sessions)',...this.scope(scope));
+      this.db.run('UPDATE domain_checkpoints SET body=NULL,revision=revision+1,privacy_epoch=(SELECT privacy_epoch FROM sessions s WHERE s.channel_id=domain_checkpoints.channel_id AND s.run_id=domain_checkpoints.run_id AND s.id=domain_checkpoints.session_id),updated_at_ms=? WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions)',this.now(),...this.scope(scope));
       // Old-epoch drafts cannot pass the publication fence; release their pending slots.
       // Already published unaffected content stays available through its independent pointer.
       this.db.run("UPDATE publication_candidates SET status='invalid',body=NULL WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions) AND status='pending'",...this.scope(scope));
       this.db.run('UPDATE channels SET privacy_revision=privacy_revision+1 WHERE channel_id=? AND run_id=?',...this.scope(scope));
       // Epoch cancellation conservatively clears all in-flight bodies in this session.
       for (const table of ['jobs','outbox'] as const) this.db.run(`UPDATE ${table} SET state='cancelled',payload=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions) AND state IN ('queued','running','failed','unknown_outcome')`,...this.scope(scope));
+      this.db.run('UPDATE outbox SET frozen_body=NULL,frozen_hash=NULL WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions)',...this.scope(scope));
       this.db.run("UPDATE generation_jobs SET status='cancelled' WHERE channel_id=? AND run_id=? AND session_id IN (SELECT id FROM affected_sessions) AND status='registered'",...this.scope(scope));
       this.db.run('UPDATE publication_sync SET pending_privacy=1 WHERE channel_id=? AND run_id=?',...this.scope(scope));
       const session=this.session(scope,target.sessionId);
       const receipt:InvalidationReceipt={revision:Number(session.publication_revision),privacyEpoch:Number(session.privacy_epoch),hiddenEntityIds,rebuildStatus:'queued',publicSync:'pending',externalClipActions};
-      this.insertWork('outbox',scope,{sessionId:target.sessionId,kind:'retract',businessKey:`privacy:${options.idempotencyKey}`,payload:{sessionId:target.sessionId,revision:receipt.revision,privacyEpoch:receipt.privacyEpoch,affectedIds:hiddenEntityIds},priority:1000});
+      const affectedSessionIds=this.db.all('SELECT id FROM affected_sessions ORDER BY id').map(row=>String(row.id));
+      this.insertWork('outbox',scope,{sessionId:target.sessionId,kind:'retract',businessKey:`privacy:${options.idempotencyKey}`,payload:{sessionId:target.sessionId,revision:receipt.revision,privacyEpoch:receipt.privacyEpoch,affectedIds:hiddenEntityIds,affectedSessionIds},priority:1000});
       this.db.run('INSERT INTO privacy_receipts VALUES(?,?,?,?,?)',...this.scope(scope),options.idempotencyKey,requestHash,json(receipt));
       return receipt;
     });
@@ -423,6 +509,46 @@ export class SqliteRepository {
   validateCapture(scope:Scope,sessionId:string,actorId:string,epoch:number):boolean {
     return !!this.db.get('SELECT 1 FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=? AND actor_id=? AND epoch=? AND expires_at_ms>?',...this.scope(scope),sessionId,actorId,epoch,this.now());
   }
+  acceptAudio(scope:Scope,input:AcceptedAudio):{jobId:string;sourceId:string;duplicate:boolean} {
+    return this.db.transaction(()=>{
+      const session=this.getSession(scope,input.sessionId);
+      for(const value of [input.leaseEpoch,input.captureEpoch,input.sequence,input.startMs,input.endMs,input.receivedAtMs,input.privacyEpoch])integer(value);
+      if(scope.runId!=='live' || input.captureEpoch!==input.leaseEpoch || session.privacyEpoch!==input.privacyEpoch || !this.validateCapture(scope,input.sessionId,input.actorId,input.leaseEpoch))throw new StorageError('conflict','Capture lease changed.');
+      if(!/^[a-f0-9]{64}$/.test(input.sha256) || input.endMs<=input.startMs || input.endMs-input.startMs>30000 || input.sampleRate<8000 || input.sampleRate>96000 || input.rawPath.length>2048)throw new StorageError('invalid_input','Audio metadata is invalid.');
+      if(session.status==='finalized' || (session.status==='closing' && (!session.endedAt || this.now()>Date.parse(session.endedAt)+90000 || input.endMs>Date.parse(session.endedAt)-Date.parse(session.startedAt)+2)))throw new StorageError('conflict','The session no longer accepts audio.');
+      const existing=this.db.get('SELECT * FROM audio_chunks WHERE channel_id=? AND run_id=? AND session_id=? AND lease_epoch=? AND sequence=?',...this.scope(scope),input.sessionId,input.leaseEpoch,input.sequence);
+      if(existing) {
+        if(existing.sha256!==input.sha256 || existing.actor_id!==input.actorId || Number(existing.start_ms)!==input.startMs || Number(existing.end_ms)!==input.endMs)throw new StorageError('conflict','Audio sequence already has different content.');
+        return {jobId:String(existing.job_id),sourceId:String(existing.source_id),duplicate:true};
+      }
+      const suffix=digest([scope,input.sessionId,input.leaseEpoch,input.sequence]).slice(0,40),sourceId=`audio_${suffix}`,jobId=`stt_${suffix}`;
+      const placeholder:Source={...scope,id:sourceId,sessionId:input.sessionId,revision:1,kind:'speech',startMs:input.startMs,endMs:input.endMs,actorId:null,languageCodes:[],timePrecision:'chunk',text:null,status:'active',externalMessageId:null,moderation:'pending'};
+      if(this.tombstoned(scope,placeholder))throw new StorageError('conflict','This audio interval was forgotten.');
+      this.insertWork('jobs',scope,{id:jobId,sessionId:input.sessionId,kind:'stt',businessKey:`audio:${suffix}`,payload:{...input,sourceId},nextAtMs:this.now()});
+      this.db.run('INSERT INTO audio_chunks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',...this.scope(scope),input.sessionId,input.leaseEpoch,input.sequence,input.sha256,jobId,sourceId,input.actorId,input.captureEpoch,input.privacyEpoch,input.startMs,input.endMs,input.sampleRate,input.rawPath,input.receivedAtMs);
+      return {jobId,sourceId,duplicate:false};
+    });
+  }
+  commitAudio(scope:Scope,job:WorkLease,source:Source):boolean {
+    if(!SourceSchema.safeParse(source).success || source.channelId!==scope.channelId || source.runId!==scope.runId || source.kind!=='speech' || source.status!=='active' || !['allowed','redacted'].includes(source.moderation))return false;
+    return this.db.transaction(()=>{
+      const record=this.db.get(`SELECT j.state,j.lease_token,j.lease_until_ms,a.* FROM jobs j JOIN audio_chunks a ON a.channel_id=j.channel_id AND a.run_id=j.run_id AND a.job_id=j.id
+        WHERE j.channel_id=? AND j.run_id=? AND j.id=? AND j.kind='stt'`,...this.scope(scope),job.id);
+      if(!record || record.state!=='running' || record.lease_token!==job.leaseToken || Number(record.lease_until_ms)<=this.now())return false;
+      const session=this.getSession(scope,String(record.session_id));
+      const capture=this.db.get('SELECT actor_id,epoch,session_id FROM capture_leases WHERE channel_id=? AND run_id=?',...this.scope(scope));
+      if(!capture || capture.actor_id!==record.actor_id || capture.session_id!==record.session_id || Number(capture.epoch)!==Number(record.capture_epoch) || session.privacyEpoch!==Number(record.privacy_epoch))return false;
+      if(session.status==='finalized' || (session.status==='closing' && (!session.endedAt || this.now()>Date.parse(session.endedAt)+90000)))return false;
+      if(source.sessionId!==session.id || source.id!==record.source_id || source.startMs!==Number(record.start_ms) || source.endMs!==Number(record.end_ms) || source.revision!==1 || this.tombstoned(scope,source))return false;
+      const occurredAt=new Date(Date.parse(session.startedAt)+source.endMs).toISOString();
+      const event:EventEnvelope<unknown>={...scope,schemaVersion:1,eventId:`speech_${digest([scope,job.id]).slice(0,40)}`,externalId:job.id,origin:'microphone',kind:'speech.transcribed',occurredAt,receivedAt:new Date(this.now()).toISOString(),sessionId:source.sessionId,sessionOffsetMs:source.endMs,payload:{source,captureEpoch:Number(record.capture_epoch)}};
+      const accepted=this.ingest(event,{sources:[source]});
+      if(!accepted.accepted)return false;
+      this.finishJob(scope,job.id,job.leaseToken,'done');
+      this.db.run('UPDATE audio_chunks SET raw_path=NULL WHERE channel_id=? AND run_id=? AND job_id=?',...this.scope(scope),job.id);
+      return true;
+    });
+  }
   preparePublication(scope:Scope,input:WorkInput):{id:string;publishSeq:number} {
     return this.db.transaction(()=>{
       const existing=this.db.get('SELECT id,publish_seq FROM outbox WHERE channel_id=? AND run_id=? AND business_key=?',...this.scope(scope),input.businessKey);
@@ -442,8 +568,33 @@ export class SqliteRepository {
     return this.db.transaction(()=>{
       const row=this.db.get('SELECT publish_seq FROM channels WHERE channel_id=? AND run_id=?',...this.scope(scope));
       if (!row||publishSeq>Number(row.publish_seq)) return false;
+      const previous=this.db.get('SELECT ack_seq,ack_hash FROM publication_sync WHERE channel_id=? AND run_id=?',...this.scope(scope));
+      if(previous && Number(previous.ack_seq)===publishSeq && previous.ack_hash && previous.ack_hash!==bodyHash)return false;
+      const frozen=this.db.get('SELECT frozen_hash FROM outbox WHERE channel_id=? AND run_id=? AND publish_seq=?',...this.scope(scope),publishSeq);
+      if(frozen?.frozen_hash && frozen.frozen_hash!==bodyHash)return false;
       return this.db.run('UPDATE publication_sync SET ack_seq=?,ack_hash=?,last_synced_at_ms=?,pending_privacy=CASE WHEN ?=? THEN 0 ELSE pending_privacy END WHERE channel_id=? AND run_id=? AND ack_seq<=?',publishSeq,bodyHash,this.now(),publishSeq,Number(row.publish_seq),...this.scope(scope),publishSeq).changes===1;
     });
+  }
+  getPublicationState(scope:Scope) {
+    const row=this.db.get('SELECT c.publish_seq,c.privacy_revision,s.ack_seq,s.ack_hash,s.last_synced_at_ms,s.pending_privacy FROM channels c JOIN publication_sync s ON s.channel_id=c.channel_id AND s.run_id=c.run_id WHERE c.channel_id=? AND c.run_id=?',...this.scope(scope));
+    if(!row)throw new StorageError('inaccessible','Channel publication state is unavailable.');
+    return {publishSeq:Number(row.publish_seq),privacyRevision:Number(row.privacy_revision),ackSeq:Number(row.ack_seq),ackHash:row.ack_hash===null ? null : String(row.ack_hash),lastSyncedAtMs:row.last_synced_at_ms===null ? null : Number(row.last_synced_at_ms),pendingPrivacy:Boolean(row.pending_privacy)};
+  }
+  freezePublication(scope:Scope,id:string,leaseToken:string,input:{body:string;bodyHash:string}):{body:string;bodyHash:string}|null {
+    if(Buffer.byteLength(input.body)>3_500_000 || createHash('sha256').update(input.body).digest('hex')!==input.bodyHash)throw new StorageError('invalid_input','Publication body or hash is invalid.');
+    return this.db.transaction(()=>{
+      const row=this.db.get(`SELECT o.* FROM outbox o JOIN sessions s ON s.channel_id=o.channel_id AND s.run_id=o.run_id AND s.id=o.session_id
+        WHERE o.channel_id=? AND o.run_id=? AND o.id=? AND o.lease_token=? AND o.state='running' AND o.lease_until_ms>? AND o.privacy_epoch=s.privacy_epoch AND o.kind IN ('publish','retract','export_manifest')`,...this.scope(scope),id,leaseToken,this.now());
+      if(!row)return null;
+      if(row.frozen_body!==null)return {body:String(row.frozen_body),bodyHash:String(row.frozen_hash)};
+      this.db.run('UPDATE outbox SET frozen_body=?,frozen_hash=? WHERE channel_id=? AND run_id=? AND id=?',input.body,input.bodyHash,...this.scope(scope),id);
+      return input;
+    });
+  }
+  listPendingDomainEvents(scope:Scope,sessionId:string,limit=100):{event:EventEnvelope<unknown>;sources:Source[]}[] {
+    this.session(scope,sessionId);
+    const rows=this.db.all('SELECT * FROM events WHERE channel_id=? AND run_id=? AND session_id=? AND domain_processed=0 AND payload IS NOT NULL ORDER BY occurred_at,id LIMIT ?',...this.scope(scope),sessionId,Math.min(integer(limit,1),100));
+    return rows.map(row=>({event:{...scope,schemaVersion:1,eventId:String(row.id),externalId:String(row.external_id),origin:String(row.origin) as EventEnvelope<unknown>['origin'],kind:String(row.kind),occurredAt:String(row.occurred_at),receivedAt:String(row.received_at),sessionId,sessionOffsetMs:row.offset_ms===null ? null : Number(row.offset_ms),payload:JSON.parse(String(row.payload))},sources:this.db.all('SELECT id FROM sources WHERE channel_id=? AND run_id=? AND event_id=? ORDER BY start_ms,id LIMIT 500',...this.scope(scope),String(row.id)).map(source=>this.getSource(scope,String(source.id))!)}));
   }
   /** Cleanup identity survives a late clip result, but never becomes publishable content. */
   recordRemoteArtifact(scope:Scope,outboxId:string,clipId:string):boolean {

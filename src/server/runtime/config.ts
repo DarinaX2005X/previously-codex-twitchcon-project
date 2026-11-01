@@ -19,6 +19,7 @@ const envSchema = z.object({
   TWITCH_CHANNEL_LOGIN: z.string().regex(/^[a-zA-Z0-9_]{1,25}$/).optional(),
   TWITCH_REDIRECT_URI: z.literal('https://localhost:4317/auth/twitch/callback').default('https://localhost:4317/auth/twitch/callback'),
   OPENAI_API_KEY: optionalText,
+  OPENAI_PAID_CALLS_ENABLED: z.enum(['true', 'false']).default('false'),
   RECAP_PUBLIC_ORIGIN: z.url().refine(value => new URL(value).protocol === 'https:').optional(),
   RECAP_LANGUAGE: z.enum(['en', 'ru']).default('en'),
   PUBLICATION_DELAY_SECONDS: z.coerce.number().int().min(60).max(90).default(75),
@@ -49,7 +50,7 @@ export function loadConfig(input: NodeJS.ProcessEnv, cwd = process.cwd()) {
     sessionSecret: env.SESSION_SECRET, tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,
     publishSharedSecret: env.PUBLISH_SHARED_SECRET,
     twitch: {clientId: env.TWITCH_CLIENT_ID, clientSecret: env.TWITCH_CLIENT_SECRET, channelLogin: env.TWITCH_CHANNEL_LOGIN, redirectUri: env.TWITCH_REDIRECT_URI},
-    openaiApiKey: env.OPENAI_API_KEY, publicOrigin: env.RECAP_PUBLIC_ORIGIN,
+    openaiApiKey: env.OPENAI_API_KEY, paidCallsEnabled: env.OPENAI_PAID_CALLS_ENABLED === 'true', publicOrigin: env.RECAP_PUBLIC_ORIGIN,
     language: env.RECAP_LANGUAGE, publicationDelaySeconds: env.PUBLICATION_DELAY_SECONDS,
     missing: [...missing, ...(!existsSync(tlsPfx) ? ['LOCAL_TLS_PFX'] : [])],
   };

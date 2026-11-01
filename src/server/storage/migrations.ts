@@ -1,14 +1,15 @@
 import type { DatabaseSync } from 'node:sqlite';
 
 /** DELETE journaling permits a consistent backup only while the instance is stopped. */
-export function migrate(db: DatabaseSync): boolean {
+export function migrate(db: DatabaseSync): void {
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON; PRAGMA busy_timeout=5000;');
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY);`);
   const version = db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()?.version;
-  if (version && Number(version) > 3) throw new Error('Storage schema is newer than this application.');
-  if (version === 3) return false;
-  if (version === 2) { upgrade3(db); return true; }
-  if (version === 1) { upgrade2(db); upgrade3(db); return true; }
+  if (version && Number(version) > 4) throw new Error('Storage schema is newer than this application.');
+  if (version === 4) return;
+  if (version === 3) { upgrade4(db); return; }
+  if (version === 2) { upgrade3(db); upgrade4(db); return; }
+  if (version === 1) { upgrade2(db); upgrade3(db); upgrade4(db); return; }
   db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE channels(channel_id TEXT NOT NULL, run_id TEXT NOT NULL, login TEXT NOT NULL,
       privacy_revision INTEGER NOT NULL DEFAULT 0, publish_seq INTEGER NOT NULL DEFAULT 0,
@@ -98,7 +99,7 @@ export function migrate(db: DatabaseSync): boolean {
     COMMIT;`);
   upgrade2(db);
   upgrade3(db);
-  return false;
+  upgrade4(db);
 }
 
 function upgrade2(db: DatabaseSync):void {
@@ -121,4 +122,34 @@ function upgrade3(db:DatabaseSync):void {
     INSERT INTO blocked_terms SELECT DISTINCT channel_id,run_id,term FROM blocked_terms_session;
     DROP TABLE blocked_terms_session;
     INSERT INTO schema_migrations VALUES(3); COMMIT;`);
+}
+
+function upgrade4(db:DatabaseSync):void {
+  db.exec(`BEGIN IMMEDIATE;
+    CREATE TABLE control_state(channel_id TEXT NOT NULL,run_id TEXT NOT NULL,key TEXT NOT NULL,body TEXT NOT NULL,expires_at_ms INTEGER,
+      PRIMARY KEY(channel_id,run_id,key),FOREIGN KEY(channel_id,run_id) REFERENCES channels(channel_id,run_id));
+    CREATE INDEX control_expiry ON control_state(channel_id,run_id,expires_at_ms);
+    CREATE TABLE channel_settings(channel_id TEXT NOT NULL,run_id TEXT NOT NULL,revision INTEGER NOT NULL,body TEXT NOT NULL,
+      PRIMARY KEY(channel_id,run_id),FOREIGN KEY(channel_id,run_id) REFERENCES channels(channel_id,run_id));
+    CREATE TABLE channel_bans(channel_id TEXT NOT NULL,run_id TEXT NOT NULL,actor_id TEXT NOT NULL,
+      PRIMARY KEY(channel_id,run_id,actor_id),FOREIGN KEY(channel_id,run_id) REFERENCES channels(channel_id,run_id));
+    CREATE TABLE domain_checkpoints(channel_id TEXT NOT NULL,run_id TEXT NOT NULL,session_id TEXT NOT NULL,revision INTEGER NOT NULL,
+      privacy_epoch INTEGER NOT NULL,body TEXT,updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(channel_id,run_id,session_id),FOREIGN KEY(channel_id,run_id,session_id) REFERENCES sessions(channel_id,run_id,id));
+    CREATE TABLE domain_mutations(channel_id TEXT NOT NULL,run_id TEXT NOT NULL,session_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,
+      request_hash TEXT NOT NULL,event_id TEXT,revision INTEGER NOT NULL,privacy_epoch INTEGER NOT NULL,receipt TEXT,
+      PRIMARY KEY(channel_id,run_id,session_id,idempotency_key),FOREIGN KEY(channel_id,run_id,session_id) REFERENCES sessions(channel_id,run_id,id));
+    CREATE UNIQUE INDEX domain_event_receipt ON domain_mutations(channel_id,run_id,event_id) WHERE event_id IS NOT NULL;
+    ALTER TABLE events ADD COLUMN domain_processed INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX events_pending_domain ON events(channel_id,run_id,session_id,domain_processed,occurred_at,id);
+    ALTER TABLE outbox ADD COLUMN frozen_body TEXT;
+    ALTER TABLE outbox ADD COLUMN frozen_hash TEXT;
+    CREATE TABLE audio_chunks(channel_id TEXT NOT NULL,run_id TEXT NOT NULL,session_id TEXT NOT NULL,lease_epoch INTEGER NOT NULL,
+      sequence INTEGER NOT NULL,sha256 TEXT NOT NULL,job_id TEXT NOT NULL,source_id TEXT NOT NULL,actor_id TEXT NOT NULL,
+      capture_epoch INTEGER NOT NULL,privacy_epoch INTEGER NOT NULL,start_ms INTEGER NOT NULL,end_ms INTEGER NOT NULL,
+      sample_rate INTEGER NOT NULL,raw_path TEXT,received_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(channel_id,run_id,session_id,lease_epoch,sequence),UNIQUE(channel_id,run_id,job_id),
+      FOREIGN KEY(channel_id,run_id,session_id) REFERENCES sessions(channel_id,run_id,id));
+    CREATE INDEX audio_source ON audio_chunks(channel_id,run_id,source_id);
+    INSERT INTO schema_migrations VALUES(4); COMMIT;`);
 }

@@ -4,7 +4,7 @@ import { SessionStore, TokenVault } from './auth.js';
 import { BudgetStore } from './budget.js';
 export { StorageError } from './database.js';
 export { SqliteRepository } from './repository.js';
-export type { WorkInput, WorkLease, EntityInput, PrivacyOptions } from './repository.js';
+export type { WorkInput, WorkLease, EntityInput, PrivacyOptions, AcceptedAudio } from './repository.js';
 export { TokenVault, SessionStore, hashOpaqueId } from './auth.js';
 export { BudgetStore } from './budget.js';
 

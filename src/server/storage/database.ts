@@ -8,12 +8,13 @@ export class StorageError extends Error {
 }
 export class StorageDatabase {
   readonly raw: DatabaseSync;
-  readonly reconcileGlobalTerms:boolean;
+  private transactionDepth=0;
+  private savepointSequence=0;
   constructor(path: string,maxBytes=2*1024*1024*1024) {
     let opened:DatabaseSync|undefined;
     try {
       integer(maxBytes,1);
-      opened=new DatabaseSync(path);this.raw=opened;this.reconcileGlobalTerms=migrate(this.raw);
+      opened=new DatabaseSync(path);this.raw=opened;migrate(this.raw);
       const pageSize=Number(this.raw.prepare('PRAGMA page_size').get()!.page_size);
       const pages=Math.floor(maxBytes/pageSize);
       if(pages<1) throw new StorageError('capacity','Configured database limit is smaller than one page.');
@@ -29,16 +30,18 @@ export class StorageDatabase {
   get(sql: string, ...params: SQLInputValue[]) { return this.raw.prepare(sql).get(...params); }
   all(sql: string, ...params: SQLInputValue[]) { return this.raw.prepare(sql).all(...params); }
   transaction<T>(action: () => T): T {
-    this.raw.exec('BEGIN IMMEDIATE');
+    const nested=this.transactionDepth>0,name=`storage_${++this.savepointSequence}`;
+    this.raw.exec(nested ? `SAVEPOINT ${name}` : 'BEGIN IMMEDIATE');
+    this.transactionDepth++;
     try {
       const result = action();
-      if (result instanceof Promise) throw new StorageError('invalid_input', 'Storage transactions must be synchronous.');
-      this.raw.exec('COMMIT'); return result;
+      if (result instanceof Promise || (result && typeof result==='object' && 'then' in result)) throw new StorageError('invalid_input', 'Storage transactions must be synchronous.');
+      this.raw.exec(nested ? `RELEASE ${name}` : 'COMMIT'); return result;
     } catch (error) {
-      this.raw.exec('ROLLBACK');
+      this.raw.exec(nested ? `ROLLBACK TO ${name}; RELEASE ${name};` : 'ROLLBACK');
       if (error instanceof StorageError) throw error;
       throw new StorageError('save_failed', 'The change could not be saved.');
-    }
+    } finally {this.transactionDepth--;}
   }
   close() { this.raw.close(); }
 }
