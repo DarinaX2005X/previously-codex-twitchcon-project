@@ -92,3 +92,24 @@ node --expose-gc --import tsx scripts/stress/engine-full-profile.mts 28800 docs/
 This profile uses accelerated timestamps and already-queued batches of at most 20. It is not an eight-hour wall-clock soak, socket queue/latency test, real provider-quality test or cloud-publication test. Chat stays pending safety; supplied speech is synthetic pre-reviewed text, and metadata/story checks use deterministic local stubs. The sink acknowledges local outbox work without external publication. The normal file-backed repository durability configuration is unchanged. Process priority is BelowNormal; other workers and the separate reducer stress share the machine. Source hashes, hardware, exact scope, progress, retained heap/RSS and database footprint are recorded. The SQLite file is retained under the path in the result for diagnosis; no user data or credentials are used.
 
 After this full profile started, hydration was changed to retrieve blocked-lore controls through an indexed binary key range. The running process retains the earlier `LIKE` query, which scans all controls in the scope, including accumulated event receipts. The full result therefore measures that earlier implementation; it cannot establish the repaired query’s long-run performance. A single read-only plan/timing comparison and the later repair are recorded in `engine-full-profile.conditions.json`. Owner-edit recovery changes made after launch are also outside this profile, which does not dispatch owner edits.
+
+## Full-core baseline — completed 28,800 virtual seconds
+
+`virtual-full-core.json` completed the full pure-reducer profile on 2026-11-02: **577,200 chat messages** over eight virtual hours at 20 chat/s, including the complete 200 chat/s burst for 60 virtual seconds and the final 60 seconds of each hour without chat. The exact count matches `28,800 × 20 − 8 × 60 × 20 + 60 × (200 − 20)`. The harness counted 33,952 command-shaped inputs, applied 47 message deletions, and exercised 534 synthetic provider failure/hold outcomes. These are reducer events, not actual commands sent or provider requests. It retained 51 chapters and reported **no limit violations** and **zero false moments from the single actor**.
+
+| Reducer limit/measurement | Observed maximum |
+| --- | ---: |
+| Retained sources | 500 |
+| Reaction windows | 30 |
+| Actors in an open window | 1 |
+| Phrase records | 0 |
+| Candidate records across chapters | 51 |
+| Pending candidates per entity | 1 |
+| Simultaneous pending generation | 1 |
+| Generation evidence packet | 2,034 UTF-8 bytes |
+
+The candidate total includes historical published candidates; it is not 51 simultaneous pending jobs. The one-actor workload checks resistance to repeated signals, not crowd diversity or the 100-actor limit under distinct actors. Ninety-seven forced-GC samples recorded a maximum retained heap of 14,718,528 bytes and maximum RSS of 116,482,048 bytes. From virtual second 1,800 to completion, retained heap grew from 13,707,608 to 14,706,592 bytes as chapter history grew from 3 to 51; final RSS was 116,178,944 bytes. This shows bounded hot windows within the completed profile, not a memory plateau at the maximum historical chapter count.
+
+Observed wall time was 4,779.916 seconds (79.7 minutes). `virtual-full-core.conditions.json` records shared-host contention, the mid-run reduction to BelowNormal priority, and the later shutdown of an unused development server. The elapsed time is not isolated throughput evidence or a user-facing latency guarantee. `core` mode does not persist message ingress: the 331,776-byte database footprint and zero pagination rows are initialization artifacts, not storage-growth or durable-history evidence. This is accelerated pure-reducer evidence; it does not establish eight hours of wall-clock operation, StoryEngine throughput, socket behavior, microphone/OBS capture, real providers or cloud consistency.
+
+No launch-time hash set was captured. The conditions file preserves the reducer Git blob reconstructed from the first post-launch clean status at `d00ddac`, explicitly labelled mid-run and completion source hashes, and the final result hash. Owner-edit/review recovery changed after launch; the running process was not restarted, and this harness dispatches neither owner-edit nor owner-review events. The separate actual-engine profile remains the source of durable runtime evidence.

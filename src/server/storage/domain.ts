@@ -147,12 +147,17 @@ export class DomainPersistence {
     }
     for(const node of final)if(node.active){this.db.run('DELETE FROM dependencies WHERE channel_id=? AND run_id=? AND child_id=?',...this.scoped(scope),node.id);this.edges(scope,node.id,node.supports,'supports');this.edges(scope,node.id,node.exposedTo,'exposed_to');}
   }
-  private candidate(scope:Scope,sessionId:string,candidate:StoryCandidate) {
+  private candidate(scope:Scope,sessionId:string,candidate:StoryCandidate,validatedRefs:Set<string>) {
     const entity=this.repository.getEntity(scope,candidate.entityId),session=this.repository.getSession(scope,sessionId);
     if(!entity || entity.sessionId!==sessionId || entity.status!=='active' || entity.ownerRevision!==candidate.ownerRevision || candidate.chapter.sessionId!==sessionId || !ChapterSchema.safeParse(candidate.chapter).success)throw new StorageError('conflict','Candidate entity or owner revision changed.');
     const old=this.db.get('SELECT * FROM publication_candidates WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),candidate.id);
     if(candidate.privacyEpoch!==session.privacyEpoch && !(old?.status==='published' && candidate.status==='published'))throw new StorageError('conflict','Candidate privacy epoch changed.');
-    if(!candidate.inputRefs.every(ref=>this.activeRef(scope,ref)))throw new StorageError('conflict','Candidate context changed.');
+    if(!candidate.inputRefs.every(ref=>{
+      const key=JSON.stringify([ref.id,ref.revision]);
+      if(validatedRefs.has(key))return true;
+      if(!this.activeRef(scope,ref))return false;
+      validatedRefs.add(key);return true;
+    }))throw new StorageError('conflict','Candidate context changed.');
     if(old){
       const previous=old.body ? JSON.parse(String(old.body)) as StoryCandidate : null;
       if(!previous || previous.entityId!==candidate.entityId || previous.revision!==candidate.revision || previous.ownerRevision!==candidate.ownerRevision || previous.privacyEpoch!==candidate.privacyEpoch || canonical(previous.inputRefs)!==canonical(candidate.inputRefs) || previous.chapter.title!==candidate.chapter.title || previous.chapter.summary!==candidate.chapter.summary)throw new StorageError('conflict','Immutable candidate content changed.');
@@ -161,9 +166,18 @@ export class DomainPersistence {
       if(Number(count.n)>=4)throw new StorageError('capacity','Candidate queue is full.');
     }
     if(candidate.status==='published' && (!safetyAllowsPublication(candidate.safety) || candidate.eligibleAtMs>this.now()))throw new StorageError('conflict','Candidate is not eligible for publication.');
-    this.db.run(`INSERT INTO publication_candidates VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET status=excluded.status,safe=excluded.safe,body=excluded.body`,...this.scoped(scope),candidate.id,sessionId,candidate.entityId,candidate.revision,candidate.ownerRevision,candidate.privacyEpoch,candidate.eligibleAtMs,candidate.status==='rejected' ? 'invalid' : candidate.status,Number(safetyAllowsPublication(candidate.safety)),json(candidate));
-    this.edges(scope,candidate.id,candidate.inputRefs,'exposed_to');
-    if(candidate.status==='published')this.db.run('INSERT INTO public_pointers VALUES(?,?,?,?) ON CONFLICT(channel_id,run_id,entity_id) DO UPDATE SET candidate_id=excluded.candidate_id',...this.scoped(scope),candidate.entityId,candidate.id);
+    // These are the same capacity/self-edge fences as edges(); reference activity
+    // was checked above, after all source/entity mutations in this transition.
+    if(candidate.inputRefs.length>500)throw new StorageError('capacity','Dependency set exceeds its limit.');
+    if(candidate.inputRefs.some(ref=>ref.id===candidate.id))throw new StorageError('conflict','Domain dependency is unavailable or changed.');
+    const status=candidate.status==='rejected' ? 'invalid' : candidate.status,safe=Number(safetyAllowsPublication(candidate.safety)),body=json(candidate);
+    if(!old || old.status!==status || Number(old.safe)!==safe || old.body!==body)this.db.run(`INSERT INTO publication_candidates VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET status=excluded.status,safe=excluded.safe,body=excluded.body`,...this.scoped(scope),candidate.id,sessionId,candidate.entityId,candidate.revision,candidate.ownerRevision,candidate.privacyEpoch,candidate.eligibleAtMs,status,safe,body);
+    const savedEdges=new Map(this.db.all("SELECT parent_id,parent_revision FROM dependencies WHERE channel_id=? AND run_id=? AND child_id=? AND kind='exposed_to'",...this.scoped(scope),candidate.id).map(row=>[String(row.parent_id),Number(row.parent_revision)]));
+    for(const ref of candidate.inputRefs)if(savedEdges.get(ref.id)!==ref.revision){
+      this.db.run('INSERT INTO dependencies VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,parent_id,child_id,kind) DO UPDATE SET parent_revision=excluded.parent_revision',...this.scoped(scope),ref.id,ref.revision,candidate.id,'exposed_to');
+      savedEdges.set(ref.id,ref.revision);
+    }
+    if(candidate.status==='published' && this.db.get('SELECT candidate_id FROM public_pointers WHERE channel_id=? AND run_id=? AND entity_id=?',...this.scoped(scope),candidate.entityId)?.candidate_id!==candidate.id)this.db.run('INSERT INTO public_pointers VALUES(?,?,?,?) ON CONFLICT(channel_id,run_id,entity_id) DO UPDATE SET candidate_id=excluded.candidate_id',...this.scoped(scope),candidate.entityId,candidate.id);
   }
   private generation(scope:Scope,sessionId:string,request:GenerationRequest) {
     const ticket=request.ticket,session=this.repository.getSession(scope,sessionId),entity=this.repository.getEntity(scope,request.entityId);
@@ -236,7 +250,11 @@ export class DomainPersistence {
       this.db.run('UPDATE sessions SET publication_revision=? WHERE channel_id=? AND run_id=? AND id=?',state.session.publicationRevision,...this.scoped(scope),sessionId);
       const keep=new Set(state.candidates.map(candidate=>candidate.id));
       for(const row of this.db.all("SELECT id FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND status='pending'",...this.scoped(scope),sessionId))if(!keep.has(String(row.id)))this.db.run("UPDATE publication_candidates SET status='superseded',body=NULL WHERE channel_id=? AND run_id=? AND id=?",...this.scoped(scope),String(row.id));
-      for(const candidate of state.candidates)this.candidate(scope,sessionId,candidate);
+      // Candidate persistence only writes candidates, edges and public pointers.
+      // Reuse reference checks within this phase, never across source/entity writes
+      // or transitions; the enclosing IMMEDIATE transaction excludes other writers.
+      const validatedCandidateRefs=new Set<string>();
+      for(const candidate of state.candidates)this.candidate(scope,sessionId,candidate,validatedCandidateRefs);
       const publications=effects.filter(effect=>effect.type==='publication'),lastPublication=publications.at(-1),priorityPublication=publications.some(effect=>effect.priority);
       if(lastPublication && priorityPublication){
         if(!receipts.length){this.db.run('UPDATE channels SET privacy_revision=privacy_revision+1 WHERE channel_id=? AND run_id=?',...this.scoped(scope));this.db.run('UPDATE publication_sync SET pending_privacy=1 WHERE channel_id=? AND run_id=?',...this.scoped(scope));}

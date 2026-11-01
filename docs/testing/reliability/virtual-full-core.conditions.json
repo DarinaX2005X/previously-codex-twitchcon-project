@@ -70,5 +70,57 @@
     ],
     "subsequentReducerChange": "Owner edit replacement dependencies and owner review exposure preservation; no owner.edit or owner.review.result events occur in this load harness.",
     "runningProcessRestarted": false
+  },
+  "completion": {
+    "recordedAt": "2026-11-02T04:40:44.3635076+05:00",
+    "completedVirtualSeconds": 28800,
+    "completedMessages": 577200,
+    "elapsedSeconds": 4779.9158264,
+    "violations": [],
+    "resultSha256": "9E71F404118E17AA9017990F8D6FAA3D858101ED506D78C80D84C9B066AB69EF",
+    "finalSourceHashes": [
+      {
+        "path": "src/core/epoch.ts",
+        "sha256": "FB7129E8C7A27318F8314E867757C252D27E182AE89AA089D8E8B49315B7DC05"
+      },
+      {
+        "path": "src/core/evidence.ts",
+        "sha256": "187A369B029196A24B606BD5836F0321EBA946405F4AAEB214BF4BDD8D73A6B0"
+      },
+      {
+        "path": "src/core/index.ts",
+        "sha256": "515FAC256BC8A12F1FBE99DEB203F6987ACD42C0CCC19DEF4621160371EC9B67"
+      },
+      {
+        "path": "src/core/lore-presentations.ts",
+        "sha256": "69D6432042DE3183F6FB48FE2EC8F0D8E25B7DD047127BF3FAF381E498DCF764"
+      },
+      {
+        "path": "src/core/moments.ts",
+        "sha256": "CE4F29418FCEE21EA0B1D1843927998C66FD2DA96F69FFD93D9E603E2E1FAB4B"
+      },
+      {
+        "path": "src/core/privacy.ts",
+        "sha256": "1B3B52D7C1829943E0731CACFFD718F464A5880B6C573F1B0D9B992DE3678F57"
+      },
+      {
+        "path": "src/core/recap.ts",
+        "sha256": "302984EEA80194CCB46ED3694BD92B4EEF737A96181AF0378A3AB2EA0178672C"
+      },
+      {
+        "path": "src/core/recovery.ts",
+        "sha256": "F981E07151246AA714422A8EE2B1B07B50F2B944D50B09032430D6FB3656FFD3"
+      },
+      {
+        "path": "src/core/reducer.ts",
+        "sha256": "0FFE4C6BBF2C352AB4A70F515F5C634A627D3807A69AA30CE4467720B85E8022"
+      },
+      {
+        "path": "src/core/types.ts",
+        "sha256": "535578A9DCD192336D030B0EBD69A0968448780B2E2CEF2BE7B64D8D9556B1B5"
+      }
+    ],
+    "processExited": true,
+    "resultWrittenUtc": "2026-11-01T23:39:54.3545443Z"
   }
 }

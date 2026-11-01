@@ -57,6 +57,40 @@ describe('atomic domain persistence with the real reducer',()=>{
     expect(verify.prepare("SELECT COUNT(*) AS n FROM outbox WHERE kind='retract' AND state='queued'").get()?.n).toBe(1);verify.close();
     expect(readFileSync(path).includes(Buffer.from(source().text!))).toBe(false);
   });
+  it.each(['source revision','source status','entity owner revision','entity status'] as const)('revalidates an unchanged candidate after its %s changes',fence=>{
+    dispatch({type:'source',source:source()});commitGenerated();now=start+78000;dispatch({type:'tick'});
+    // Validate the same candidate in an earlier transition before changing its
+    // persisted fence. A candidate-phase cache must not survive that transition.
+    dispatch({type:'tick'});
+    const previous=state(),event:DomainEvent={type:'tick'},transition=reduceDomain(previous,event,clock),candidate=previous.candidates[0]!;
+    expect(transition.state.candidates[0]).toEqual(candidate);
+    const check=new DatabaseSync(path);
+    if(fence==='source revision')check.prepare('UPDATE sources SET revision=revision+1 WHERE id=?').run('speech1');
+    if(fence==='source status')check.prepare("UPDATE sources SET status='deleted',text=NULL WHERE id=?").run('speech1');
+    if(fence==='entity owner revision')check.prepare('UPDATE entities SET owner_revision=owner_revision+1 WHERE id=?').run(candidate.entityId);
+    if(fence==='entity status')check.prepare("UPDATE entities SET status='hidden' WHERE id=?").run(candidate.entityId);
+    check.close();
+    expect(()=>store.repository.applyDomainTransition(scope,'s1',{expectedRevision:previous.revision,expectedPrivacyEpoch:previous.session.privacyEpoch,transition,event:envelope(event,'stale-candidate')})).toThrow(fence.startsWith('source')?/Candidate context changed/:/Candidate entity or owner revision changed/);
+    expect(store.repository.getDomainCheckpoint(scope,'s1').revision).toBe(previous.revision);
+    const verify=new DatabaseSync(path);expect(verify.prepare('SELECT id FROM events WHERE external_id=?').get('stale-candidate')).toBeUndefined();verify.close();
+  });
+  it('persists a candidate status change and repairs missing published links across reopening',()=>{
+    dispatch({type:'source',source:source()});commitGenerated();const candidate=state().candidates[0]!;
+    expect(candidate.status).toBe('pending');
+    store.close();store=createStorage({path,now:()=>now});expect(state().candidates[0]?.status).toBe('pending');
+    now=start+78000;dispatch({type:'tick'});
+    store.close();store=createStorage({path,now:()=>now});expect(state().candidates[0]?.status).toBe('published');
+    const check=new DatabaseSync(path);
+    expect(check.prepare('SELECT status FROM publication_candidates WHERE id=?').get(candidate.id)?.status).toBe('published');
+    check.prepare('DELETE FROM dependencies WHERE child_id=?').run(candidate.id);
+    check.prepare('DELETE FROM public_pointers WHERE entity_id=?').run(candidate.entityId);check.close();
+    // An unchanged body alone does not prove its persisted edges/pointer exist.
+    dispatch({type:'tick'});store.close();store=createStorage({path,now:()=>now});
+    const verify=new DatabaseSync(path);
+    expect(verify.prepare('SELECT candidate_id FROM public_pointers WHERE entity_id=?').get(candidate.entityId)?.candidate_id).toBe(candidate.id);
+    expect(verify.prepare("SELECT parent_id,parent_revision FROM dependencies WHERE child_id=? AND kind='exposed_to'").all(candidate.id)).toEqual(candidate.inputRefs.map(ref=>({parent_id:ref.id,parent_revision:ref.revision})));
+    verify.close();expect(state().published?.chapters[0]?.title).toBe('A smaller cache');
+  });
   it('applies interval Forget at adjacent boundaries and tombstones only the overlapping range',()=>{
     dispatch({type:'source',source:{...source('left',0,10000),text:'Left chunk remains.',moderation:'pending'}});
     dispatch({type:'source',source:{...source('target',10000,20000),text:'Forget this chunk.',moderation:'pending'}});

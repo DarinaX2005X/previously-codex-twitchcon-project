@@ -1,0 +1,1850 @@
+{
+  "at": "2026-11-01T23:34:25.357Z",
+  "scope": "240 chat operations total on two isolated reduced synthetic SQLite working-set snapshots. Source databases opened read-only for bounded indexed reads. 20 warmup + 100 measured per state; no external services. Current source and warmed shared host, instrumentation overhead present. Archival table-size costs deliberately excluded. Nested timing totals overlap; CPU time process-wide includes GC helpers. No claims about original full-profile throughput.",
+  "directory": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-write-probe-K7bv4d",
+  "sourceHashes": {
+    "src/server/runtime/engine.ts": "38044c7dda64fe0ee3d09433798a4da6fe114d16fafa884b6f20be08944fe6a3",
+    "src/server/storage/domain.ts": "89ea53feed2f802a9c878b595b2e2003873612ca54023d5a5502788708b24570",
+    "src/server/storage/database.ts": "cecd990d46636b8fdde42e7f79d5a2fc455a6c7dc4201e400e425ac8830ef138",
+    "src/core/reducer.ts": "0ffe4c6bbf2c352ab4a70f515f5c634a627d3807a69aa30ce4467720b85e8022"
+  },
+  "results": [
+    {
+      "label": "calibration",
+      "sourcePath": "C:/Users/user/AppData/Local/Temp/previously-engine-full-z3i2as/state.sqlite",
+      "path": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-write-probe-K7bv4d\\calibration.sqlite",
+      "checkpointBytes": 177254,
+      "virtualSecond": 619.95,
+      "candidates": 2,
+      "candidateRefs": [
+        1,
+        5
+      ],
+      "nodes": 10,
+      "seedRows": {
+        "domain_checkpoints": 1,
+        "channels": 1,
+        "sessions": 1,
+        "channel_settings": 1,
+        "publication_sync": 1,
+        "capture_leases": 0,
+        "source_tombstones": 1,
+        "channel_bans": 0,
+        "blocked_terms": 0,
+        "sources": 501,
+        "entities": 9,
+        "events": 501,
+        "publication_candidates": 2,
+        "control_state": 0,
+        "generation_jobs": 0
+      },
+      "pragma": {
+        "journal_mode": {
+          "journal_mode": "delete"
+        },
+        "synchronous": {
+          "synchronous": 2
+        },
+        "secure_delete": {
+          "secure_delete": 1
+        }
+      },
+      "measuredEvents": 100,
+      "warmupEvents": 20,
+      "elapsedMilliseconds": 2156.9961999999996,
+      "cpuMicroseconds": {
+        "user": 2109000,
+        "system": 391000
+      },
+      "eventsPerSecond": 46.36076781220107,
+      "batchTimes": [
+        438.99,
+        461.69709999999986,
+        456.0474999999999,
+        421.1077,
+        378.50689999999986
+      ],
+      "samples": [
+        {
+          "label": "engine.commit",
+          "calls": 100,
+          "ms": 2062.6708000000044
+        },
+        {
+          "label": "domain.apply",
+          "calls": 100,
+          "ms": 1675.903900000002
+        },
+        {
+          "label": "clone.domain",
+          "calls": 205,
+          "ms": 705.2839999999971
+        },
+        {
+          "label": "domain.checkpoint",
+          "calls": 105,
+          "ms": 232.06180000000018
+        },
+        {
+          "label": "sql:SELECT id,revision,text,status FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT value FROM json_each(?))",
+          "calls": 100,
+          "ms": 215.6251000000002
+        },
+        {
+          "label": "domain.candidate",
+          "calls": 200,
+          "ms": 180.22709999999415
+        },
+        {
+          "label": "sql:INSERT INTO domain_checkpoints VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,session_id) DO UPDATE SET revision=excluded.revision,privacy_epoch=excluded.privacy_epoch,body=excluded.body,updated_at_ms=excluded.updated_at_ms",
+          "calls": 100,
+          "ms": 152.33229999999912
+        },
+        {
+          "label": "sql:SELECT revision,privacy_epoch,body FROM domain_checkpoints WHERE channel_id=? AND run_id=? AND session_id=?",
+          "calls": 105,
+          "ms": 92.7038999999993
+        },
+        {
+          "label": "exec:COMMIT",
+          "calls": 5,
+          "ms": 47.816100000000006
+        },
+        {
+          "label": "sql:SELECT * FROM sessions WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 715,
+          "ms": 45.57980000000521
+        },
+        {
+          "label": "sql:INSERT INTO dependencies VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,parent_id,child_id,kind) DO UPDATE SET parent_revision=excluded.parent_revision",
+          "calls": 700,
+          "ms": 40.34859999999571
+        },
+        {
+          "label": "engine.state",
+          "calls": 5,
+          "ms": 40.18459999999982
+        },
+        {
+          "label": "sql:SELECT revision,status FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 1300,
+          "ms": 37.55340000000115
+        },
+        {
+          "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key=? AND (expires_at_ms IS NULL OR expires_at_ms>?)",
+          "calls": 605,
+          "ms": 22.463299999992387
+        },
+        {
+          "label": "sql:INSERT INTO events(channel_id,run_id,id,session_id,external_id,origin,kind,occurred_at,received_at,offset_ms,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+          "calls": 100,
+          "ms": 21.635799999999563
+        },
+        {
+          "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND (\n      kind='session' OR (kind='source' AND target_id=?) OR (kind='message' AND target_id=?) OR\n      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND ranges_overlap(from_ms,to_ms,?,?))) LIMIT 1",
+          "calls": 200,
+          "ms": 21.09540000000061
+        },
+        {
+          "label": "sql:INSERT INTO sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET event_id=excluded.event_id,revision=excluded.revision,kind=excluded.kind,start_ms=excluded.start_ms,end_ms=excluded.end_ms,actor_id=excluded.actor_id,external_message_id=excluded.external_message_id,status=excluded.status,text=excluded.text,metadata=excluded.metadata",
+          "calls": 100,
+          "ms": 20.220900000000483
+        },
+        {
+          "label": "sql:INSERT INTO publication_candidates VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET status=excluded.status,safe=excluded.safe,body=excluded.body",
+          "calls": 200,
+          "ms": 18.733999999999014
+        },
+        {
+          "label": "sql:SELECT * FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 300,
+          "ms": 15.38630000000262
+        },
+        {
+          "label": "sql:SELECT * FROM publication_candidates WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 200,
+          "ms": 11.962000000000216
+        },
+        {
+          "label": "sql:INSERT INTO control_state VALUES(?,?,?,?,?) ON CONFLICT(channel_id,run_id,key) DO UPDATE SET body=excluded.body,expires_at_ms=excluded.expires_at_ms",
+          "calls": 100,
+          "ms": 11.640699999996741
+        },
+        {
+          "label": "sql:SELECT revision,status FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 400,
+          "ms": 10.77639999999883
+        },
+        {
+          "label": "sql:INSERT INTO domain_mutations VALUES(?,?,?,?,?,?,?,?,?)",
+          "calls": 100,
+          "ms": 9.905199999998104
+        },
+        {
+          "label": "sql:UPDATE events SET domain_processed=1 WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 100,
+          "ms": 9.07740000000058
+        },
+        {
+          "label": "sql:SELECT * FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 200,
+          "ms": 8.47529999999665
+        },
+        {
+          "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND kind='session' LIMIT 1",
+          "calls": 200,
+          "ms": 7.403699999997116
+        },
+        {
+          "label": "clone.other",
+          "calls": 210,
+          "ms": 5.185599999998658
+        },
+        {
+          "label": "sql:SELECT epoch FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=?",
+          "calls": 105,
+          "ms": 4.843000000002576
+        },
+        {
+          "label": "sql:SELECT 1 FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?",
+          "calls": 200,
+          "ms": 4.733500000000049
+        },
+        {
+          "label": "sql:UPDATE sessions SET title=?,category=?,status=?,ended_at=?,metadata_end_ms=?,finalized_at=?,final_snapshot_ack_at=? WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 100,
+          "ms": 4.651199999998653
+        },
+        {
+          "label": "sql:INSERT INTO public_pointers VALUES(?,?,?,?) ON CONFLICT(channel_id,run_id,entity_id) DO UPDATE SET candidate_id=excluded.candidate_id",
+          "calls": 100,
+          "ms": 4.634200000000874
+        },
+        {
+          "label": "sql:SELECT id,domain_processed,payload FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+          "calls": 100,
+          "ms": 4.582999999997583
+        },
+        {
+          "label": "sql:SELECT id FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND status='pending'",
+          "calls": 100,
+          "ms": 4.34680000000003
+        },
+        {
+          "label": "exec:SAVEPOINT storage_N",
+          "calls": 300,
+          "ms": 3.9473999999997886
+        },
+        {
+          "label": "sql:SELECT id FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+          "calls": 100,
+          "ms": 3.7280999999995856
+        },
+        {
+          "label": "sql:SELECT 1 FROM channels WHERE channel_id=? AND run_id=?",
+          "calls": 105,
+          "ms": 3.561100000000806
+        },
+        {
+          "label": "sql:UPDATE sessions SET publication_revision=? WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 100,
+          "ms": 3.186800000000403
+        },
+        {
+          "label": "exec:RELEASE storage_N",
+          "calls": 300,
+          "ms": 3.0965000000019245
+        },
+        {
+          "label": "sql:SELECT body FROM channel_settings WHERE channel_id=? AND run_id=?",
+          "calls": 105,
+          "ms": 2.979600000001028
+        },
+        {
+          "label": "exec:BEGIN IMMEDIATE",
+          "calls": 5,
+          "ms": 0.8544000000008509
+        },
+        {
+          "label": "sql:SELECT * FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY rowid DESC LIMIT 1000",
+          "calls": 5,
+          "ms": 0.6629000000002634
+        },
+        {
+          "label": "sql:SELECT term FROM blocked_terms WHERE channel_id=? AND run_id=? AND term>? ORDER BY term LIMIT ?",
+          "calls": 5,
+          "ms": 0.3160000000000309
+        },
+        {
+          "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key >= 'blocked-lore:' AND key < 'blocked-lore;' ORDER BY key LIMIT 500",
+          "calls": 5,
+          "ms": 0.21349999999961256
+        },
+        {
+          "label": "sql:SELECT login FROM channels WHERE channel_id=? AND run_id=?",
+          "calls": 5,
+          "ms": 0.18479999999976826
+        },
+        {
+          "label": "sql:SELECT actor_id FROM channel_bans WHERE channel_id=? AND run_id=? ORDER BY actor_id LIMIT 1000",
+          "calls": 5,
+          "ms": 0.13409999999998945
+        }
+      ]
+    },
+    {
+      "label": "later",
+      "sourcePath": "C:/Users/user/AppData/Local/Temp/previously-engine-full-u01AbH/state.sqlite",
+      "path": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-write-probe-K7bv4d\\later.sqlite",
+      "checkpointBytes": 236687,
+      "virtualSecond": 6167.95,
+      "candidates": 6,
+      "candidateRefs": [
+        1,
+        5,
+        7,
+        9,
+        9,
+        9
+      ],
+      "nodes": 37,
+      "seedRows": {
+        "domain_checkpoints": 1,
+        "channels": 1,
+        "sessions": 1,
+        "channel_settings": 1,
+        "publication_sync": 1,
+        "capture_leases": 0,
+        "source_tombstones": 10,
+        "channel_bans": 0,
+        "blocked_terms": 0,
+        "sources": 512,
+        "entities": 25,
+        "events": 512,
+        "publication_candidates": 6,
+        "control_state": 0,
+        "generation_jobs": 0
+      },
+      "pragma": {
+        "journal_mode": {
+          "journal_mode": "delete"
+        },
+        "synchronous": {
+          "synchronous": 2
+        },
+        "secure_delete": {
+          "secure_delete": 1
+        }
+      },
+      "measuredEvents": 100,
+      "warmupEvents": 20,
+      "elapsedMilliseconds": 2775.0539,
+      "cpuMicroseconds": {
+        "user": 2485000,
+        "system": 531000
+      },
+      "eventsPerSecond": 36.03533610644464,
+      "batchTimes": [
+        578.4746,
+        546.7316999999994,
+        569.1754999999994,
+        555.7130999999999,
+        524.3422
+      ],
+      "samples": [
+        {
+          "label": "engine.commit",
+          "calls": 100,
+          "ms": 2691.1448000000005
+        },
+        {
+          "label": "domain.apply",
+          "calls": 100,
+          "ms": 2226.8111000000017
+        },
+        {
+          "label": "clone.domain",
+          "calls": 205,
+          "ms": 948.1955000000025
+        },
+        {
+          "label": "domain.candidate",
+          "calls": 600,
+          "ms": 729.213199999997
+        },
+        {
+          "label": "domain.checkpoint",
+          "calls": 105,
+          "ms": 204.0331999999953
+        },
+        {
+          "label": "sql:SELECT revision,status FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 8100,
+          "ms": 183.79699999998275
+        },
+        {
+          "label": "sql:SELECT id,revision,text,status FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT value FROM json_each(?))",
+          "calls": 100,
+          "ms": 172.49829999999974
+        },
+        {
+          "label": "sql:INSERT INTO dependencies VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,parent_id,child_id,kind) DO UPDATE SET parent_revision=excluded.parent_revision",
+          "calls": 4100,
+          "ms": 167.40369999996892
+        },
+        {
+          "label": "sql:INSERT INTO domain_checkpoints VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,session_id) DO UPDATE SET revision=excluded.revision,privacy_epoch=excluded.privacy_epoch,body=excluded.body,updated_at_ms=excluded.updated_at_ms",
+          "calls": 100,
+          "ms": 153.65309999999545
+        },
+        {
+          "label": "sql:SELECT revision,status FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 3400,
+          "ms": 76.97819999999001
+        },
+        {
+          "label": "sql:SELECT * FROM sessions WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 1115,
+          "ms": 60.54489999998896
+        },
+        {
+          "label": "sql:SELECT revision,privacy_epoch,body FROM domain_checkpoints WHERE channel_id=? AND run_id=? AND session_id=?",
+          "calls": 105,
+          "ms": 48.41329999999925
+        },
+        {
+          "label": "sql:INSERT INTO publication_candidates VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET status=excluded.status,safe=excluded.safe,body=excluded.body",
+          "calls": 600,
+          "ms": 44.73579999998083
+        },
+        {
+          "label": "exec:COMMIT",
+          "calls": 5,
+          "ms": 44.115200000000186
+        },
+        {
+          "label": "engine.state",
+          "calls": 5,
+          "ms": 34.10180000000037
+        },
+        {
+          "label": "sql:SELECT * FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 700,
+          "ms": 33.94969999998693
+        },
+        {
+          "label": "sql:SELECT * FROM publication_candidates WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 600,
+          "ms": 31.371700000003784
+        },
+        {
+          "label": "sql:INSERT INTO public_pointers VALUES(?,?,?,?) ON CONFLICT(channel_id,run_id,entity_id) DO UPDATE SET candidate_id=excluded.candidate_id",
+          "calls": 600,
+          "ms": 22.72530000000279
+        },
+        {
+          "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key=? AND (expires_at_ms IS NULL OR expires_at_ms>?)",
+          "calls": 605,
+          "ms": 20.441800000001876
+        },
+        {
+          "label": "sql:INSERT INTO events(channel_id,run_id,id,session_id,external_id,origin,kind,occurred_at,received_at,offset_ms,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+          "calls": 100,
+          "ms": 18.926700000005894
+        },
+        {
+          "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND (\n      kind='session' OR (kind='source' AND target_id=?) OR (kind='message' AND target_id=?) OR\n      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND ranges_overlap(from_ms,to_ms,?,?))) LIMIT 1",
+          "calls": 200,
+          "ms": 18.40440000000035
+        },
+        {
+          "label": "sql:INSERT INTO sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET event_id=excluded.event_id,revision=excluded.revision,kind=excluded.kind,start_ms=excluded.start_ms,end_ms=excluded.end_ms,actor_id=excluded.actor_id,external_message_id=excluded.external_message_id,status=excluded.status,text=excluded.text,metadata=excluded.metadata",
+          "calls": 100,
+          "ms": 17.792700000000877
+        },
+        {
+          "label": "sql:INSERT INTO control_state VALUES(?,?,?,?,?) ON CONFLICT(channel_id,run_id,key) DO UPDATE SET body=excluded.body,expires_at_ms=excluded.expires_at_ms",
+          "calls": 100,
+          "ms": 9.463599999997314
+        },
+        {
+          "label": "sql:UPDATE events SET domain_processed=1 WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 100,
+          "ms": 8.14040000000432
+        },
+        {
+          "label": "sql:INSERT INTO domain_mutations VALUES(?,?,?,?,?,?,?,?,?)",
+          "calls": 100,
+          "ms": 8.12389999999823
+        },
+        {
+          "label": "sql:SELECT * FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 200,
+          "ms": 7.6441000000086206
+        },
+        {
+          "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND kind='session' LIMIT 1",
+          "calls": 200,
+          "ms": 6.524099999995542
+        },
+        {
+          "label": "clone.other",
+          "calls": 210,
+          "ms": 4.832999999991898
+        },
+        {
+          "label": "sql:SELECT id,domain_processed,payload FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+          "calls": 100,
+          "ms": 4.375699999996868
+        },
+        {
+          "label": "sql:UPDATE sessions SET title=?,category=?,status=?,ended_at=?,metadata_end_ms=?,finalized_at=?,final_snapshot_ack_at=? WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 100,
+          "ms": 4.011600000001181
+        },
+        {
+          "label": "sql:SELECT epoch FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=?",
+          "calls": 105,
+          "ms": 4.008900000002541
+        },
+        {
+          "label": "sql:SELECT 1 FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?",
+          "calls": 200,
+          "ms": 3.959699999997156
+        },
+        {
+          "label": "sql:SELECT id FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND status='pending'",
+          "calls": 100,
+          "ms": 3.6909999999984393
+        },
+        {
+          "label": "exec:SAVEPOINT storage_N",
+          "calls": 300,
+          "ms": 3.4821999999985565
+        },
+        {
+          "label": "sql:SELECT 1 FROM channels WHERE channel_id=? AND run_id=?",
+          "calls": 105,
+          "ms": 3.1605999999965206
+        },
+        {
+          "label": "exec:RELEASE storage_N",
+          "calls": 300,
+          "ms": 3.040999999991527
+        },
+        {
+          "label": "sql:SELECT id FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+          "calls": 100,
+          "ms": 3.032199999997374
+        },
+        {
+          "label": "sql:UPDATE sessions SET publication_revision=? WHERE channel_id=? AND run_id=? AND id=?",
+          "calls": 100,
+          "ms": 2.8046000000003914
+        },
+        {
+          "label": "sql:SELECT body FROM channel_settings WHERE channel_id=? AND run_id=?",
+          "calls": 105,
+          "ms": 2.517300000002251
+        },
+        {
+          "label": "exec:BEGIN IMMEDIATE",
+          "calls": 5,
+          "ms": 0.724699999999757
+        },
+        {
+          "label": "sql:SELECT * FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY rowid DESC LIMIT 1000",
+          "calls": 5,
+          "ms": 0.6298000000006141
+        },
+        {
+          "label": "sql:SELECT term FROM blocked_terms WHERE channel_id=? AND run_id=? AND term>? ORDER BY term LIMIT ?",
+          "calls": 5,
+          "ms": 0.24860000000080618
+        },
+        {
+          "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key >= 'blocked-lore:' AND key < 'blocked-lore;' ORDER BY key LIMIT 500",
+          "calls": 5,
+          "ms": 0.18640000000004875
+        },
+        {
+          "label": "sql:SELECT login FROM channels WHERE channel_id=? AND run_id=?",
+          "calls": 5,
+          "ms": 0.16830000000072687
+        },
+        {
+          "label": "sql:SELECT actor_id FROM channel_bans WHERE channel_id=? AND run_id=? ORDER BY actor_id LIMIT 1000",
+          "calls": 5,
+          "ms": 0.10759999999982028
+        }
+      ]
+    }
+  ],
+  "comparison": {
+    "at": "2026-11-01T23:38:39.985Z",
+    "scope": "480 chat operations on four isolated reduced synthetic SQLite working-set databases. Each calibration/later snapshot captured once and reused for both modes. Baseline restores original candidate method in this probe process only; optimized uses current method. Remaining source identical, including trivial allocation of unused ref set in baseline. 20 warmup + 100 measured per mode/state. Source databases read-only; no external services. Shared warmed host, sequential baseline/optimized order and instrumentation overhead. Archival table-size costs excluded. Nested timings overlap; CPU process-wide includes GC helpers. No original full-run throughput claim.",
+    "directory": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-write-probe-kccoPq",
+    "sourceHashes": {
+      "src/server/runtime/engine.ts": "38044c7dda64fe0ee3d09433798a4da6fe114d16fafa884b6f20be08944fe6a3",
+      "src/server/storage/domain.ts": "7fdbdd3757603ab246e7d0dacca8797a25f766d4a8afa286cda24860588586b3",
+      "src/server/storage/database.ts": "cecd990d46636b8fdde42e7f79d5a2fc455a6c7dc4201e400e425ac8830ef138",
+      "src/core/reducer.ts": "0ffe4c6bbf2c352ab4a70f515f5c634a627d3807a69aa30ce4467720b85e8022"
+    },
+    "results": [
+      {
+        "label": "calibration",
+        "mode": "baseline",
+        "sourcePath": "C:/Users/user/AppData/Local/Temp/previously-engine-full-z3i2as/state.sqlite",
+        "path": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-write-probe-kccoPq\\calibration-baseline.sqlite",
+        "checkpointBytes": 177254,
+        "virtualSecond": 619.95,
+        "candidates": 2,
+        "candidateRefs": [
+          1,
+          5
+        ],
+        "nodes": 10,
+        "seedRows": {
+          "domain_checkpoints": 1,
+          "channels": 1,
+          "sessions": 1,
+          "channel_settings": 1,
+          "publication_sync": 1,
+          "capture_leases": 0,
+          "source_tombstones": 1,
+          "channel_bans": 0,
+          "blocked_terms": 0,
+          "sources": 501,
+          "entities": 9,
+          "events": 501,
+          "publication_candidates": 2,
+          "control_state": 0,
+          "generation_jobs": 0
+        },
+        "pragma": {
+          "journal_mode": {
+            "journal_mode": "delete"
+          },
+          "synchronous": {
+            "synchronous": 2
+          },
+          "secure_delete": {
+            "secure_delete": 1
+          }
+        },
+        "measuredEvents": 100,
+        "warmupEvents": 20,
+        "elapsedMilliseconds": 1811.8064000000002,
+        "cpuMicroseconds": {
+          "user": 1750000,
+          "system": 297000
+        },
+        "eventsPerSecond": 55.19353502670042,
+        "batchTimes": [
+          364.7282,
+          360.9785999999999,
+          360.64699999999993,
+          361.64609999999993,
+          363.24209999999994
+        ],
+        "samples": [
+          {
+            "label": "engine.commit",
+            "calls": 100,
+            "ms": 1714.4985
+          },
+          {
+            "label": "domain.apply",
+            "calls": 100,
+            "ms": 1396.167299999997
+          },
+          {
+            "label": "clone.domain",
+            "calls": 205,
+            "ms": 565.5337999999997
+          },
+          {
+            "label": "domain.checkpoint",
+            "calls": 105,
+            "ms": 194.97240000000102
+          },
+          {
+            "label": "sql:SELECT id,revision,text,status FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT value FROM json_each(?))",
+            "calls": 100,
+            "ms": 181.7249999999981
+          },
+          {
+            "label": "domain.candidate",
+            "calls": 200,
+            "ms": 152.8086000000037
+          },
+          {
+            "label": "sql:INSERT INTO domain_checkpoints VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,session_id) DO UPDATE SET revision=excluded.revision,privacy_epoch=excluded.privacy_epoch,body=excluded.body,updated_at_ms=excluded.updated_at_ms",
+            "calls": 100,
+            "ms": 127.24490000000083
+          },
+          {
+            "label": "sql:SELECT revision,privacy_epoch,body FROM domain_checkpoints WHERE channel_id=? AND run_id=? AND session_id=?",
+            "calls": 105,
+            "ms": 78.68559999999957
+          },
+          {
+            "label": "exec:COMMIT",
+            "calls": 5,
+            "ms": 54.3279
+          },
+          {
+            "label": "engine.state",
+            "calls": 5,
+            "ms": 37.24290000000019
+          },
+          {
+            "label": "sql:SELECT * FROM sessions WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 715,
+            "ms": 37.23750000000223
+          },
+          {
+            "label": "sql:INSERT INTO dependencies VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,parent_id,child_id,kind) DO UPDATE SET parent_revision=excluded.parent_revision",
+            "calls": 700,
+            "ms": 33.205099999997174
+          },
+          {
+            "label": "sql:SELECT revision,status FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 1300,
+            "ms": 30.13709999999901
+          },
+          {
+            "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key=? AND (expires_at_ms IS NULL OR expires_at_ms>?)",
+            "calls": 605,
+            "ms": 18.220200000003388
+          },
+          {
+            "label": "sql:INSERT INTO events(channel_id,run_id,id,session_id,external_id,origin,kind,occurred_at,received_at,offset_ms,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "calls": 100,
+            "ms": 18.02170000000092
+          },
+          {
+            "label": "sql:INSERT INTO sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET event_id=excluded.event_id,revision=excluded.revision,kind=excluded.kind,start_ms=excluded.start_ms,end_ms=excluded.end_ms,actor_id=excluded.actor_id,external_message_id=excluded.external_message_id,status=excluded.status,text=excluded.text,metadata=excluded.metadata",
+            "calls": 100,
+            "ms": 17.081499999999096
+          },
+          {
+            "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND (\n      kind='session' OR (kind='source' AND target_id=?) OR (kind='message' AND target_id=?) OR\n      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND ranges_overlap(from_ms,to_ms,?,?))) LIMIT 1",
+            "calls": 200,
+            "ms": 16.192400000000816
+          },
+          {
+            "label": "sql:INSERT INTO publication_candidates VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET status=excluded.status,safe=excluded.safe,body=excluded.body",
+            "calls": 200,
+            "ms": 15.66000000000031
+          },
+          {
+            "label": "sql:SELECT * FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 300,
+            "ms": 12.829799999996794
+          },
+          {
+            "label": "sql:SELECT * FROM publication_candidates WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 200,
+            "ms": 9.64689999999814
+          },
+          {
+            "label": "sql:INSERT INTO control_state VALUES(?,?,?,?,?) ON CONFLICT(channel_id,run_id,key) DO UPDATE SET body=excluded.body,expires_at_ms=excluded.expires_at_ms",
+            "calls": 100,
+            "ms": 9.435600000002296
+          },
+          {
+            "label": "sql:SELECT revision,status FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 400,
+            "ms": 8.766999999997552
+          },
+          {
+            "label": "sql:INSERT INTO domain_mutations VALUES(?,?,?,?,?,?,?,?,?)",
+            "calls": 100,
+            "ms": 8.043000000001712
+          },
+          {
+            "label": "sql:UPDATE events SET domain_processed=1 WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 7.689599999998336
+          },
+          {
+            "label": "sql:SELECT * FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 200,
+            "ms": 7.069100000000617
+          },
+          {
+            "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND kind='session' LIMIT 1",
+            "calls": 200,
+            "ms": 6.134299999999712
+          },
+          {
+            "label": "clone.other",
+            "calls": 210,
+            "ms": 4.29699999999616
+          },
+          {
+            "label": "sql:SELECT epoch FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=?",
+            "calls": 105,
+            "ms": 4.114999999999327
+          },
+          {
+            "label": "sql:UPDATE sessions SET title=?,category=?,status=?,ended_at=?,metadata_end_ms=?,finalized_at=?,final_snapshot_ack_at=? WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 3.83699999999817
+          },
+          {
+            "label": "sql:SELECT id,domain_processed,payload FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+            "calls": 100,
+            "ms": 3.798999999999978
+          },
+          {
+            "label": "sql:SELECT 1 FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?",
+            "calls": 200,
+            "ms": 3.7978000000009615
+          },
+          {
+            "label": "sql:INSERT INTO public_pointers VALUES(?,?,?,?) ON CONFLICT(channel_id,run_id,entity_id) DO UPDATE SET candidate_id=excluded.candidate_id",
+            "calls": 100,
+            "ms": 3.762400000002117
+          },
+          {
+            "label": "sql:SELECT id FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND status='pending'",
+            "calls": 100,
+            "ms": 3.5535999999992782
+          },
+          {
+            "label": "exec:SAVEPOINT storage_N",
+            "calls": 300,
+            "ms": 3.1149000000007163
+          },
+          {
+            "label": "sql:SELECT id FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+            "calls": 100,
+            "ms": 2.999100000000226
+          },
+          {
+            "label": "sql:SELECT 1 FROM channels WHERE channel_id=? AND run_id=?",
+            "calls": 105,
+            "ms": 2.928300000003901
+          },
+          {
+            "label": "sql:UPDATE sessions SET publication_revision=? WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 2.7131999999983236
+          },
+          {
+            "label": "exec:RELEASE storage_N",
+            "calls": 300,
+            "ms": 2.555099999996173
+          },
+          {
+            "label": "sql:SELECT body FROM channel_settings WHERE channel_id=? AND run_id=?",
+            "calls": 105,
+            "ms": 2.363999999999578
+          },
+          {
+            "label": "exec:BEGIN IMMEDIATE",
+            "calls": 5,
+            "ms": 0.8569999999997435
+          },
+          {
+            "label": "sql:SELECT * FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY rowid DESC LIMIT 1000",
+            "calls": 5,
+            "ms": 0.6744999999998527
+          },
+          {
+            "label": "sql:SELECT term FROM blocked_terms WHERE channel_id=? AND run_id=? AND term>? ORDER BY term LIMIT ?",
+            "calls": 5,
+            "ms": 0.2615000000000691
+          },
+          {
+            "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key >= 'blocked-lore:' AND key < 'blocked-lore;' ORDER BY key LIMIT 500",
+            "calls": 5,
+            "ms": 0.18479999999976826
+          },
+          {
+            "label": "sql:SELECT login FROM channels WHERE channel_id=? AND run_id=?",
+            "calls": 5,
+            "ms": 0.12150000000019645
+          },
+          {
+            "label": "sql:SELECT actor_id FROM channel_bans WHERE channel_id=? AND run_id=? ORDER BY actor_id LIMIT 1000",
+            "calls": 5,
+            "ms": 0.11729999999965912
+          }
+        ],
+        "finalCheckpointSha256": "e30ff89027d5fcd2ac5973957c253ae56854a55b9aea44dc54707a5d0a42a977",
+        "integrity": {
+          "quick_check": "ok"
+        },
+        "foreignKeyViolations": []
+      },
+      {
+        "label": "calibration",
+        "mode": "optimized",
+        "sourcePath": "C:/Users/user/AppData/Local/Temp/previously-engine-full-z3i2as/state.sqlite",
+        "path": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-write-probe-kccoPq\\calibration-optimized.sqlite",
+        "checkpointBytes": 177254,
+        "virtualSecond": 619.95,
+        "candidates": 2,
+        "candidateRefs": [
+          1,
+          5
+        ],
+        "nodes": 10,
+        "seedRows": {
+          "domain_checkpoints": 1,
+          "channels": 1,
+          "sessions": 1,
+          "channel_settings": 1,
+          "publication_sync": 1,
+          "capture_leases": 0,
+          "source_tombstones": 1,
+          "channel_bans": 0,
+          "blocked_terms": 0,
+          "sources": 501,
+          "entities": 9,
+          "events": 501,
+          "publication_candidates": 2,
+          "control_state": 0,
+          "generation_jobs": 0
+        },
+        "pragma": {
+          "journal_mode": {
+            "journal_mode": "delete"
+          },
+          "synchronous": {
+            "synchronous": 2
+          },
+          "secure_delete": {
+            "secure_delete": 1
+          }
+        },
+        "measuredEvents": 100,
+        "warmupEvents": 20,
+        "elapsedMilliseconds": 1741.0236999999997,
+        "cpuMicroseconds": {
+          "user": 1532000,
+          "system": 343000
+        },
+        "eventsPerSecond": 57.43747198846289,
+        "batchTimes": [
+          345.5419999999999,
+          344.76820000000043,
+          345.27480000000014,
+          349.2595000000001,
+          355.6185000000005
+        ],
+        "samples": [
+          {
+            "label": "engine.commit",
+            "calls": 100,
+            "ms": 1637.5667999999978
+          },
+          {
+            "label": "domain.apply",
+            "calls": 100,
+            "ms": 1324.9344000000033
+          },
+          {
+            "label": "clone.domain",
+            "calls": 205,
+            "ms": 555.9684000000075
+          },
+          {
+            "label": "domain.checkpoint",
+            "calls": 105,
+            "ms": 192.75520000000006
+          },
+          {
+            "label": "sql:SELECT id,revision,text,status FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT value FROM json_each(?))",
+            "calls": 100,
+            "ms": 179.58899999999403
+          },
+          {
+            "label": "sql:INSERT INTO domain_checkpoints VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,session_id) DO UPDATE SET revision=excluded.revision,privacy_epoch=excluded.privacy_epoch,body=excluded.body,updated_at_ms=excluded.updated_at_ms",
+            "calls": 100,
+            "ms": 127.4805000000033
+          },
+          {
+            "label": "domain.candidate",
+            "calls": 200,
+            "ms": 87.14869999999883
+          },
+          {
+            "label": "sql:SELECT revision,privacy_epoch,body FROM domain_checkpoints WHERE channel_id=? AND run_id=? AND session_id=?",
+            "calls": 105,
+            "ms": 79.90139999999838
+          },
+          {
+            "label": "exec:COMMIT",
+            "calls": 5,
+            "ms": 72.0089999999982
+          },
+          {
+            "label": "sql:SELECT * FROM sessions WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 715,
+            "ms": 36.915300000009665
+          },
+          {
+            "label": "engine.state",
+            "calls": 5,
+            "ms": 26.15150000000085
+          },
+          {
+            "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key=? AND (expires_at_ms IS NULL OR expires_at_ms>?)",
+            "calls": 605,
+            "ms": 17.905600000004142
+          },
+          {
+            "label": "sql:INSERT INTO events(channel_id,run_id,id,session_id,external_id,origin,kind,occurred_at,received_at,offset_ms,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "calls": 100,
+            "ms": 17.703099999998358
+          },
+          {
+            "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND (\n      kind='session' OR (kind='source' AND target_id=?) OR (kind='message' AND target_id=?) OR\n      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND ranges_overlap(from_ms,to_ms,?,?))) LIMIT 1",
+            "calls": 200,
+            "ms": 16.659399999997277
+          },
+          {
+            "label": "sql:INSERT INTO sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET event_id=excluded.event_id,revision=excluded.revision,kind=excluded.kind,start_ms=excluded.start_ms,end_ms=excluded.end_ms,actor_id=excluded.actor_id,external_message_id=excluded.external_message_id,status=excluded.status,text=excluded.text,metadata=excluded.metadata",
+            "calls": 100,
+            "ms": 16.602900000002137
+          },
+          {
+            "label": "sql:SELECT revision,status FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 600,
+            "ms": 14.118199999990793
+          },
+          {
+            "label": "sql:SELECT * FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 300,
+            "ms": 12.962899999997717
+          },
+          {
+            "label": "sql:INSERT INTO control_state VALUES(?,?,?,?,?) ON CONFLICT(channel_id,run_id,key) DO UPDATE SET body=excluded.body,expires_at_ms=excluded.expires_at_ms",
+            "calls": 100,
+            "ms": 9.937999999999647
+          },
+          {
+            "label": "sql:SELECT * FROM publication_candidates WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 200,
+            "ms": 9.721700000000965
+          },
+          {
+            "label": "sql:SELECT parent_id,parent_revision FROM dependencies WHERE channel_id=? AND run_id=? AND child_id=? AND kind='exposed_to'",
+            "calls": 200,
+            "ms": 9.119399999999587
+          },
+          {
+            "label": "sql:INSERT INTO dependencies VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,parent_id,child_id,kind) DO UPDATE SET parent_revision=excluded.parent_revision",
+            "calls": 100,
+            "ms": 8.94930000000204
+          },
+          {
+            "label": "sql:INSERT INTO domain_mutations VALUES(?,?,?,?,?,?,?,?,?)",
+            "calls": 100,
+            "ms": 8.006199999999808
+          },
+          {
+            "label": "sql:UPDATE events SET domain_processed=1 WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 7.772499999997763
+          },
+          {
+            "label": "sql:SELECT * FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 200,
+            "ms": 6.857299999999668
+          },
+          {
+            "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND kind='session' LIMIT 1",
+            "calls": 200,
+            "ms": 6.132299999997031
+          },
+          {
+            "label": "sql:SELECT revision,status FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 200,
+            "ms": 4.63829999999416
+          },
+          {
+            "label": "clone.other",
+            "calls": 210,
+            "ms": 4.169400000006135
+          },
+          {
+            "label": "sql:SELECT id,domain_processed,payload FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+            "calls": 100,
+            "ms": 3.9343000000044412
+          },
+          {
+            "label": "sql:UPDATE sessions SET title=?,category=?,status=?,ended_at=?,metadata_end_ms=?,finalized_at=?,final_snapshot_ack_at=? WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 3.914699999999357
+          },
+          {
+            "label": "sql:SELECT 1 FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?",
+            "calls": 200,
+            "ms": 3.8982000000137305
+          },
+          {
+            "label": "sql:SELECT id FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND status='pending'",
+            "calls": 100,
+            "ms": 3.7147999999974672
+          },
+          {
+            "label": "sql:SELECT epoch FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=?",
+            "calls": 105,
+            "ms": 3.664900000004309
+          },
+          {
+            "label": "exec:SAVEPOINT storage_N",
+            "calls": 300,
+            "ms": 3.0178000000087195
+          },
+          {
+            "label": "sql:SELECT id FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+            "calls": 100,
+            "ms": 2.9933999999980188
+          },
+          {
+            "label": "sql:SELECT 1 FROM channels WHERE channel_id=? AND run_id=?",
+            "calls": 105,
+            "ms": 2.8534000000045125
+          },
+          {
+            "label": "sql:UPDATE sessions SET publication_revision=? WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 2.6534999999998945
+          },
+          {
+            "label": "exec:RELEASE storage_N",
+            "calls": 300,
+            "ms": 2.581900000002406
+          },
+          {
+            "label": "sql:SELECT candidate_id FROM public_pointers WHERE channel_id=? AND run_id=? AND entity_id=?",
+            "calls": 100,
+            "ms": 2.427699999995639
+          },
+          {
+            "label": "sql:SELECT body FROM channel_settings WHERE channel_id=? AND run_id=?",
+            "calls": 105,
+            "ms": 2.326999999994314
+          },
+          {
+            "label": "exec:BEGIN IMMEDIATE",
+            "calls": 5,
+            "ms": 0.6864000000005035
+          },
+          {
+            "label": "sql:SELECT * FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY rowid DESC LIMIT 1000",
+            "calls": 5,
+            "ms": 0.46349999999983993
+          },
+          {
+            "label": "sql:SELECT term FROM blocked_terms WHERE channel_id=? AND run_id=? AND term>? ORDER BY term LIMIT ?",
+            "calls": 5,
+            "ms": 0.24950000000126238
+          },
+          {
+            "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key >= 'blocked-lore:' AND key < 'blocked-lore;' ORDER BY key LIMIT 500",
+            "calls": 5,
+            "ms": 0.1843999999996413
+          },
+          {
+            "label": "sql:SELECT login FROM channels WHERE channel_id=? AND run_id=?",
+            "calls": 5,
+            "ms": 0.135899999999765
+          },
+          {
+            "label": "sql:SELECT actor_id FROM channel_bans WHERE channel_id=? AND run_id=? ORDER BY actor_id LIMIT 1000",
+            "calls": 5,
+            "ms": 0.10749999999961801
+          }
+        ],
+        "finalCheckpointSha256": "e30ff89027d5fcd2ac5973957c253ae56854a55b9aea44dc54707a5d0a42a977",
+        "integrity": {
+          "quick_check": "ok"
+        },
+        "foreignKeyViolations": []
+      },
+      {
+        "label": "later",
+        "mode": "baseline",
+        "sourcePath": "C:/Users/user/AppData/Local/Temp/previously-engine-full-u01AbH/state.sqlite",
+        "path": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-write-probe-kccoPq\\later-baseline.sqlite",
+        "checkpointBytes": 233491,
+        "virtualSecond": 6624.95,
+        "candidates": 6,
+        "candidateRefs": [
+          1,
+          5,
+          7,
+          9,
+          9,
+          9
+        ],
+        "nodes": 36,
+        "seedRows": {
+          "domain_checkpoints": 1,
+          "channels": 1,
+          "sessions": 1,
+          "channel_settings": 1,
+          "publication_sync": 1,
+          "capture_leases": 0,
+          "source_tombstones": 11,
+          "channel_bans": 0,
+          "blocked_terms": 0,
+          "sources": 511,
+          "entities": 25,
+          "events": 511,
+          "publication_candidates": 6,
+          "control_state": 0,
+          "generation_jobs": 0
+        },
+        "pragma": {
+          "journal_mode": {
+            "journal_mode": "delete"
+          },
+          "synchronous": {
+            "synchronous": 2
+          },
+          "secure_delete": {
+            "secure_delete": 1
+          }
+        },
+        "measuredEvents": 100,
+        "warmupEvents": 20,
+        "elapsedMilliseconds": 2630.8843000000006,
+        "cpuMicroseconds": {
+          "user": 2656000,
+          "system": 360000
+        },
+        "eventsPerSecond": 38.010033356464966,
+        "batchTimes": [
+          535.7209999999995,
+          524.5970000000007,
+          522.6846000000005,
+          536.3583999999992,
+          510.96750000000065
+        ],
+        "samples": [
+          {
+            "label": "engine.commit",
+            "calls": 100,
+            "ms": 2554.5384000000013
+          },
+          {
+            "label": "domain.apply",
+            "calls": 100,
+            "ms": 2098.475900000006
+          },
+          {
+            "label": "clone.domain",
+            "calls": 205,
+            "ms": 877.4306000000015
+          },
+          {
+            "label": "domain.candidate",
+            "calls": 600,
+            "ms": 704.8947999999991
+          },
+          {
+            "label": "domain.checkpoint",
+            "calls": 105,
+            "ms": 188.48029999999926
+          },
+          {
+            "label": "sql:SELECT id,revision,text,status FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT value FROM json_each(?))",
+            "calls": 100,
+            "ms": 177.0873999999949
+          },
+          {
+            "label": "sql:SELECT revision,status FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 8114,
+            "ms": 172.03099999999358
+          },
+          {
+            "label": "sql:INSERT INTO dependencies VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,parent_id,child_id,kind) DO UPDATE SET parent_revision=excluded.parent_revision",
+            "calls": 4107,
+            "ms": 160.65030000001843
+          },
+          {
+            "label": "sql:INSERT INTO domain_checkpoints VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,session_id) DO UPDATE SET revision=excluded.revision,privacy_epoch=excluded.privacy_epoch,body=excluded.body,updated_at_ms=excluded.updated_at_ms",
+            "calls": 100,
+            "ms": 139.11149999999634
+          },
+          {
+            "label": "sql:SELECT revision,status FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 3408,
+            "ms": 72.47130000002198
+          },
+          {
+            "label": "sql:SELECT * FROM sessions WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 1118,
+            "ms": 56.12410000002092
+          },
+          {
+            "label": "sql:SELECT revision,privacy_epoch,body FROM domain_checkpoints WHERE channel_id=? AND run_id=? AND session_id=?",
+            "calls": 105,
+            "ms": 46.62819999999374
+          },
+          {
+            "label": "sql:INSERT INTO publication_candidates VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET status=excluded.status,safe=excluded.safe,body=excluded.body",
+            "calls": 600,
+            "ms": 42.068300000005365
+          },
+          {
+            "label": "exec:COMMIT",
+            "calls": 5,
+            "ms": 36.58009999999922
+          },
+          {
+            "label": "engine.state",
+            "calls": 5,
+            "ms": 34.4386999999997
+          },
+          {
+            "label": "sql:SELECT * FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 701,
+            "ms": 32.34200000000783
+          },
+          {
+            "label": "sql:SELECT * FROM publication_candidates WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 600,
+            "ms": 29.268200000003162
+          },
+          {
+            "label": "sql:INSERT INTO public_pointers VALUES(?,?,?,?) ON CONFLICT(channel_id,run_id,entity_id) DO UPDATE SET candidate_id=excluded.candidate_id",
+            "calls": 600,
+            "ms": 21.775299999992058
+          },
+          {
+            "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key=? AND (expires_at_ms IS NULL OR expires_at_ms>?)",
+            "calls": 605,
+            "ms": 19.313100000018494
+          },
+          {
+            "label": "sql:INSERT INTO events(channel_id,run_id,id,session_id,external_id,origin,kind,occurred_at,received_at,offset_ms,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "calls": 100,
+            "ms": 18.33039999999619
+          },
+          {
+            "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND (\n      kind='session' OR (kind='source' AND target_id=?) OR (kind='message' AND target_id=?) OR\n      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND ranges_overlap(from_ms,to_ms,?,?))) LIMIT 1",
+            "calls": 200,
+            "ms": 17.92689999999584
+          },
+          {
+            "label": "sql:INSERT INTO sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET event_id=excluded.event_id,revision=excluded.revision,kind=excluded.kind,start_ms=excluded.start_ms,end_ms=excluded.end_ms,actor_id=excluded.actor_id,external_message_id=excluded.external_message_id,status=excluded.status,text=excluded.text,metadata=excluded.metadata",
+            "calls": 100,
+            "ms": 17.08180000000084
+          },
+          {
+            "label": "sql:INSERT INTO control_state VALUES(?,?,?,?,?) ON CONFLICT(channel_id,run_id,key) DO UPDATE SET body=excluded.body,expires_at_ms=excluded.expires_at_ms",
+            "calls": 100,
+            "ms": 9.54399999999714
+          },
+          {
+            "label": "sql:INSERT INTO domain_mutations VALUES(?,?,?,?,?,?,?,?,?)",
+            "calls": 100,
+            "ms": 8.074000000004162
+          },
+          {
+            "label": "sql:UPDATE events SET domain_processed=1 WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 7.644299999994473
+          },
+          {
+            "label": "sql:SELECT * FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 200,
+            "ms": 7.240400000012414
+          },
+          {
+            "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND kind='session' LIMIT 1",
+            "calls": 201,
+            "ms": 6.4846000000025015
+          },
+          {
+            "label": "clone.other",
+            "calls": 211,
+            "ms": 4.657299999997122
+          },
+          {
+            "label": "sql:SELECT id,domain_processed,payload FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+            "calls": 100,
+            "ms": 4.094500000003791
+          },
+          {
+            "label": "sql:UPDATE sessions SET title=?,category=?,status=?,ended_at=?,metadata_end_ms=?,finalized_at=?,final_snapshot_ack_at=? WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 3.9272000000000844
+          },
+          {
+            "label": "sql:SELECT 1 FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?",
+            "calls": 200,
+            "ms": 3.8544999999958236
+          },
+          {
+            "label": "sql:SELECT epoch FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=?",
+            "calls": 105,
+            "ms": 3.6676999999972395
+          },
+          {
+            "label": "sql:SELECT id FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND status='pending'",
+            "calls": 100,
+            "ms": 3.5017999999972744
+          },
+          {
+            "label": "exec:SAVEPOINT storage_N",
+            "calls": 301,
+            "ms": 3.3945999999923515
+          },
+          {
+            "label": "sql:SELECT id FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+            "calls": 100,
+            "ms": 2.959799999995994
+          },
+          {
+            "label": "sql:SELECT 1 FROM channels WHERE channel_id=? AND run_id=?",
+            "calls": 105,
+            "ms": 2.925300000005336
+          },
+          {
+            "label": "exec:RELEASE storage_N",
+            "calls": 301,
+            "ms": 2.871999999999389
+          },
+          {
+            "label": "sql:UPDATE sessions SET publication_revision=? WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 2.7304999999978463
+          },
+          {
+            "label": "sql:SELECT body FROM channel_settings WHERE channel_id=? AND run_id=?",
+            "calls": 105,
+            "ms": 2.314300000000003
+          },
+          {
+            "label": "sql:SELECT * FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY rowid DESC LIMIT 1000",
+            "calls": 5,
+            "ms": 0.871900000000096
+          },
+          {
+            "label": "exec:BEGIN IMMEDIATE",
+            "calls": 5,
+            "ms": 0.7075999999997293
+          },
+          {
+            "label": "sql:SELECT term FROM blocked_terms WHERE channel_id=? AND run_id=? AND term>? ORDER BY term LIMIT ?",
+            "calls": 5,
+            "ms": 0.251099999998587
+          },
+          {
+            "label": "sql:INSERT INTO generation_jobs VALUES(?,?,?,?,?,?,'registered')",
+            "calls": 1,
+            "ms": 0.2187000000003536
+          },
+          {
+            "label": "sql:INSERT INTO generation_inputs VALUES(?,?,?,?,?)",
+            "calls": 7,
+            "ms": 0.2157999999999447
+          },
+          {
+            "label": "sql:INSERT INTO dependencies VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            "calls": 7,
+            "ms": 0.18850000000111322
+          },
+          {
+            "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key >= 'blocked-lore:' AND key < 'blocked-lore;' ORDER BY key LIMIT 500",
+            "calls": 5,
+            "ms": 0.16880000000037398
+          },
+          {
+            "label": "sql:INSERT INTO jobs(channel_id,run_id,id,session_id,kind,business_key,payload,privacy_epoch,priority,next_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "calls": 1,
+            "ms": 0.13500000000021828
+          },
+          {
+            "label": "sql:SELECT actor_id FROM channel_bans WHERE channel_id=? AND run_id=? ORDER BY actor_id LIMIT 1000",
+            "calls": 5,
+            "ms": 0.13180000000011205
+          },
+          {
+            "label": "sql:SELECT id FROM entities WHERE channel_id=? AND run_id=? AND session_id=? AND kind='chapter' AND status='active' AND pinned=1 ORDER BY COALESCE(start_ms,0) DESC,id DESC LIMIT 32",
+            "calls": 1,
+            "ms": 0.1213000000007014
+          },
+          {
+            "label": "sql:SELECT login FROM channels WHERE channel_id=? AND run_id=?",
+            "calls": 5,
+            "ms": 0.11609999999836873
+          },
+          {
+            "label": "sql:SELECT COUNT(*) AS count FROM jobs WHERE channel_id=? AND run_id=? AND state IN ('queued','running')",
+            "calls": 1,
+            "ms": 0.06589999999960128
+          },
+          {
+            "label": "sql:SELECT ticket FROM generation_jobs WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 1,
+            "ms": 0.0658000000003085
+          },
+          {
+            "label": "sql:SELECT id FROM jobs WHERE channel_id=? AND run_id=? AND business_key=?",
+            "calls": 1,
+            "ms": 0.042599999999765714
+          }
+        ],
+        "finalCheckpointSha256": "542010f7d48e6302c47c2b4733098a3b834ddbeee80f56eee476508ef8723df7",
+        "integrity": {
+          "quick_check": "ok"
+        },
+        "foreignKeyViolations": []
+      },
+      {
+        "label": "later",
+        "mode": "optimized",
+        "sourcePath": "C:/Users/user/AppData/Local/Temp/previously-engine-full-u01AbH/state.sqlite",
+        "path": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-write-probe-kccoPq\\later-optimized.sqlite",
+        "checkpointBytes": 233491,
+        "virtualSecond": 6624.95,
+        "candidates": 6,
+        "candidateRefs": [
+          1,
+          5,
+          7,
+          9,
+          9,
+          9
+        ],
+        "nodes": 36,
+        "seedRows": {
+          "domain_checkpoints": 1,
+          "channels": 1,
+          "sessions": 1,
+          "channel_settings": 1,
+          "publication_sync": 1,
+          "capture_leases": 0,
+          "source_tombstones": 11,
+          "channel_bans": 0,
+          "blocked_terms": 0,
+          "sources": 511,
+          "entities": 25,
+          "events": 511,
+          "publication_candidates": 6,
+          "control_state": 0,
+          "generation_jobs": 0
+        },
+        "pragma": {
+          "journal_mode": {
+            "journal_mode": "delete"
+          },
+          "synchronous": {
+            "synchronous": 2
+          },
+          "secure_delete": {
+            "secure_delete": 1
+          }
+        },
+        "measuredEvents": 100,
+        "warmupEvents": 20,
+        "elapsedMilliseconds": 2321.1853999999985,
+        "cpuMicroseconds": {
+          "user": 2125000,
+          "system": 422000
+        },
+        "eventsPerSecond": 43.0814358904722,
+        "batchTimes": [
+          437.59490000000005,
+          453.8117000000002,
+          512.2024000000001,
+          468.5717999999997,
+          448.3806999999997
+        ],
+        "samples": [
+          {
+            "label": "engine.commit",
+            "calls": 100,
+            "ms": 2229.5540000000037
+          },
+          {
+            "label": "domain.apply",
+            "calls": 100,
+            "ms": 1737.1312999999955
+          },
+          {
+            "label": "clone.domain",
+            "calls": 205,
+            "ms": 907.4092000000055
+          },
+          {
+            "label": "domain.candidate",
+            "calls": 600,
+            "ms": 306.08600000001934
+          },
+          {
+            "label": "domain.checkpoint",
+            "calls": 105,
+            "ms": 198.88599999998587
+          },
+          {
+            "label": "sql:SELECT id,revision,text,status FROM sources WHERE channel_id=? AND run_id=? AND id IN (SELECT value FROM json_each(?))",
+            "calls": 100,
+            "ms": 182.9565000000057
+          },
+          {
+            "label": "sql:INSERT INTO domain_checkpoints VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,session_id) DO UPDATE SET revision=excluded.revision,privacy_epoch=excluded.privacy_epoch,body=excluded.body,updated_at_ms=excluded.updated_at_ms",
+            "calls": 100,
+            "ms": 153.95930000000226
+          },
+          {
+            "label": "sql:SELECT * FROM sessions WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 1118,
+            "ms": 59.76379999999699
+          },
+          {
+            "label": "sql:SELECT revision,privacy_epoch,body FROM domain_checkpoints WHERE channel_id=? AND run_id=? AND session_id=?",
+            "calls": 105,
+            "ms": 52.567000000002736
+          },
+          {
+            "label": "exec:COMMIT",
+            "calls": 5,
+            "ms": 45.51299999999901
+          },
+          {
+            "label": "engine.state",
+            "calls": 5,
+            "ms": 40.34010000000126
+          },
+          {
+            "label": "sql:SELECT revision,status FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 1614,
+            "ms": 39.86110000001645
+          },
+          {
+            "label": "sql:SELECT parent_id,parent_revision FROM dependencies WHERE channel_id=? AND run_id=? AND child_id=? AND kind='exposed_to'",
+            "calls": 600,
+            "ms": 39.13359999999193
+          },
+          {
+            "label": "sql:SELECT * FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 701,
+            "ms": 34.37900000001537
+          },
+          {
+            "label": "sql:SELECT * FROM publication_candidates WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 600,
+            "ms": 31.129799999995157
+          },
+          {
+            "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key=? AND (expires_at_ms IS NULL OR expires_at_ms>?)",
+            "calls": 605,
+            "ms": 20.50029999997423
+          },
+          {
+            "label": "sql:INSERT INTO events(channel_id,run_id,id,session_id,external_id,origin,kind,occurred_at,received_at,offset_ms,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "calls": 100,
+            "ms": 19.40780000000268
+          },
+          {
+            "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND (\n      kind='session' OR (kind='source' AND target_id=?) OR (kind='message' AND target_id=?) OR\n      (kind='user' AND target_id=? AND to_ms>=?) OR (kind='interval' AND ranges_overlap(from_ms,to_ms,?,?))) LIMIT 1",
+            "calls": 200,
+            "ms": 19.010599999992337
+          },
+          {
+            "label": "sql:INSERT INTO sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,id) DO UPDATE SET event_id=excluded.event_id,revision=excluded.revision,kind=excluded.kind,start_ms=excluded.start_ms,end_ms=excluded.end_ms,actor_id=excluded.actor_id,external_message_id=excluded.external_message_id,status=excluded.status,text=excluded.text,metadata=excluded.metadata",
+            "calls": 100,
+            "ms": 17.597200000003795
+          },
+          {
+            "label": "sql:SELECT candidate_id FROM public_pointers WHERE channel_id=? AND run_id=? AND entity_id=?",
+            "calls": 600,
+            "ms": 14.957100000010541
+          },
+          {
+            "label": "sql:INSERT INTO dependencies VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,run_id,parent_id,child_id,kind) DO UPDATE SET parent_revision=excluded.parent_revision",
+            "calls": 107,
+            "ms": 12.769900000002963
+          },
+          {
+            "label": "sql:SELECT revision,status FROM entities WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 408,
+            "ms": 9.847000000010667
+          },
+          {
+            "label": "sql:INSERT INTO control_state VALUES(?,?,?,?,?) ON CONFLICT(channel_id,run_id,key) DO UPDATE SET body=excluded.body,expires_at_ms=excluded.expires_at_ms",
+            "calls": 100,
+            "ms": 9.393299999990631
+          },
+          {
+            "label": "sql:INSERT INTO domain_mutations VALUES(?,?,?,?,?,?,?,?,?)",
+            "calls": 100,
+            "ms": 8.840300000008938
+          },
+          {
+            "label": "sql:UPDATE events SET domain_processed=1 WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 8.770199999997203
+          },
+          {
+            "label": "sql:SELECT * FROM sources WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 200,
+            "ms": 7.50570000001062
+          },
+          {
+            "label": "sql:SELECT 1 FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? AND kind='session' LIMIT 1",
+            "calls": 201,
+            "ms": 6.8562999999903695
+          },
+          {
+            "label": "clone.other",
+            "calls": 211,
+            "ms": 5.1568999999999505
+          },
+          {
+            "label": "sql:SELECT id,domain_processed,payload FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+            "calls": 100,
+            "ms": 4.171699999997145
+          },
+          {
+            "label": "sql:SELECT epoch FROM capture_leases WHERE channel_id=? AND run_id=? AND session_id=?",
+            "calls": 105,
+            "ms": 4.107699999996839
+          },
+          {
+            "label": "sql:SELECT 1 FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?",
+            "calls": 200,
+            "ms": 4.1049999999813735
+          },
+          {
+            "label": "sql:UPDATE sessions SET title=?,category=?,status=?,ended_at=?,metadata_end_ms=?,finalized_at=?,final_snapshot_ack_at=? WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 4.0196000000014465
+          },
+          {
+            "label": "sql:SELECT id FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND status='pending'",
+            "calls": 100,
+            "ms": 3.771900000008827
+          },
+          {
+            "label": "exec:SAVEPOINT storage_N",
+            "calls": 301,
+            "ms": 3.643899999995483
+          },
+          {
+            "label": "sql:SELECT id FROM events WHERE channel_id=? AND run_id=? AND origin=? AND external_id=?",
+            "calls": 100,
+            "ms": 3.2766999999985273
+          },
+          {
+            "label": "sql:SELECT 1 FROM channels WHERE channel_id=? AND run_id=?",
+            "calls": 105,
+            "ms": 3.103399999992689
+          },
+          {
+            "label": "sql:UPDATE sessions SET publication_revision=? WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 100,
+            "ms": 2.8994999999922584
+          },
+          {
+            "label": "exec:RELEASE storage_N",
+            "calls": 301,
+            "ms": 2.8856999999934487
+          },
+          {
+            "label": "sql:SELECT body FROM channel_settings WHERE channel_id=? AND run_id=?",
+            "calls": 105,
+            "ms": 2.4330999999911
+          },
+          {
+            "label": "sql:SELECT * FROM source_tombstones WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY rowid DESC LIMIT 1000",
+            "calls": 5,
+            "ms": 0.8156999999991967
+          },
+          {
+            "label": "exec:BEGIN IMMEDIATE",
+            "calls": 5,
+            "ms": 0.7792000000026746
+          },
+          {
+            "label": "sql:SELECT term FROM blocked_terms WHERE channel_id=? AND run_id=? AND term>? ORDER BY term LIMIT ?",
+            "calls": 5,
+            "ms": 0.2929999999996653
+          },
+          {
+            "label": "sql:INSERT INTO dependencies VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            "calls": 7,
+            "ms": 0.234599999997954
+          },
+          {
+            "label": "sql:INSERT INTO generation_inputs VALUES(?,?,?,?,?)",
+            "calls": 7,
+            "ms": 0.2249999999985448
+          },
+          {
+            "label": "sql:INSERT INTO generation_jobs VALUES(?,?,?,?,?,?,'registered')",
+            "calls": 1,
+            "ms": 0.21199999999953434
+          },
+          {
+            "label": "sql:SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key >= 'blocked-lore:' AND key < 'blocked-lore;' ORDER BY key LIMIT 500",
+            "calls": 5,
+            "ms": 0.19409999999697902
+          },
+          {
+            "label": "sql:SELECT id FROM entities WHERE channel_id=? AND run_id=? AND session_id=? AND kind='chapter' AND status='active' AND pinned=1 ORDER BY COALESCE(start_ms,0) DESC,id DESC LIMIT 32",
+            "calls": 1,
+            "ms": 0.18029999999998836
+          },
+          {
+            "label": "sql:SELECT login FROM channels WHERE channel_id=? AND run_id=?",
+            "calls": 5,
+            "ms": 0.13689999999951397
+          },
+          {
+            "label": "sql:SELECT actor_id FROM channel_bans WHERE channel_id=? AND run_id=? ORDER BY actor_id LIMIT 1000",
+            "calls": 5,
+            "ms": 0.12230000000090513
+          },
+          {
+            "label": "sql:INSERT INTO jobs(channel_id,run_id,id,session_id,kind,business_key,payload,privacy_epoch,priority,next_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "calls": 1,
+            "ms": 0.11980000000039581
+          },
+          {
+            "label": "sql:SELECT COUNT(*) AS count FROM jobs WHERE channel_id=? AND run_id=? AND state IN ('queued','running')",
+            "calls": 1,
+            "ms": 0.09920000000056461
+          },
+          {
+            "label": "sql:SELECT ticket FROM generation_jobs WHERE channel_id=? AND run_id=? AND id=?",
+            "calls": 1,
+            "ms": 0.057500000000800355
+          },
+          {
+            "label": "sql:SELECT id FROM jobs WHERE channel_id=? AND run_id=? AND business_key=?",
+            "calls": 1,
+            "ms": 0.04539999999906286
+          }
+        ],
+        "finalCheckpointSha256": "542010f7d48e6302c47c2b4733098a3b834ddbeee80f56eee476508ef8723df7",
+        "integrity": {
+          "quick_check": "ok"
+        },
+        "foreignKeyViolations": []
+      }
+    ],
+    "checkpointEquivalence": [
+      {
+        "label": "calibration",
+        "identical": true
+      },
+      {
+        "label": "later",
+        "identical": true
+      }
+    ]
+  }
+}

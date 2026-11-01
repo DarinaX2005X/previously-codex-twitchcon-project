@@ -2,6 +2,8 @@
 
 The supported certificate setup path is Windows with Node.js 22.13 or newer and npm. A modern desktop browser supplies microphone permission and the AudioWorklet capture path. OBS is needed to put the recap scene on stream. FFmpeg and FFprobe must be on `PATH` for downloaded clip validation and prepared audio. Preparing oversized recording video also requires an FFmpeg build with `h264_nvenc` and a compatible NVIDIA GPU/driver; there is no software encoder fallback. The authored text-only replay needs none of these media tools.
 
+New to broadcasting? Follow [Your first stream with Previously](first-stream.md) for one suggested route from a private OBS test to a reviewed stream replay.
+
 ## Install and try replay
 
 Download or clone the [repository](https://github.com/DarinaX2005X/previously-codex-twitchcon-project), then open the directory containing `package.json` in PowerShell.
@@ -52,10 +54,10 @@ Start a real stream on Twitch and use **Check configuration** until the active s
 
 ## Listen and add the OBS scene
 
-1. Open [the dock](https://localhost:4317/dock) in a normal browser tab. Choose **Start listening** and select the intended microphone in the browser permission dialog. Check the level before speaking private material.
-2. Keep one microphone producer active. If another dock owns the capture lease, use **Take over microphone** deliberately. Pause stops the microphone and queued local audio immediately, then confirms the server pause. If confirmation fails, **Retry pause** resends that control without reopening the microphone; already uploaded speech may still finish until the server confirms. Forget is the separate action for material already received.
-3. In setup, select **Copy OBS overlay URL**. Add that complete private URL as a **1920 × 1080 Browser Source**. Keep it private: its fragment grants access to the published overlay scene. **Rotate link** invalidates previously issued overlay access and requires updating OBS.
-4. Use **Preview recap** locally. Use **Show recap** in the dock to trigger the on-stream destination. If you enable narration or scene sounds, enable OBS audio control for that Browser Source and verify its mixer routing.
+1. Open [the dock](https://localhost:4317/dock) in a normal browser tab. Choose **Resume listening** when paused, or **Start microphone** when listening is enabled but the microphone is off. Grant access to the intended microphone and check its level. Keep this capture tab open; use another tab for setup or public pages.
+2. Keep one microphone producer active. If another dock owns the capture lease, use **Take over listening** deliberately. Pause stops the microphone and queued local audio immediately, then confirms the server pause. If confirmation fails, **Retry pause** resends that control without reopening the microphone; already uploaded speech may still finish until the server confirms. Forget is the separate action for material already received.
+3. In a separate setup tab, select **Copy OBS overlay URL**. Add that complete private URL as a **1920 × 1080 Browser Source**. Keep it private: its fragment grants access to the published overlay scene. **Rotate link** invalidates previously issued overlay access and requires updating OBS.
+4. Use **Preview** in the dock for a local preview. Use **Show recap** to trigger the on-stream destination. If you enable narration or scene sounds, enable OBS audio control for that Browser Source and verify its mixer routing.
 5. Optionally add `https://localhost:4317/dock` through OBS **Docks → Custom Browser Docks**. Use the regular browser tab for microphone capture when the embedded browser cannot grant access. Do not assume an OBS Browser Source can provide microphone permission.
 
 The dock hotkey works while the dock has focus. It is not a system-wide hotkey. The microphone path captures the selected audio input; it does not record the desktop or reconstruct video from an arbitrary missed interval. Use OBS for your own screen recording.
