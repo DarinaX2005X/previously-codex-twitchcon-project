@@ -10,6 +10,7 @@ export class StorageDatabase {
   readonly raw: DatabaseSync;
   private transactionDepth=0;
   private savepointSequence=0;
+  private closed=false;
   constructor(path: string,maxBytes=2*1024*1024*1024) {
     let opened:DatabaseSync|undefined;
     try {
@@ -43,7 +44,7 @@ export class StorageDatabase {
       throw new StorageError('save_failed', 'The change could not be saved.');
     } finally {this.transactionDepth--;}
   }
-  close() { this.raw.close(); }
+  close() {if(!this.closed){this.raw.close();this.closed=true;}}
 }
 
 export function json(value: unknown, maxBytes = 1_000_000): string {

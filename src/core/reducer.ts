@@ -1,7 +1,7 @@
-import { defaultSettings, safetyAllowsPublication, SourceSchema } from '../shared/contracts/index.js';
+import { defaultSettings, safetyAllowsPublication, SourceSchema, SettingsSchema } from '../shared/contracts/index.js';
 import type { Channel, Session, Settings, Clock, Safety, VersionRef, Chapter, CurrentState, PublicSnapshot, Source, Lore } from '../shared/contracts/index.js';
 import { DOMAIN_LIMITS, type DomainState, type DomainEvent, type DomainEffect, type DomainTransition, type DerivedNode, type StoryCandidate } from './types.js';
-import { buildEvidencePacket, packetRefs, validateStoryPatch, canonical, stateHash, uniqueRefs, refOf, isRefActive, sourceAllowed, sourceTombstoned, dependencyRange, leafRefs, blockedPhrase, normalizeTerm, evidencePacketBytes, EVIDENCE_PACKET_BYTE_CAP } from './evidence.js';
+import { buildEvidencePacket, packetRefs, validateStoryPatch, canonical, stateHash, uniqueRefs, refOf, isRefActive, sourceAllowed, sourceTombstoned, dependencyRange, leafRefs, blockedPhrase, normalizeTerm, evidencePacketBytes, EVIDENCE_PACKET_BYTE_CAP, overlaps } from './evidence.js';
 import { invalidateDomain } from './privacy.js';
 import { advanceWindows, observeChat, saveMoment } from './moments.js';
 import { compileRecap, canDispatch } from './recap.js';
@@ -10,14 +10,29 @@ const iso=(ms:number)=>new Date(ms).toISOString();
 const offset=(s:DomainState,c:Clock)=>Math.max(0,c.now()-Date.parse(s.session.startedAt));
 const safeDefault:Safety={moderation:'pending',pii:'pending',checkedAt:null,reason:null};
 export function createDomainState(input:{channel:Channel;session:Session;settings?:Settings;blockedTerms?:string[];bannedActors?:string[];tombstones?:DomainState['tombstones']}):DomainState {
-  return {version:1,revision:0,channel:structuredClone(input.channel),session:structuredClone(input.session),metadataReviewed:false,settings:structuredClone(input.settings??defaultSettings),sources:[],nodes:{},memory:[],chapters:[],lore:[],moments:[],media:[],candidates:[],published:null,current:null,activeChapterId:null,ownerRevisions:{},ownerLocks:[],suppressedIds:[],editorialExcludedRefs:[],tombstones:structuredClone(input.tombstones??[]),bannedActors:[...input.bannedActors??[]],blockedTerms:(input.blockedTerms??[]).map(normalizeTerm),captureEpoch:0,chatClearThroughMs:null,sourceRevision:0,processedSourceRevision:0,lastCurrentAtMs:null,lastChapterAtMs:null,pendingGeneration:null,boundary:null,sequence:0,windows:[],openWindow:null,lastAutoMomentAtMs:null,pendingClipId:null,phrases:[],playbacks:[],seenTriggers:[],lastRecapRevision:null,closing:null,nextGenerationAfterMs:0,gaps:[],lastReceipt:null};
+  return {version:1,revision:0,channel:structuredClone(input.channel),session:structuredClone(input.session),metadataReviewed:false,settings:structuredClone(input.settings??defaultSettings),sources:[],nodes:{},memory:[],chapters:[],lore:[],moments:[],media:[],candidates:[],published:null,current:null,activeChapterId:null,ownerRevisions:{},ownerLocks:[],suppressedIds:[],editorialExcludedRefs:[],tombstones:structuredClone(input.tombstones??[]),bannedActors:[...input.bannedActors??[]],blockedTerms:(input.blockedTerms??[]).map(normalizeTerm),captureEpoch:0,chatClearThroughMs:null,sourceRevision:0,processedSourceRevision:0,lastCurrentAtMs:null,lastChapterAtMs:null,pendingGeneration:null,boundary:null,sequence:0,windows:[],openWindow:null,lastAutoMomentAtMs:null,pendingClipId:null,phrases:[],playbacks:[],playbackTiming:{},seenTriggers:[],lastRecapRevision:null,closing:null,nextGenerationAfterMs:0,gaps:[],lastReceipt:null};
 }
 function upsertNode(s:DomainState,effects:DomainEffect[],node:DerivedNode){s.nodes[node.id]=node;effects.push({type:'entity.upsert',node:structuredClone(node)});}
+function promotePlayback(s:DomainState,effects:DomainEffect[],clock:Clock){
+  if(s.playbacks.some(p=>['preparing','playing'].includes(p.status)))return;
+  const next=s.playbacks.find(p=>p.status==='queued');if(!next)return;
+  if(!next.plan||!canDispatch(s,next.plan)){next.status='cancelled';next.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(next)});return;}
+  next.status='preparing';next.startAt=null;s.playbackTiming[next.id]={prepareAtMs:clock.now(),startAtMs:null};effects.push({type:'playback.prepare',playback:structuredClone(next)});
+}
+function advancePlayback(s:DomainState,effects:DomainEffect[],clock:Clock){
+  for(const p of s.playbacks){const timing=s.playbackTiming[p.id];if(!timing)continue;
+    if(p.status==='preparing'&&p.startAt===null&&timing.prepareAtMs!==null&&clock.now()-timing.prepareAtMs>=1500){p.status='cancelled';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}
+    else if(p.status==='preparing'&&p.startAt!==null&&clock.now()-Date.parse(p.startAt)>3000){p.status='skipped';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}
+    else if(p.status==='playing'&&p.plan&&p.startAt&&clock.now()>=Date.parse(p.startAt)+p.plan.durationMs){p.status='ended';effects.push({type:'playback.cancel',playback:structuredClone(p)});}
+  }
+  promotePlayback(s,effects,clock);
+}
 function publish(s:DomainState,effects:DomainEffect[],clock:Clock,priority=false,final=false){
+  final=final||s.session.status==='finalized';if(final)s.session.finalSnapshotAckAt=null;
   const old=s.published,hold=s.settings.publicationDelaySeconds*1000;
   const matured=(end:number)=>Date.parse(s.session.startedAt)+end+hold<=clock.now();
   const chapters=old?.chapters??[];
-  const lore=s.lore.filter(l=>['confirmed','published'].includes(l.status)&&safetyAllowsPublication(l.safety)&&l.dependencyRefs.every(r=>isRefActive(s,r))&&matured(l.maxDependencyEndMs)).map(({sessionId:_s,revision:_r,status:_st,aliases:_a,dependencyRefs:_d,safety:_sf,...l})=>l);
+  const lore=s.lore.filter(l=>['confirmed','published'].includes(l.status)&&safetyAllowsPublication(l.safety)&&l.dependencyRefs.every(r=>isRefActive(s,r))&&(l.originKind==='owner_confirmed'||matured(l.maxDependencyEndMs))).map(({sessionId:_s,revision:_r,status:_st,aliases:_a,dependencyRefs:_d,safety:_sf,...l})=>l);
   const moments=s.moments.filter(m=>m.dependencyRefs.every(r=>isRefActive(s,r))&&matured(m.maxDependencyEndMs)).map(({sessionId:_s,revision:_r,count:_c,distinctActors:_a,baseline:_b,mediaId:_m,dependencyRefs:_d,...m})=>m);
   const metadataSafe=s.metadataReviewed&&matured(s.session.metadataMaxDependencyEndMs);
   const contentEnd=Math.max(old?Date.parse(old.asOf)-Date.parse(s.session.startedAt):0,...chapters.map(c=>c.maxDependencyEndMs),...lore.map(l=>l.maxDependencyEndMs),...moments.map(m=>m.maxDependencyEndMs),s.current?.maxDependencyEndMs??0);
@@ -35,6 +50,7 @@ function eligibleCandidates(s:DomainState,effects:DomainEffect[],clock:Clock):bo
     const prev=s.published?.chapters.find(c=>c.id===entityId);
     if(prev&&prev.revision>next.revision){next.status='rejected';continue;}
     next.status='published';for(const candidate of s.candidates)if(candidate.entityId===entityId&&candidate.language===next.language&&candidate.revision<next.revision)candidate.status='rejected';
+    const canonicalChapter=s.chapters.find(c=>c.id===entityId&&c.revision===next.revision);if(canonicalChapter)canonicalChapter.publicationState='published';
     if(!s.published)publish(s,effects,clock);
     s.published!.chapters=[...s.published!.chapters.filter(c=>c.id!==entityId),{...publicChapter(next.chapter),pinned:s.chapters.find(c=>c.id===entityId)?.pinned??next.chapter.pinned}].sort((a,b)=>a.startMs-b.startMs||a.id.localeCompare(b.id)).slice(-300);
     if(entityId===s.activeChapterId)s.current=next.current;
@@ -46,12 +62,13 @@ function eligibleCandidates(s:DomainState,effects:DomainEffect[],clock:Clock):bo
 function addCandidate(s:DomainState,effects:DomainEffect[],candidate:StoryCandidate):boolean {
   const group=s.candidates.filter(c=>c.entityId===candidate.entityId&&c.status!=='rejected');
   if(group.length>=4){const removable=group.filter(c=>c.status==='published').sort((a,b)=>a.revision-b.revision)[0];if(removable)s.candidates=s.candidates.filter(c=>c.id!==removable.id);else {effects.push({type:'held',reason:'candidate_capacity',entityId:candidate.entityId});return false;}}
-  s.candidates.push(candidate);effects.push({type:'candidate.save',candidate:structuredClone(candidate)});
-  upsertNode(s,effects,{id:candidate.id,revision:1,kind:'presentation',supports:candidate.chapter.dependencyRefs,exposedTo:candidate.inputRefs,startMs:candidate.chapter.startMs,endMs:candidate.chapter.maxDependencyEndMs,active:true,body:candidate});
+  if(candidate.current){candidate.currentNodeId=`current:${stateHash(candidate.id)}`;upsertNode(s,effects,{id:candidate.currentNodeId,revision:1,kind:'current_state',supports:candidate.chapter.dependencyRefs,exposedTo:candidate.inputRefs,startMs:candidate.chapter.startMs,endMs:candidate.chapter.maxDependencyEndMs,active:true,body:{state:candidate.current,claimIds:candidate.chapter.claimIds}});}
+  s.candidates.push(structuredClone(candidate));effects.push({type:'candidate.save',candidate:structuredClone(candidate)});
+  upsertNode(s,effects,{id:candidate.id,revision:1,kind:'presentation',supports:candidate.chapter.dependencyRefs,exposedTo:uniqueRefs([...candidate.inputRefs,...candidate.currentNodeId?[{id:candidate.currentNodeId,revision:1}]:[]]),startMs:candidate.chapter.startMs,endMs:candidate.chapter.maxDependencyEndMs,active:true,body:structuredClone(candidate)});
   return true;
 }
 function requestGeneration(s:DomainState,effects:DomainEffect[],clock:Clock){
-  if(s.pendingGeneration||s.session.status==='finalized'||s.sourceRevision<=s.processedSourceRevision||clock.now()<s.nextGenerationAfterMs)return;
+  if(s.pendingGeneration||s.session.status==='finalized'||s.settings.listeningPaused&&s.session.status!=='closing'||s.sourceRevision<=s.processedSourceRevision||clock.now()<s.nextGenerationAfterMs)return;
   const final=s.session.status==='closing';
   if(final&&s.closing&&clock.now()>s.closing.deadlineMs)return;
   const currentDue=s.lastCurrentAtMs===null||clock.now()-s.lastCurrentAtMs>=45000;
@@ -76,12 +93,12 @@ function requestGeneration(s:DomainState,effects:DomainEffect[],clock:Clock){
 function acceptSource(s:DomainState,source:Source,effects:DomainEffect[],clock:Clock,captureEpoch?:number):boolean {
   if(!SourceSchema.safeParse(source).success||source.sessionId!==s.session.id||source.channelId!==s.session.channelId||source.runId!==s.session.runId||source.endMs<source.startMs)return false;
   if((source.kind==='chat'||source.kind==='speech')&&(s.settings.listeningPaused||captureEpoch!==undefined&&captureEpoch!==s.captureEpoch))return false;
-  if(s.session.status==='finalized')return false;
-  if(s.closing&&(clock.now()>s.closing.intakeUntilMs||source.endMs>s.closing.endedAtMs-Date.parse(s.session.startedAt)))return false;
+  if(source.kind!=='owner_statement'&&s.session.status==='finalized')return false;
+  if(source.kind!=='owner_statement'&&s.closing&&(clock.now()>s.closing.intakeUntilMs||source.endMs>s.closing.endedAtMs-Date.parse(s.session.startedAt)))return false;
   if(source.kind==='chat'&&offset(s,clock)-source.endMs>120000)return false;
   if(source.kind==='chat'&&s.chatClearThroughMs!==null&&source.startMs<=s.chatClearThroughMs)source={...source,status:'quarantined'};
   const old=s.sources.find(x=>x.id===source.id);if(old&&old.revision>=source.revision)return false;
-  if(sourceTombstoned(s,source)||s.bannedActors.includes(source.actorId??'')){effects.push({type:'source.persist',source:{...source,text:null,status:'deleted'}});return false;}
+  if(sourceTombstoned(s,source)||s.bannedActors.includes(source.actorId??'')){effects.push({type:'source.persist',source:{...source,text:null,status:'deleted'}});if(s.media.some(m=>m.state!=='revoked'&&overlaps(m.captureStartMs,m.captureEndMs,source.startMs,source.endMs))){invalidateDomain(s,{kind:'source',sessionId:s.session.id,id:source.id},effects,[source]);publish(s,effects,clock,true);}return false;}
   if(old){
     const existingTombstones=[...s.tombstones];invalidateDomain(s,{kind:'source',sessionId:s.session.id,id:old.id},effects);s.tombstones=existingTombstones;
     // Correction invalidates descendants but must not leave a delete tombstone for the replacement.
@@ -99,26 +116,28 @@ function commitStory(s:DomainState,event:Extract<DomainEvent,{type:'generation.r
   if(s.closing)s.closing.finalProcessedRevision=request.sourceRevision;
   if(event.patch.action==='hold'){s.boundary=null;return;}
   const refs=event.ticket.inputRefs,range=dependencyRange(s,refs),entityId=request.entityId,previous=s.chapters.find(c=>c.id===entityId),revision=(previous?.revision??0)+1;
+  const claimId=(id:string)=>`claim:${stateHash(event.ticket.jobId)}:${id.slice(0,80)}`;
   const candidateId=`candidate:${event.ticket.jobId}:${event.ticket.recapLanguage}`;
   const role=(name:string)=>event.patch.claims.find(c=>c.role===name)?.text.slice(0,300)??null;
   const current:CurrentState={goal:role('goal')??s.current?.goal??null,change:role('change'),now:role('state')??role('attempt')??role('outcome'),sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs};
-  const chapter:Chapter={id:entityId,sessionId:s.session.id,revision,title:(event.patch.title??'Stream update').slice(0,120),summary:event.patch.claims.map(c=>c.text).join(' ').slice(0,700),startMs:previous?.startMs??range.startMs,endMs:range.endMs,mood:'neutral',claimIds:event.patch.claims.map(c=>c.id),momentIds:s.moments.filter(m=>m.startMs>=range.startMs&&m.endMs<=range.endMs).slice(-12).map(m=>m.id),pinned:previous?.pinned??false,edited:false,sourceLabels:leafRefs(s,refs).slice(-12).map(r=>{const source=s.sources.find(x=>x.id===r.id)??(s.nodes[r.id]?.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata;return {id:r.id,type:source?.kind??'speech',atMs:source?.startMs??0,label:source?.kind==='chat'?'Chat report':'Spoken context'};}),maxDependencyEndMs:range.endMs,ownerEditRevision:s.ownerRevisions[entityId]??0,publicationState:'draft',eligibleAt:event.ticket.eligibleAt,safety:event.safety,dependencyRefs:refs};
+  const chapter:Chapter={id:entityId,sessionId:s.session.id,revision,title:(event.patch.title??'Stream update').slice(0,120),summary:event.patch.claims.map(c=>c.text).join(' ').slice(0,700),startMs:previous?.startMs??range.startMs,endMs:range.endMs,mood:'neutral',claimIds:event.patch.claims.map(c=>claimId(c.id)),momentIds:s.moments.filter(m=>m.startMs>=range.startMs&&m.endMs<=range.endMs).slice(-12).map(m=>m.id),pinned:previous?.pinned??false,edited:false,sourceLabels:leafRefs(s,refs).slice(-12).map(r=>{const source=s.sources.find(x=>x.id===r.id)??(s.nodes[r.id]?.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata;return {id:r.id,type:source?.kind??'speech',atMs:source?.startMs??0,label:source?.kind==='chat'?'Chat report':'Spoken context'};}),maxDependencyEndMs:range.endMs,ownerEditRevision:s.ownerRevisions[entityId]??0,publicationState:'draft',eligibleAt:event.ticket.eligibleAt,safety:event.safety,dependencyRefs:refs};
   const candidate:StoryCandidate={id:candidateId,entityId,revision,ownerRevision:chapter.ownerEditRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:refs,eligibleAtMs:Date.parse(event.ticket.eligibleAt),chapter,current,safety:event.safety,language:event.ticket.recapLanguage,status:'pending'};
   if(!addCandidate(s,effects,candidate))return;
-  for(const claim of event.patch.claims){
-    const id=claim.id,old=s.nodes[id];if(old&&canonical(old.body)!==canonical(claim)){effects.push({type:'held',reason:'claim_id_reused'});continue;}
+  for(const proposed of event.patch.claims){
+    const claim={...proposed,id:claimId(proposed.id)},id=claim.id,old=s.nodes[id];
     upsertNode(s,effects,{id,revision:old?.revision??1,kind:'claim',supports:claim.support,exposedTo:refs,startMs:dependencyRange(s,claim.support).startMs,endMs:range.endMs,active:true,body:claim});
     if(!s.memory.some(m=>m.id===id)){s.memory.push({id,text:claim.text,refs:leafRefs(s,claim.support),role:claim.role,firstAtMs:dependencyRange(s,claim.support).startMs,lastAtMs:range.endMs});}
   }
   // Preserve the first goal/fact independently; retire other old memory rather than merge prose.
   if(s.memory.length>64)s.memory=[s.memory[0]!,...s.memory.slice(-63)];
   upsertNode(s,effects,{id:entityId,revision,kind:'chapter',supports:event.patch.claims.flatMap(c=>c.support),exposedTo:refs,startMs:chapter.startMs,endMs:range.endMs,active:true,body:chapter});
-  for(const [i,relation] of event.patch.relations.entries())upsertNode(s,effects,{id:`relation:${event.ticket.jobId}:${i}`,revision:1,kind:'relation',supports:relation.support,exposedTo:refs,startMs:range.startMs,endMs:range.endMs,active:true,body:relation});
+  for(const [i,relation] of event.patch.relations.entries())upsertNode(s,effects,{id:`relation:${event.ticket.jobId}:${i}`,revision:1,kind:'relation',supports:relation.support,exposedTo:refs,startMs:range.startMs,endMs:range.endMs,active:true,body:{...relation,from:claimId(relation.from),to:claimId(relation.to)}});
   s.chapters=[...s.chapters.filter(c=>c.id!==entityId),chapter].slice(-DOMAIN_LIMITS.chapters);s.activeChapterId=entityId;s.boundary=null;
 }
 function prune(s:DomainState){
   s.candidates=s.candidates.filter(c=>c.status!=='rejected');
-  const roots=new Set([...s.chapters.map(c=>c.id),...s.lore.map(l=>l.id),...s.moments.map(m=>m.id),...s.media.map(m=>m.id),...s.candidates.map(c=>c.id),...s.memory.map(m=>m.id),...s.playbacks.map(p=>p.id),...s.pendingGeneration?.ticket.inputRefs.map(r=>r.id)??[]]);
+  const roots=new Set([...s.chapters.flatMap(c=>[c.id,...c.claimIds]),...s.lore.map(l=>l.id),...s.moments.map(m=>m.id),...s.media.map(m=>m.id),...s.candidates.flatMap(c=>[c.id,...c.currentNodeId?[c.currentNodeId]:[]]),...s.memory.map(m=>m.id),...s.playbacks.map(p=>p.id),...s.pendingGeneration?.ticket.inputRefs.map(r=>r.id)??[]]);
+  for(const node of Object.values(s.nodes))if(node.kind==='relation'&&node.body&&typeof node.body==='object'&&'from' in node.body&&roots.has(String(node.body.from)))roots.add(node.id);
   const visit=(id:string)=>{const node=s.nodes[id];if(!node)return;for(const ref of [...node.supports,...node.exposedTo])if(!roots.has(ref.id)){roots.add(ref.id);visit(ref.id);}};
   for(const id of [...roots])visit(id);
   s.nodes=Object.fromEntries(Object.entries(s.nodes).filter(([id,n])=>roots.has(id)&&n.active));
@@ -127,7 +146,7 @@ function prune(s:DomainState){
   // Historical leaf metadata keeps erasure/author fences and time ranges, never an 8-hour transcript.
   for(const x of s.sources)if(!recentIds.has(x.id)&&roots.has(x.id)){const {text:_text,...metadata}=x;s.nodes[x.id]={id:x.id,revision:x.revision,kind:'provider_cache',supports:[],exposedTo:[],startMs:x.startMs,endMs:x.endMs,active:x.status==='active',body:{evidenceMetadata:metadata}};}
   s.sources=recent;
-  s.media=s.media.slice(-200);s.playbacks=s.playbacks.filter(p=>['queued','preparing','playing'].includes(p.status)).slice(0,2);s.gaps=s.gaps.slice(-100);
+  s.media=s.media.slice(-200);s.playbacks=s.playbacks.filter(p=>['queued','preparing','playing'].includes(p.status)).slice(0,2);s.playbackTiming=Object.fromEntries(Object.entries(s.playbackTiming).filter(([id])=>s.playbacks.some(p=>p.id===id)));s.gaps=s.gaps.slice(-100);
 }
 
 export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock):DomainTransition {
@@ -148,8 +167,11 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       for(const m of s.moments)if(m.dependencyRefs.some(r=>r.id===source.id)){m.dependencyRefs=replace(m.dependencyRefs);m.revision++;upsertNode(s,effects,{id:m.id,revision:m.revision,kind:'moment',supports:m.dependencyRefs,exposedTo:m.dependencyRefs,startMs:m.startMs,endMs:m.maxDependencyEndMs,active:true,body:m});}
       break;
     }
-    case 'tick':advanceWindows(s,effects,offset(s,clock),clock);break;
-    case 'metadata':if(safetyAllowsPublication(event.safety)&&(!s.metadataReviewed||event.title!==s.session.title||event.category!==s.session.category)){s.metadataReviewed=true;s.session.title=event.title.slice(0,200);s.session.category=event.category.slice(0,100);s.session.metadataMaxDependencyEndMs=event.atMs;s.boundary='metadata';s.sourceRevision++;}break;
+    case 'tick':advanceWindows(s,effects,offset(s,clock),clock);advancePlayback(s,effects,clock);break;
+    case 'metadata':if(safetyAllowsPublication(event.safety)&&(!s.metadataReviewed||event.title!==s.session.title||event.category!==s.session.category)){
+      const source:Source={channelId:s.session.channelId,runId:s.session.runId,sessionId:s.session.id,id:`metadata:${stateHash(s.session.id)}:${++s.sequence}`,revision:1,kind:'channel_metadata',startMs:event.atMs,endMs:event.atMs,actorId:null,languageCodes:[s.settings.recapLanguage],timePrecision:'event',text:`${event.title.slice(0,200)} — ${event.category.slice(0,100)}`,status:'active',externalMessageId:null,moderation:event.safety.pii==='redacted'?'redacted':'allowed'};
+      if(acceptSource(s,source,effects,clock)){s.metadataReviewed=true;s.session.title=event.title.slice(0,200);s.session.category=event.category.slice(0,100);s.session.metadataMaxDependencyEndMs=event.atMs;s.boundary='metadata';}
+    }break;
     case 'topic':if(event.sourceRefs.length&&event.sourceRefs.every(r=>isRefActive(s,r))){s.boundary='topic';s.sourceRevision++;}break;
     case 'generation.result':commitStory(s,event,effects,clock);break;
     case 'generation.failed':if(s.pendingGeneration?.ticket.jobId===event.jobId){s.pendingGeneration=null;s.nextGenerationAfterMs=clock.now()+45000;if(s.closing)s.closing.failed=true;effects.push({type:'held',reason:event.reason});}break;
@@ -157,6 +179,16 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
     case 'ban':if(!s.bannedActors.includes(event.actorId))s.bannedActors.push(event.actorId);invalidateDomain(s,{kind:'user',sessionId:s.session.id,actorId:event.actorId,throughMs:event.throughMs},effects);publish(s,effects,clock,true);break;
     case 'unban':s.bannedActors=s.bannedActors.filter(a=>a!==event.actorId);break;
     case 'pause':if(s.settings.listeningPaused!==event.paused){s.settings.listeningPaused=event.paused;s.captureEpoch++;if(event.paused&&s.pendingGeneration){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;} }break;
+    case 'settings':{
+      if(event.baseRevision!==s.settings.revision||event.settings.revision!==event.baseRevision+1||!SettingsSchema.safeParse(event.settings).success){effects.push({type:'held',reason:'settings_revision_changed'});break;}
+      const languageChanged=event.settings.recapLanguage!==s.settings.recapLanguage;
+      const ready=!languageChanged||(s.published?.chapters??[]).every(c=>s.candidates.some(p=>p.entityId===c.id&&p.revision===c.revision&&p.language===event.settings.recapLanguage&&safetyAllowsPublication(p.safety)&&p.privacyEpoch===s.session.privacyEpoch&&p.inputRefs.every(r=>isRefActive(s,r))));
+      if(!ready){effects.push({type:'held',reason:'language_not_ready'});break;}
+      const pauseChanged=event.settings.listeningPaused!==s.settings.listeningPaused;s.settings=structuredClone(event.settings);
+      if(pauseChanged){s.captureEpoch++;if(s.settings.listeningPaused&&s.pendingGeneration){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}}
+      if(languageChanged){if(s.pendingGeneration){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}for(const c of s.candidates)if(c.language===s.settings.recapLanguage)c.status='pending';if(s.published){s.published.chapters=[];s.published.lore=[];s.published.language=s.settings.recapLanguage;}s.current=null;eligibleCandidates(s,effects,clock);}
+      break;
+    }
     case 'chat.clear':{
       s.chatClearThroughMs=Math.max(s.chatClearThroughMs??0,event.throughMs);
       const targets=s.sources.filter(source=>source.kind==='chat'&&source.startMs<=event.throughMs).map(source=>structuredClone(source));
@@ -175,7 +207,7 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       s.candidates=s.candidates.filter(c=>c.entityId!==old.id);for(const n of Object.values(s.nodes))if(n.kind==='presentation'&&(n.body as StoryCandidate)?.entityId===old.id){n.active=false;n.body=null;n.revision++;effects.push({type:'entity.upsert',node:structuredClone(n)});}
       if(s.pendingGeneration?.entityId===old.id){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}
       if(s.published)s.published.chapters=s.published.chapters.filter(c=>c.id!==old.id);s.current=null;
-      const refs=uniqueRefs([...oldRefs,refOf(event.source)]),range=dependencyRange(s,refs),chapter={...old,revision:old.revision+1,ownerEditRevision:ownerRevision,title:event.title.slice(0,120),summary:event.summary.slice(0,700),edited:true,safety:event.safety,eligibleAt:clock.iso(),dependencyRefs:refs,maxDependencyEndMs:range.endMs};
+      const refs=uniqueRefs([...oldRefs,refOf(event.source)]),range=dependencyRange(s,refs),chapter:Chapter={...old,revision:old.revision+1,ownerEditRevision:ownerRevision,title:event.title.slice(0,120),summary:event.summary.slice(0,700),pinned:event.pinned??old.pinned,edited:true,publicationState:safetyAllowsPublication(event.safety)?'draft':'held',safety:event.safety,eligibleAt:clock.iso(),dependencyRefs:refs,maxDependencyEndMs:range.endMs};
       s.chapters=s.chapters.map(c=>c.id===old.id?chapter:c);upsertNode(s,effects,{id:old.id,revision:chapter.revision,kind:'chapter',supports:refs,exposedTo:refs,startMs:old.startMs,endMs:range.endMs,active:true,body:chapter});
       addCandidate(s,effects,{id:`owner:${old.id}:${ownerRevision}`,entityId:old.id,revision:chapter.revision,ownerRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:refs,eligibleAtMs:clock.now(),chapter,current:{goal:null,change:null,now:chapter.summary.slice(0,300),sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs},safety:event.safety,language:event.language??s.settings.recapLanguage,status:'pending'});
       for(const p of s.playbacks){p.status='cancelled';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}publish(s,effects,clock,true);break;
@@ -186,7 +218,7 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       const nextSource={...source,revision:source.revision+1,text:event.summary.slice(0,700),moderation:safetyAllowsPublication(event.safety)?(event.safety.pii==='redacted'?'redacted' as const:'allowed' as const):'unavailable' as const};
       s.sources=s.sources.map(x=>x.id===source.id?nextSource:x);effects.push({type:'source.persist',source:nextSource});
       const refs=old.dependencyRefs.map(r=>r.id===source.id?refOf(nextSource):r),range=dependencyRange(s,refs);
-      const chapter:Chapter={...old,revision:old.revision+1,title:event.title.slice(0,120),summary:event.summary.slice(0,700),safety:event.safety,dependencyRefs:refs,eligibleAt:clock.iso(),maxDependencyEndMs:range.endMs};
+      const chapter:Chapter={...old,revision:old.revision+1,title:event.title.slice(0,120),summary:event.summary.slice(0,700),publicationState:safetyAllowsPublication(event.safety)?'draft':'held',safety:event.safety,dependencyRefs:refs,eligibleAt:clock.iso(),maxDependencyEndMs:range.endMs};
       for(const candidate of s.candidates.filter(c=>c.entityId===old.id)){const n=s.nodes[candidate.id];if(n)upsertNode(s,effects,{...n,revision:n.revision+1,active:false,body:null});}
       s.candidates=s.candidates.filter(c=>c.entityId!==old.id);s.chapters=s.chapters.map(c=>c.id===old.id?chapter:c);
       upsertNode(s,effects,{id:old.id,revision:chapter.revision,kind:'chapter',supports:refs,exposedTo:refs,startMs:chapter.startMs,endMs:range.endMs,active:true,body:chapter});
@@ -232,13 +264,14 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       lore.revision++;lore.term=term;lore.aliases=aliases;lore.explanation=event.explanation.slice(0,700);lore.safety=event.safety;lore.status=safetyAllowsPublication(event.safety)?'confirmed':'held';lore.originKind='owner_confirmed';lore.originMs=event.originMs===undefined?(lore.originMs??source.startMs):event.originMs;lore.dependencyRefs=lore.dependencyRefs.map(r=>r.id===source.id?refOf(next):r);
       upsertNode(s,effects,{id:lore.id,revision:lore.revision,kind:'lore',supports:lore.dependencyRefs,exposedTo:lore.dependencyRefs,startMs:lore.firstSeenMs,endMs:lore.maxDependencyEndMs,active:true,body:lore});publish(s,effects,clock);break;
     }
-    case 'term.unblock':s.blockedTerms=s.blockedTerms.filter(t=>t!==normalizeTerm(event.term));break;
+    case 'term.unblock':s.blockedTerms=s.blockedTerms.filter(t=>t!==normalizeTerm(event.term));for(const l of s.lore)if(l.status==='blocked'&&[l.term,...l.aliases].some(t=>normalizeTerm(t)===normalizeTerm(event.term))){l.status='observed';l.revision++;}break;
     case 'moment.save':if((event.sourceRefs??[]).every(r=>isRefActive(s,r)))saveMoment(s,effects,{...event,label:'Saved moment'},clock);break;
     case 'media':{
-      const m=event.media;
-      if(event.privacyEpoch!==s.session.privacyEpoch||!m.refs.every(r=>isRefActive(s,r))||m.momentId&&!s.moments.some(x=>x.id===m.momentId)){if(m.clipId&&m.manageUrl)effects.push({type:'clip.cleanup',clipId:m.clipId,manageUrl:m.manageUrl});break;}
+      const previousMedia=s.media.find(x=>x.id===event.media.id),m={...event.media,revision:previousMedia?Math.max(previousMedia.revision+1,event.media.revision):event.media.revision};
+      const forgottenCapture=!m.previousSession&&(s.tombstones.some(t=>t.kind==='session'||t.kind==='interval'&&overlaps(m.captureStartMs,m.captureEndMs,t.fromMs,t.toMs))||s.sources.some(source=>source.status==='deleted'&&overlaps(m.captureStartMs,m.captureEndMs,source.startMs,source.endMs)));
+      if(event.privacyEpoch!==s.session.privacyEpoch||forgottenCapture||!m.refs.every(r=>isRefActive(s,r))||m.momentId&&!s.moments.some(x=>x.id===m.momentId)){if(m.clipId&&m.manageUrl)effects.push({type:'clip.cleanup',clipId:m.clipId,manageUrl:m.manageUrl});break;}
       s.media=[...s.media.filter(x=>x.id!==m.id),structuredClone(m)];upsertNode(s,effects,{id:m.id,revision:m.revision,kind:'media',supports:m.refs,exposedTo:m.refs,startMs:m.captureStartMs,endMs:m.captureEndMs,active:m.state!=='revoked',body:m});
-      const moment=s.moments.find(x=>x.id===m.momentId);if(moment){moment.mediaId=m.id;moment.mediaState=m.state;moment.maxDependencyEndMs=Math.max(moment.maxDependencyEndMs,m.captureEndMs);if(m.state!=='pending')s.pendingClipId=null;}
+      const moment=s.moments.find(x=>x.id===m.momentId);if(moment){moment.mediaId=m.id;moment.mediaState=m.state;moment.clip=m.state==='ready'&&m.clip?m.clip:null;moment.maxDependencyEndMs=Math.max(moment.maxDependencyEndMs,m.captureEndMs);moment.revision++;upsertNode(s,effects,{id:moment.id,revision:moment.revision,kind:'moment',supports:moment.dependencyRefs,exposedTo:moment.dependencyRefs,startMs:moment.startMs,endMs:moment.maxDependencyEndMs,active:true,body:moment});if(m.state!=='pending')s.pendingClipId=null;}
       break;
     }
     case 'recap.trigger':{
@@ -250,6 +283,7 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       const plan=compileRecap(s.published!,s.settings.layout,event.trigger,{media:s.media.filter(m=>m.refs.every(r=>isRefActive(s,r))),durationMs:s.settings.recapDurationMs,welcomeOnly:!!active||unchanged,generatedAt:clock.iso()});
       plan.dependencyRefs=plan.dependencyRefs.map(ref=>{const candidate=s.candidates.find(c=>c.entityId===ref.id&&c.revision===ref.revision&&c.language===s.settings.recapLanguage&&c.status==='published');return candidate?{id:candidate.id,revision:1}:ref;});
       const playback={id:`playback:${event.trigger.id}`,status:active?'queued' as const:'preparing' as const,plan,startAt:null};s.playbacks.push(playback);s.lastRecapRevision=s.published!.revision;
+      s.playbackTiming[playback.id]={prepareAtMs:active?null:clock.now(),startAtMs:null};
       upsertNode(s,effects,{id:playback.id,revision:1,kind:'playback',supports:plan.dependencyRefs,exposedTo:plan.dependencyRefs,startMs:0,endMs:offset(s,clock),active:true,body:playback});if(!active)effects.push({type:'playback.prepare',playback:structuredClone(playback)});break;
     }
     case 'playback':{
@@ -257,12 +291,12 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       if(event.action==='cancel'||event.action==='error'){p.status='cancelled';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}
       else if(event.action==='end')p.status='ended';
       else if(!p.plan||!canDispatch(s,p.plan)){p.status='cancelled';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}
-      else if(event.action==='prepared'&&p.status==='preparing'){p.startAt=iso(clock.now()+300);effects.push({type:'playback.start',playback:structuredClone(p)});}
+      else if(event.action==='prepared'&&p.status==='preparing'&&p.startAt===null){p.startAt=iso(clock.now()+300);s.playbackTiming[p.id]={prepareAtMs:s.playbackTiming[p.id]?.prepareAtMs??clock.now(),startAtMs:clock.now()+300};effects.push({type:'playback.start',playback:structuredClone(p)});}
       else if(event.action==='start'&&p.status==='preparing'&&p.startAt){p.status=clock.now()-Date.parse(p.startAt)>3000?'skipped':'playing';}
-      if(['ended','cancelled','skipped'].includes(p.status)){const q=s.playbacks.find(x=>x.status==='queued');if(q&&q.plan&&canDispatch(s,q.plan)){q.status='preparing';effects.push({type:'playback.prepare',playback:structuredClone(q)});}}
+      if(['ended','cancelled','skipped'].includes(p.status))promotePlayback(s,effects,clock);
       break;
     }
-    case 'closing':if(s.session.status==='live'&&Number.isFinite(Date.parse(event.endedAt))){s.session.status='closing';s.session.endedAt=event.endedAt;const endedAtMs=Date.parse(event.endedAt);s.closing={endedAtMs,intakeUntilMs:endedAtMs+90000,deadlineMs:endedAtMs+240000,tailDrained:false,finalProcessedRevision:s.processedSourceRevision,failed:false};}break;
+    case 'closing':if(s.session.status==='live'&&Number.isFinite(Date.parse(event.endedAt))){s.session.status='closing';s.session.endedAt=event.endedAt;const endedAtMs=Date.parse(event.endedAt);s.closing={endedAtMs,intakeUntilMs:endedAtMs+90000,deadlineMs:endedAtMs+240000,tailDrained:false,finalProcessedRevision:s.processedSourceRevision,failed:false};if(s.pendingGeneration){effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}if(s.sourceRevision>0)s.processedSourceRevision=Math.min(s.processedSourceRevision,s.sourceRevision-1);s.nextGenerationAfterMs=0;}break;
     case 'tail.drained':if(s.closing)s.closing.tailDrained=true;break;
     case 'cloud.ack':if(event.revision===s.session.publicationRevision){if(s.session.status==='finalized')s.session.finalSnapshotAckAt=event.at;if(s.published)s.published.lastSyncedAt=event.at;if(s.lastReceipt)s.lastReceipt.publicSync='synced';}break;
     case 'gap':s.gaps.push({startMs:event.startMs,endMs:event.endMs});break;
@@ -270,16 +304,16 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
   eligibleCandidates(s,effects,clock);
   if(s.published&&s.session.status!=='finalized'){
     const matured=(end:number)=>Date.parse(s.session.startedAt)+end+s.settings.publicationDelaySeconds*1000<=clock.now();
-    const loreIds=s.lore.filter(l=>['confirmed','published'].includes(l.status)&&safetyAllowsPublication(l.safety)&&l.dependencyRefs.every(r=>isRefActive(s,r))&&matured(l.maxDependencyEndMs)).map(l=>l.id);
-    const momentIds=s.moments.filter(m=>m.dependencyRefs.every(r=>isRefActive(s,r))&&matured(m.maxDependencyEndMs)).map(m=>m.id);
-    if(canonical(loreIds)!==canonical(s.published.lore.map(l=>l.id))||canonical(momentIds)!==canonical(s.published.moments.map(m=>m.id))||s.metadataReviewed&&matured(s.session.metadataMaxDependencyEndMs)&&s.published.session.title!==s.session.title)publish(s,effects,clock);
+    const lore=s.lore.filter(l=>['confirmed','published'].includes(l.status)&&safetyAllowsPublication(l.safety)&&l.dependencyRefs.every(r=>isRefActive(s,r))&&(l.originKind==='owner_confirmed'||matured(l.maxDependencyEndMs))).map(({sessionId:_s,revision:_r,status:_st,aliases:_a,dependencyRefs:_d,safety:_sf,...l})=>l);
+    const moments=s.moments.filter(m=>m.dependencyRefs.every(r=>isRefActive(s,r))&&matured(m.maxDependencyEndMs)).map(({sessionId:_s,revision:_r,count:_c,distinctActors:_a,baseline:_b,mediaId:_m,dependencyRefs:_d,...m})=>m);
+    if(canonical(lore)!==canonical(s.published.lore)||canonical(moments)!==canonical(s.published.moments)||s.metadataReviewed&&matured(s.session.metadataMaxDependencyEndMs)&&s.published.session.title!==s.session.title)publish(s,effects,clock);
   }
   const closing=s.closing;
   if(closing&&s.session.status==='closing'){
-    const drained=closing.tailDrained||clock.now()>=closing.intakeUntilMs,deadline=clock.now()>=closing.deadlineMs;
+    const drained=closing.tailDrained,deadline=clock.now()>=closing.deadlineMs;
     const remaining=s.candidates.some(c=>c.status==='pending'&&c.language===s.settings.recapLanguage);
     if(deadline||drained&&!s.pendingGeneration&&s.processedSourceRevision>=s.sourceRevision&&!remaining){
-      if(deadline&&(closing.failed||s.pendingGeneration||s.processedSourceRevision<s.sourceRevision||remaining)){s.gaps.push({startMs:Math.max(0,(s.published?.current?.sourceTimeMs??0)),endMs:Math.max(0,closing.endedAtMs-Date.parse(s.session.startedAt))});if(s.pendingGeneration)effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}
+      if(deadline&&(!closing.tailDrained||closing.failed||s.pendingGeneration||s.processedSourceRevision<s.sourceRevision||remaining)){s.gaps.push({startMs:Math.max(0,(s.published?.current?.sourceTimeMs??0)),endMs:Math.max(0,closing.endedAtMs-Date.parse(s.session.startedAt))});if(s.pendingGeneration)effects.push({type:'cancel',ids:[s.pendingGeneration.ticket.jobId]});s.pendingGeneration=null;}
       s.session.status='finalized';s.session.finalizedAt=clock.iso();publish(s,effects,clock,false,true);
     }
   }
@@ -293,8 +327,10 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
 export const exportDomainState=(state:DomainState):DomainState=>structuredClone(state);
 export function hydrateDomainState(checkpoint:DomainState,authority:{privacyEpoch:number;blockedTerms?:string[];bannedActors?:string[];tombstones?:DomainState['tombstones']}):DomainState {
   if(checkpoint.version!==1||checkpoint.session.privacyEpoch!==authority.privacyEpoch)throw new Error('stale_domain_checkpoint');
-  const state=structuredClone(checkpoint);state.blockedTerms=[...new Set([...state.blockedTerms,...authority.blockedTerms??[]].map(normalizeTerm))];state.bannedActors=[...new Set([...state.bannedActors,...authority.bannedActors??[]])];state.tombstones=[...state.tombstones,...authority.tombstones??[]];
-  if(state.sources.some(s=>s.text!==null&&(sourceTombstoned(state,s)||state.bannedActors.includes(s.actorId??'')))||state.lore.some(l=>blockedPhrase(state,l.term,l.aliases)))throw new Error('unsanitized_domain_checkpoint');
+  const state=structuredClone(checkpoint);state.playbackTiming??={};state.editorialExcludedRefs??=[];state.nextGenerationAfterMs??=0;state.chatClearThroughMs??=null;state.metadataReviewed??=false;
+  for(const p of state.playbacks)state.playbackTiming[p.id]??={prepareAtMs:p.status==='queued'?null:Date.parse(p.plan?.generatedAt??state.session.startedAt),startAtMs:p.startAt?Date.parse(p.startAt):null};
+  state.blockedTerms=[...new Set([...state.blockedTerms,...authority.blockedTerms??[]].map(normalizeTerm))];state.bannedActors=[...new Set([...state.bannedActors,...authority.bannedActors??[]])];state.tombstones=[...state.tombstones,...authority.tombstones??[]];
+  if(state.sources.some(s=>s.text!==null&&(sourceTombstoned(state,s)||state.bannedActors.includes(s.actorId??'')))||state.lore.some(l=>blockedPhrase(state,l.term,l.aliases)&&!(l.status==='blocked'&&l.explanation==='')))throw new Error('unsanitized_domain_checkpoint');
   prune(state);return state;
 }
 export function loreAnswer(state:DomainState,term:string):string {
@@ -302,4 +338,7 @@ export function loreAnswer(state:DomainState,term:string):string {
   const lore=state.published?.lore.find(l=>normalizeTerm(l.term)===normalized);
   return lore?.explanation??(state.settings.recapLanguage==='ru'?'Происхождение не подтверждено.':'Its origin is not confirmed.');
 }
+
+
+
 

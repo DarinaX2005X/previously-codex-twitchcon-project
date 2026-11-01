@@ -275,7 +275,11 @@ describe('real SQLite storage boundaries',()=>{
     storage.repository.createSession(scope,{id:'s2',startedAt:'2026-11-02T01:00:00Z'});
     storage.repository.saveEntity(scope,{id:'legacy-s2-lore',sessionId:'s2',kind:'lore',body:{term:'BRICK'},refs:[]});
     storage.close();const previous=new DatabaseSync(path);
-    previous.exec(`DROP TABLE blocked_terms; CREATE TABLE blocked_terms(channel_id TEXT,run_id TEXT,session_id TEXT,term TEXT,PRIMARY KEY(channel_id,run_id,session_id,term)); DELETE FROM schema_migrations WHERE version=3;`);
+    previous.exec(`DROP TABLE blocked_terms; CREATE TABLE blocked_terms(channel_id TEXT,run_id TEXT,session_id TEXT,term TEXT,PRIMARY KEY(channel_id,run_id,session_id,term));
+      DROP TABLE control_state; DROP TABLE channel_settings; DROP TABLE channel_bans; DROP TABLE domain_checkpoints; DROP TABLE domain_mutations; DROP TABLE audio_chunks;
+      DROP INDEX events_pending_domain; ALTER TABLE events DROP COLUMN domain_processed;
+      ALTER TABLE outbox DROP COLUMN frozen_body; ALTER TABLE outbox DROP COLUMN frozen_hash;
+      DELETE FROM schema_migrations WHERE version>=3;`);
     previous.prepare('INSERT INTO blocked_terms VALUES(?,?,?,?)').run(scope.channelId,scope.runId,'s1','brick');
     previous.prepare('INSERT INTO blocked_terms VALUES(?,?,?,?)').run(scope.channelId,scope.runId,'s2','brick');previous.close();
     storage=createStorage({path,now:()=>now,encryptionKey:key});

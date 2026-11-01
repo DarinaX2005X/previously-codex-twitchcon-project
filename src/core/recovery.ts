@@ -13,12 +13,12 @@ export type DomainHydrationInput={
 };
 
 /** Reconstructs only surviving authoritative records. It never revives queued playback after restart. */
-export function recoverDomainState(input:DomainHydrationInput):DomainState {
+export function recoverDomainState(input:DomainHydrationInput,options:{resumePlayback?:boolean}={}):DomainState {
   if(input.checkpoint){
     try {
       const restored=hydrateDomainState(input.checkpoint,{privacyEpoch:input.privacyEpoch,blockedTerms:input.blockedTerms,bannedActors:input.bannedActors,tombstones:input.tombstones});
       restored.revision=input.revision;restored.session={...input.session};restored.settings=structuredClone(input.settings);restored.captureEpoch=input.captureEpoch;restored.chatClearThroughMs=input.chatClearThroughMs;
-      restored.playbacks=[];
+      if(!options.resumePlayback){restored.playbacks=[];restored.playbackTiming={};}
       return restored;
     } catch { /* Standalone privacy invalidation deliberately destroys a stale checkpoint. */ }
   }

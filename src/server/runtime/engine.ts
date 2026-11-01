@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
-  createDomainState, hydrateDomainState, reduceDomain, canonical, canDispatch,
+  recoverDomainState, reduceDomain, canonical, canDispatch,
   type DomainState, type DomainEvent, type DomainEffect, type GenerationRequest,
 } from '../../core/index.js';
 import { safetyAllowsPublication, type Channel, type Clock, type EventEnvelope, type OwnerSnapshot, type Scope, type Settings, type Source, type SourceStatus, type StoryProvider, type Safety } from '../../shared/contracts/index.js';
@@ -15,6 +15,7 @@ import { normalizeInput } from './input.js';
 
 export type DispatchOptions = {
   envelope?: EventEnvelope; idempotencyKey?: string; requestBody?: unknown;
+  expectedEntity?: {id: string; revision: number};
   settingsPatch?: {baseRevision: number; patch: Partial<Omit<Settings, 'revision'>>};
 };
 export type RuntimeStorage = ReturnType<typeof createStorage>;
@@ -33,6 +34,7 @@ export class StoryEngine {
   readonly repository: RuntimeStorage['repository']; readonly clock: Clock; readonly safety: SafetyService;
   private chain: Promise<unknown> = Promise.resolve();
   private safetyBusy = false;
+  private nextSafetyAtMs = 0;
   private readonly sourceStatus: OwnerSnapshot['status'] = {
     mic: {...unavailable('Choose a microphone to start listening.'), state: 'paused'},
     chat: unavailable('Connect Twitch to receive chat.'), transcription: unavailable('Speech processing is not enabled.'),
@@ -51,30 +53,23 @@ export class StoryEngine {
     this.options.updates.publish({...this.scope, event: 'source.status', data: {sessionId: this.activeSessionId(), revision: 0}});
   }
   activeSessionId(): string | null {
-    return this.repository.listSessions(this.scope, {limit: 50}).find(session => session.status === 'live')?.id ?? null;
+    return this.repository.getActiveSession(this.scope)?.id ?? null;
   }
   state(sessionId: string): DomainState {
-    const stored = this.repository.getDomainCheckpoint(this.scope, sessionId);
-    const session = this.repository.getSession(this.scope, sessionId);
-    const settings = this.repository.getSettings(this.scope);
-    if (stored.checkpoint) {
-      const state = hydrateDomainState(stored.checkpoint, {privacyEpoch: session.privacyEpoch});
-      state.settings = settings;
-      return state;
-    }
-    if (stored.revision !== 0) throw new ApiError(503, 'recovery_required', 'The saved story is being restored.', true);
-    return createDomainState({channel: this.channel, session, settings});
+    return recoverDomainState({...this.repository.getDomainHydration(this.scope, sessionId), channel: this.channel}, {resumePlayback: true});
   }
   dispatch(sessionId: string, event: DomainEvent, options: DispatchOptions = {}): Promise<DomainState> {
     const operation = this.chain.then(() => {
       const previous = this.state(sessionId);
-      const transition = reduceDomain(previous, event, this.clock);
-      if (options.settingsPatch) transition.state.settings = {...previous.settings, ...options.settingsPatch.patch, revision: options.settingsPatch.baseRevision + 1};
+      const input: DomainEvent = options.settingsPatch ? {type: 'settings', baseRevision: options.settingsPatch.baseRevision, settings: {...previous.settings, ...options.settingsPatch.patch, revision: options.settingsPatch.baseRevision + 1}} : event;
+      const transition = reduceDomain(previous, input, this.clock);
+      if (options.settingsPatch && transition.state.settings.revision !== options.settingsPatch.baseRevision + 1) throw new ApiError(409, 'settings_not_ready', 'The requested setting is not ready. The previous setting is still active.');
       const result = this.repository.applyDomainTransition(this.scope, sessionId, {
         expectedRevision: previous.revision, expectedPrivacyEpoch: previous.session.privacyEpoch,
-        transition, ...(options.envelope ? {event: options.envelope} : {}),
+        transition, event: options.envelope ?? this.envelope(sessionId, input.type, {type: input.type}),
         ...(options.idempotencyKey ? {idempotencyKey: options.idempotencyKey} : {}),
         ...(options.requestBody !== undefined ? {requestBody: options.requestBody} : {}),
+        ...(options.expectedEntity ? {expectedEntity: options.expectedEntity} : {}),
         ...(options.settingsPatch ? {settingsPatch: options.settingsPatch} : {}),
       });
       const next = this.state(sessionId);
@@ -143,30 +138,45 @@ export class StoryEngine {
     try {return canDispatch(this.state(input.sessionId), input);} catch {return false;}
   }
   async tick(): Promise<void> {
-    const sessions = this.repository.listSessions(this.scope, {limit: 50}).filter(session => session.status !== 'finalized');
-    for (const session of sessions) {await this.drain(session.id); await this.dispatch(session.id, {type: 'tick'});}
+    for (const session of this.repository.listOpenSessions(this.scope)) {
+      await this.drain(session.id);
+      if (session.status === 'closing' && session.endedAt && this.clock.now() >= Date.parse(session.endedAt) + 90_000 && !this.repository.pendingJobCount(this.scope, session.id, ['stt'])) {
+        await this.dispatch(session.id, {type: 'tail.drained'});
+      }
+      await this.dispatch(session.id, {type: 'tick'});
+    }
+  }
+  /** A cold process cancels unfinished output before any overlay can subscribe. */
+  async recoverPlayback(): Promise<void> {
+    for (const session of this.repository.listOpenSessions(this.scope)) {
+      for (const playback of this.state(session.id).playbacks) {
+        if (['queued', 'preparing', 'playing'].includes(playback.status)) await this.dispatch(session.id, {type: 'playback', id: playback.id, action: 'cancel'});
+      }
+    }
   }
   async checkPendingSources(): Promise<void> {
-    if (this.safetyBusy) return;
-    const id = this.activeSessionId(); if (!id) return;
-    const state = this.state(id);
-    if (state.settings.listeningPaused) return;
-    const selected: Source[] = []; let length = 0;
-    for (const source of state.sources.slice().reverse()) {
-      if (source.status !== 'active' || source.moderation !== 'pending' || !source.text) continue;
-      const size = Buffer.byteLength(source.text);
-      if (selected.length >= 30 || length + size > 3500) continue;
-      selected.push(source); length += size;
-    }
-    if (!selected.length) return;
+    if (this.safetyBusy || this.clock.now() < this.nextSafetyAtMs) return;
     this.safetyBusy = true;
     try {
-      const checked = await this.safety.inspectBatch(selected.map(source => ({id: source.id, text: source.text!})));
-      for (const result of checked) {
-        const source = selected.find(source => source.id === result.id)!;
-        await this.dispatch(id, {type: 'source.safety', id: source.id, baseRevision: source.revision, text: result.text, safety: result.safety});
+      for (const session of this.repository.listOpenSessions(this.scope)) {
+        const state = this.state(session.id);
+        if (state.settings.listeningPaused) continue;
+        const selected: Source[] = []; let length = 0;
+        for (const source of state.sources.slice().reverse()) {
+          // Owner reviews cover their title and summary together, with their own revision fence.
+          if (source.kind === 'owner_statement' || source.status === 'deleted' || !['pending', 'unavailable'].includes(source.moderation) || !source.text) continue;
+          const size = Buffer.byteLength(JSON.stringify(source.text));
+          if (selected.length >= 30 || length + size > 3500) continue;
+          selected.push(source); length += size;
+        }
+        if (!selected.length) continue;
+        const checked = await this.safety.inspectBatch(selected.map(source => ({id: source.id, text: source.text!})));
+        for (const result of checked) {
+          const source = selected.find(source => source.id === result.id);
+          if (source) await this.dispatch(session.id, {type: 'source.safety', id: source.id, baseRevision: source.revision, text: result.text, safety: result.safety});
+        }
       }
-    } finally {this.safetyBusy = false;}
+    } finally {this.safetyBusy = false; this.nextSafetyAtMs = this.clock.now() + 30_000;}
   }
   async executeStory(job: WorkLease, signal: AbortSignal): Promise<JobResult> {
     const request = (job.payload as {request?: GenerationRequest})?.request;
@@ -176,18 +186,19 @@ export class StoryEngine {
       if (canonical(prepared) !== canonical(request.packet)) throw new Error('Evidence requires a new reviewed revision.');
       const response = await this.options.story.propose(prepared, request.ticket, signal);
       const patch = response.value;
-      const checked = await this.safety.inspectBatch([{id: 'title', text: patch.title ?? ''}, ...patch.claims.map(claim => ({id: claim.id, text: claim.text}))], signal);
+      const checked = await this.safety.inspectBatch([{id: 'title', text: patch.title ?? ''}, ...patch.claims.map(claim => ({id: `claim:${claim.id}`, text: claim.text}))], signal);
       if (checked.some(result => !safetyAllowsPublication(result.safety))) throw new Error('Story held for safety review.');
-      const cleaned = {...patch, title: checked.find(result => result.id === 'title')?.text ?? null, claims: patch.claims.map(claim => ({...claim, text: checked.find(result => result.id === claim.id)?.text ?? claim.text}))};
+      const cleaned = {...patch, title: checked.find(result => result.id === 'title')?.text ?? null, claims: patch.claims.map(claim => ({...claim, text: checked.find(result => result.id === `claim:${claim.id}`)?.text ?? claim.text}))};
       const grounding = this.options.story.review ? (await this.options.story.review(prepared, request.ticket, cleaned, signal)).value : undefined;
       signal.throwIfAborted();
       const state = await this.dispatch(job.sessionId, {type: 'generation.result', ticket: request.ticket, patch: cleaned, safety: checked[0]?.safety ?? held, ...(grounding ? {grounding} : {})});
       const chapter = state.chapters.find(chapter => chapter.id === request.entityId);
       if (chapter && this.options.story.present && this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) {
-        const presentations = await this.options.story.present(cleaned.claims, {entityId: chapter.id, revision: chapter.revision, eligibleAt: chapter.eligibleAt}, this.safety, signal);
+        const claimRefs = cleaned.claims.map(claim => ({id: claim.id, revision: state.nodes[claim.id]?.revision ?? 0}));
+        const presentations = await this.options.story.present(cleaned.claims, {entityId: chapter.id, revision: chapter.revision, eligibleAt: chapter.eligibleAt, claimRefs}, this.safety, signal);
         for (const language of ['en', 'ru'] as const) {
           const value = presentations[language];
-          await this.dispatch(job.sessionId, {type: 'presentation', entityId: chapter.id, baseRevision: chapter.revision, ownerRevision: chapter.ownerEditRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: chapter.dependencyRefs});
+          await this.dispatch(job.sessionId, {type: 'presentation', entityId: chapter.id, baseRevision: chapter.revision, ownerRevision: chapter.ownerEditRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: chapter.dependencyRefs, current: {...value.current, sourceTimeMs: chapter.maxDependencyEndMs, maxDependencyEndMs: chapter.maxDependencyEndMs}});
         }
       }
       this.setStatus('story', {state: 'ready', lastObservedAt: this.clock.iso(), message: null, action: null});
@@ -195,6 +206,20 @@ export class StoryEngine {
     } catch {
       if (!signal.aborted) await this.dispatch(job.sessionId, {type: 'generation.failed', jobId: request.ticket.jobId, reason: 'provider_unavailable_or_held'});
       return {state: 'failed'};
+    }
+  }
+  async presentOwnerChapter(sessionId: string, entityId: string): Promise<void> {
+    if (!this.options.story.present) return;
+    const state = this.state(sessionId), chapter = state.chapters.find(value => value.id === entityId);
+    if (!chapter || !chapter.edited || !safetyAllowsPublication(chapter.safety)) return;
+    const source = chapter.dependencyRefs.map(ref => state.sources.find(value => value.id === ref.id && value.revision === ref.revision)).find(value => value?.kind === 'owner_statement');
+    if (!source?.text || source.status !== 'active') return;
+    const ref = {id: source.id, revision: source.revision};
+    const presentations = await this.options.story.present([{id: source.id, text: source.text, role: 'state', support: [ref], attribution: 'owner', epistemic: 'explicit'}], {entityId: chapter.id, revision: chapter.revision, eligibleAt: chapter.eligibleAt, claimRefs: [ref]}, this.safety);
+    for (const language of ['en', 'ru'] as const) {
+      if (language === state.settings.recapLanguage) continue;
+      const value = presentations[language];
+      await this.dispatch(sessionId, {type: 'presentation', entityId, baseRevision: chapter.revision, ownerRevision: chapter.ownerEditRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: chapter.dependencyRefs, current: {...value.current, sourceTimeMs: chapter.maxDependencyEndMs, maxDependencyEndMs: chapter.maxDependencyEndMs}});
     }
   }
   async idle(): Promise<void> {await this.chain;}

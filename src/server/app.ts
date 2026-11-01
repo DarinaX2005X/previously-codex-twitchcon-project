@@ -1,4 +1,4 @@
-import express, { type Router } from 'express';
+import express, { type Router, type Request } from 'express';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { RuntimeConfig } from './runtime/config.js';
@@ -15,7 +15,8 @@ export interface AppOptions {
   updates?: RevisionStream;
   authorizeStream?: (principal: Principal) => boolean | Promise<boolean>;
   now?: () => number;
-  routers?: {auth?: Router; owner?: Router; overlay?: Router; demo?: Router};
+  setupStatus?: (request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  routers?: {auth?: Router; owner?: Router; overlay?: Router; demo?: Router; media?: Router};
 }
 /** The route registry is the only place feature routers are mounted. */
 export function createApp(options: AppOptions) {
@@ -36,8 +37,8 @@ export function createApp(options: AppOptions) {
     const ready = status.phase === 'ready' && status.storage === 'ready';
     res.status(ready ? 200 : 503).json({ready, phase: status.phase, storage: status.storage, configuration: config.missing.length ? 'incomplete' : 'complete'});
   });
-  app.get('/api/setup/status', (_req, res) => {
-    res.json({mode: status.mode, runtime: status.phase, storage: status.storage, missing: config.missing, configured: config.missing.length === 0, twitch: {connected: false}, openai: {connected: false, paidCallsEnabled: false}, auth: {available: Boolean(options.routers?.auth), authenticated: false}});
+  app.get('/api/setup/status', async (req, res, next) => {
+    try {res.json({mode: status.mode, runtime: status.phase, storage: status.storage, missing: config.missing, configured: config.missing.length === 0, twitch: {connected: false}, openai: {connected: false, paidCallsEnabled: false}, auth: {available: Boolean(options.routers?.auth), authenticated: false}, ...await options.setupStatus?.(req)});} catch (error) {next(error);}
   });
   app.use((req, _res, next) => {if (status.phase === 'stopping' && !['GET', 'HEAD'].includes(req.method)) next(new ApiError(503, 'shutting_down', 'The application is stopping.', true)); else next();});
   app.use(mutationRateLimit(now));
@@ -55,6 +56,7 @@ export function createApp(options: AppOptions) {
   if (options.routers?.overlay) app.use('/api/overlay', options.routers.overlay);
   app.use('/api/demo', requireRole('demo', auth, config.sessionSecret, now));
   if (options.routers?.demo) app.use('/api/demo', options.routers.demo);
+  if (options.routers?.media) app.use('/api/media', options.routers.media);
   const staticDirectory = resolve(options.staticDirectory ?? 'dist');
   app.use(express.static(staticDirectory, {index: false, dotfiles: 'deny', redirect: false, maxAge: 0}));
   for (const route of ['/', '/setup', '/foundation', '/dock', '/overlay', '/replay']) {

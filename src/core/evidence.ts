@@ -73,7 +73,7 @@ export function buildEvidencePacket(state: DomainState): EvidencePacket {
   return packet;
 }
 export function packetRefs(state:DomainState,packet:EvidencePacket):VersionRef[] {
-  return uniqueRefs([...packet.sources.map(refOf),...packet.memory.flatMap(m=>m.refs),...packet.chapters.map(refOf),...packet.lore.map(refOf)]).slice(0,100);
+  return uniqueRefs([...packet.sources.map(refOf),...packet.memory.flatMap(m=>[...m.refs,...state.nodes[m.id]?[refOf(state.nodes[m.id]!)]:[]]),...packet.chapters.map(refOf),...packet.lore.map(refOf)]).slice(0,100);
 }
 export const relationKey=(r:StoryPatch['relations'][number]):string=>`${r.from}:${r.kind}:${r.to}`;
 const instruction=/(?:ignore (?:all |previous |the )*instructions|system prompt|developer message|игнорируй .*инструкц|publish this|reveal .*secret)/iu;

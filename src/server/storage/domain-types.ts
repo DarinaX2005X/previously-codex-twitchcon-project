@@ -12,6 +12,7 @@ export type DomainCommitInput={
   expectedRevision:number;expectedPrivacyEpoch:number;transition:DomainTransition;event?:EventEnvelope<unknown>;
   idempotencyKey?:string;requestBody?:unknown;
   settingsPatch?:{baseRevision:number;patch:Partial<Omit<Settings,'revision'>>};
+  expectedEntity?:{id:string;revision:number};
 };
-export type DomainCommitResult={applied:boolean;duplicate:boolean;revision:number;privacyEpoch:number;receipt?:InvalidationReceipt};
+export type DomainCommitResult={applied:boolean;duplicate:boolean;revision:number;privacyEpoch:number;receipt?:InvalidationReceipt;checkpoint?:DomainState};
 export type MutationReceipt={kind:'domain'|'settings';sessionId:string|null;revision:number;privacyEpoch?:number;receipt?:InvalidationReceipt};

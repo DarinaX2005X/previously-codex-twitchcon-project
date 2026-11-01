@@ -7,7 +7,8 @@ import { createStorage, StorageError } from './storage/index.js';
 import { ConfigurationError, loadConfig, readLocalEnvironment, type RuntimeConfig } from './runtime/config.js';
 import { acquireInstanceLock, InstanceLockError } from './runtime/instance-lock.js';
 import { RevisionStream } from './runtime/updates.js';
-import { BoundedScheduler } from './runtime/scheduler.js';
+import { createLiveRuntime } from './runtime/live.js';
+import { systemClock } from './runtime/clock.js';
 
 export async function startRuntime(options: {config?: RuntimeConfig; cwd?: string; replay?: boolean; recoverStaleLock?: boolean} = {}) {
   const cwd = options.cwd ?? process.cwd();
@@ -21,9 +22,16 @@ export async function startRuntime(options: {config?: RuntimeConfig; cwd?: strin
     status.storage = 'ready';
   } catch (error) {lock.release(); throw error;}
   const updates = new RevisionStream();
-  // No live lanes are installed before authenticated adapters and explicit paid-call approval.
-  const scheduler = new BoundedScheduler(storage.repository, []);
-  const app = createApp({config, status, updates, staticDirectory: resolve(cwd, 'dist')});
+  let live: Awaited<ReturnType<typeof createLiveRuntime>> = null;
+  let integrationError: string | null = null;
+  if (!options.replay) {
+    try {live = await createLiveRuntime({config, storage, updates, clock: systemClock});}
+    catch {integrationError = 'The channel connection could not be prepared. Check Twitch settings and restart Previously.';}
+  }
+  const app = createApp({config, status, updates, staticDirectory: resolve(cwd, 'dist'),
+    ...(live ? {auth: live.auth, routers: live.routers, authorizeStream: live.authorizeStream} : {}),
+    setupStatus: async request => ({...(live?.setup() ?? {}), auth: {available: Boolean(live), authenticated: Boolean(live && await live.auth.authenticate(request, 'owner'))}, ...(integrationError ? {integrationError} : {})}),
+  });
   let server: ReturnType<typeof createServer>;
   try {server = createServer({pfx: readFileSync(config.tlsPfx), passphrase: config.tlsPassphrase, minVersion: 'TLSv1.2'}, app);}
   catch {storage.close(); lock.release(); throw new ConfigurationError(['LOCAL_TLS_PFX', 'LOCAL_TLS_PASSPHRASE']);}
@@ -31,27 +39,28 @@ export async function startRuntime(options: {config?: RuntimeConfig; cwd?: strin
   server.maxHeadersCount = 64;
   try {
     await new Promise<void>((done, reject) => {server.once('error', reject); server.listen(config.port, config.host, () => {server.off('error', reject); done();});});
-    status.phase = 'ready'; scheduler.start();
-  } catch {updates.close(); storage.close(); lock.release(); throw new Error('The local HTTPS port is unavailable.');}
+    await live?.start();
+    status.phase = 'ready';
+  } catch {await live?.close(); server.closeAllConnections(); server.close(); updates.close(); storage.close(); lock.release(); throw new Error('The local runtime could not start.');}
   let shutdown: Promise<void> | undefined;
   const close = () => {
     if (shutdown) return shutdown;
     status.phase = 'stopping'; updates.close();
     const listenerClosed = new Promise<void>(done => server.close(() => done()));
     shutdown = (async () => {
-      await scheduler.stop();
+      await live?.close();
       server.closeAllConnections(); await listenerClosed;
       storage.close(); lock.release();
     })();
     return shutdown;
   };
-  return {app, server, status, close};
+  return {app, server, status, live, close};
 }
 
 async function main() {
   try {
     const runtime = await startRuntime({replay: process.argv.includes('--replay'), recoverStaleLock: process.argv.includes('--recover-stale-lock')});
-    console.log('Previously is available at https://localhost:4317. Provider connections remain inactive.');
+    console.log('Previously is available at https://localhost:4317. Listening requires an explicit owner action.');
     const stop = () => {void runtime.close().catch(() => {console.error('Shutdown could not complete cleanly.'); process.exitCode = 1;});};
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
   } catch (error) {

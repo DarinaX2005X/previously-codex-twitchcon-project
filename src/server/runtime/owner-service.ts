@@ -1,16 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { compileRecap } from '../../core/recap.js';
+import { canDispatch, compileRecap } from '../../core/recap.js';
 import type { DomainEvent, DomainState } from '../../core/types.js';
 import type { Channel, Chapter, Clock, EventEnvelope, InvalidationReceipt, Lore, Moment, OwnerSnapshot, PlaybackRef, RecapPlan, Safety, Scope, Settings, Source } from '../../shared/contracts/index.js';
-import { SettingsSchema } from '../../shared/contracts/index.js';
+import { safetyAllowsPublication, SettingsSchema } from '../../shared/contracts/index.js';
 import type { SafetyService } from '../providers/safety.js';
 import type { createStorage, SqliteRepository } from '../storage/index.js';
-import { StorageError } from '../storage/database.js';
 import { ApiError } from './errors.js';
 import type { ChapterPatch, LorePatch, OwnerMutation, OwnerRevisionMutation, OwnerService, PlaybackAck, SessionQuery, SettingsPatch, SourceQuery } from './owner-routes.js';
 import type { Principal } from './security.js';
 
-export type OwnerDispatchOptions = {envelope?: EventEnvelope; idempotencyKey?: string; requestBody?: unknown; settingsPatch?: {baseRevision: number; patch: SettingsPatch}};
+export type OwnerDispatchOptions = {envelope?: EventEnvelope; idempotencyKey?: string; requestBody?: unknown; expectedEntity?: {id: string; revision: number}; settingsPatch?: {baseRevision: number; patch: SettingsPatch}};
 export interface OwnerEnginePort {
   readonly scope: Scope;
   readonly channel: Channel;
@@ -22,6 +21,7 @@ export interface OwnerEnginePort {
   activeSessionId(): string | null;
   dispatch(sessionId: string, event: DomainEvent, options?: OwnerDispatchOptions): Promise<DomainState>;
   statuses(): OwnerSnapshot['status'];
+  presentOwnerChapter?(sessionId: string, entityId: string): Promise<void>;
 }
 type ResultRef = {kind: 'chapter'|'lore'|'moment'|'playback'; sessionId: string; id: string} | {kind: 'settings'} | {kind: 'receipt'; value: InvalidationReceipt} | {kind: 'void'};
 type MutationRecord = {hash: string; result?: ResultRef};
@@ -106,7 +106,7 @@ export class RuntimeOwnerService implements OwnerService {
   getSession(principal: Principal,id: string): OwnerSnapshot {this.authorize(principal);return this.snapshot(this.state(id));}
   private snapshot(state: DomainState|null): OwnerSnapshot {
     const publication=this.engine.repository.getPublicationState(this.engine.scope),budget=this.engine.storage.budget.status(),status=this.engine.statuses();
-    return structuredClone({channel:this.engine.channel,session:state?.session??null,settings:this.engine.repository.getSettings(this.engine.scope),status,published:state?.published??null,drafts:state?.chapters.filter(c=>c.publicationState==='draft')??[],held:[...state?.chapters.filter(c=>c.publicationState==='held')??[],...state?.lore.filter(l=>l.status==='held')??[]],lore:state?.lore??[],moments:state?.moments??[],playback:state?.playbacks??[],sync:{state:status.cloud.state==='unconfigured'?'unconfigured':publication.pendingPrivacy||publication.publishSeq>publication.ackSeq?'pending':'synced',revision:publication.publishSeq,acknowledgedRevision:publication.ackSeq||null,lastSyncedAt:publication.lastSyncedAtMs===null?null:new Date(publication.lastSyncedAtMs).toISOString(),pendingPrivacy:publication.pendingPrivacy},revision:state?.revision??0,serverNow:this.engine.clock.iso(),budget:{limitUsd:budget.limitMicroUsd/1e6,committedUsd:budget.committedMicroUsd/1e6,reservedUsd:budget.reservedMicroUsd/1e6,paidCallsEnabled:budget.enabled}});
+    return structuredClone({channel:this.engine.channel,session:state?.session??null,settings:this.engine.repository.getSettings(this.engine.scope),status,published:state?.published??null,drafts:state?.chapters.filter(c=>c.publicationState==='draft')??[],held:[...state?.chapters.filter(c=>c.publicationState==='held')??[],...state?.lore.filter(l=>l.status==='held')??[]],lore:state?.lore??[],moments:state?.moments??[],playback:state?.playbacks??[],sync:{state:status.cloud.state==='error'?'error':status.cloud.state==='unconfigured'?'unconfigured':publication.pendingPrivacy||publication.publishSeq>publication.ackSeq?'pending':'synced',revision:publication.publishSeq,acknowledgedRevision:publication.ackSeq||null,lastSyncedAt:publication.lastSyncedAtMs===null?null:new Date(publication.lastSyncedAtMs).toISOString(),pendingPrivacy:publication.pendingPrivacy},revision:state?.revision??0,serverNow:this.engine.clock.iso(),budget:{limitUsd:budget.limitMicroUsd/1e6,committedUsd:budget.committedMicroUsd/1e6,reservedUsd:budget.reservedMicroUsd/1e6,paidCallsEnabled:budget.enabled}});
   }
   listSessions(principal: Principal,query: SessionQuery) {
     this.authorize(principal);const cursor=decode(query.cursor),limit=Math.max(1,Math.min(50,Math.floor(query.limit)));
@@ -136,18 +136,21 @@ export class RuntimeOwnerService implements OwnerService {
       let next=state;
       if(patch.title!==undefined||patch.summary!==undefined){
         const title=patch.title??chapter.title,summary=patch.summary??chapter.summary,source=this.statement(state,context.principal,summary);
-        next=await this.engine.dispatch(state.session.id,{type:'owner.edit',entityId:id,baseRevision:chapter.revision,source,title,summary,safety:pending,pinned:patch.pinned},this.options(context,{operation:'chapter.edit',id,patch,baseRevision:context.baseRevision}));
+        next=await this.engine.dispatch(state.session.id,{type:'owner.edit',entityId:id,baseRevision:chapter.revision,source,title,summary,safety:pending,pinned:patch.pinned},{...this.options(context,{operation:'chapter.edit',id,patch,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});
         const edited=next.chapters.find(c=>c.id===id)!;
-        void this.review([{id:'title',text:title},{id:'summary',text:summary}]).then(async results=>{await this.engine.dispatch(state.session.id,{type:'owner.review',entityId:id,ownerRevision:edited.ownerEditRevision,sourceId:source.id,sourceRevision:source.revision,title:results.find(r=>r.id==='title')!.text,summary:results.find(r=>r.id==='summary')!.text,safety:this.combined(results)});}).catch(()=>undefined);
+        void this.review([{id:'title',text:title},{id:'summary',text:summary}]).then(async results=>{
+          const safety=this.combined(results),reviewed=await this.engine.dispatch(state.session.id,{type:'owner.review',entityId:id,ownerRevision:edited.ownerEditRevision,sourceId:source.id,sourceRevision:source.revision,title:results.find(r=>r.id==='title')!.text,summary:results.find(r=>r.id==='summary')!.text,safety});
+          if(safetyAllowsPublication(safety)&&reviewed.chapters.some(c=>c.id===id&&c.ownerEditRevision===edited.ownerEditRevision))await this.engine.presentOwnerChapter?.(state.session.id,id);
+        }).catch(()=>undefined);
       }
-      if(patch.pinned!==undefined&&patch.title===undefined&&patch.summary===undefined)await this.engine.dispatch(state.session.id,{type:'owner.pin',entityId:id,baseRevision:next.chapters.find(c=>c.id===id)!.revision,pinned:patch.pinned},this.options(context,{operation:'chapter.edit',id,patch,baseRevision:context.baseRevision}));
+      if(patch.pinned!==undefined&&patch.title===undefined&&patch.summary===undefined)await this.engine.dispatch(state.session.id,{type:'owner.pin',entityId:id,baseRevision:next.chapters.find(c=>c.id===id)!.revision,pinned:patch.pinned},{...this.options(context,{operation:'chapter.edit',id,patch,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});
       return {kind:'chapter',sessionId:state.session.id,id};
     });
   }
   deleteChapter(context: OwnerRevisionMutation,id: string): Promise<InvalidationReceipt> {return this.remove(context,id,'chapter');}
   deleteLore(context: OwnerRevisionMutation,id: string): Promise<InvalidationReceipt> {return this.remove(context,id,'lore');}
   private remove(context: OwnerRevisionMutation,id: string,kind: 'chapter'|'lore'): Promise<InvalidationReceipt> {
-    return this.mutate(context,`${kind}.delete`,{id},async()=>{const {row,state}=this.entity(id,kind);if(row.revision!==context.baseRevision)throw conflict();const target={kind:'entity' as const,sessionId:state.session.id,id};const next=await this.engine.dispatch(state.session.id,{type:'privacy',target,reason:'owner_delete'},this.options(context,{operation:`${kind}.delete`,id,baseRevision:context.baseRevision}));if(!next.lastReceipt)throw new ApiError(503,'save_failed','The deletion could not be saved.');return {kind:'receipt',value:next.lastReceipt};});
+    return this.mutate(context,`${kind}.delete`,{id},async()=>{const {row,state}=this.entity(id,kind);if(row.revision!==context.baseRevision)throw conflict();const target={kind:'entity' as const,sessionId:state.session.id,id};const next=await this.engine.dispatch(state.session.id,{type:'privacy',target,reason:'owner_delete'},{...this.options(context,{operation:`${kind}.delete`,id,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});if(!next.lastReceipt)throw new ApiError(503,'save_failed','The deletion could not be saved.');return {kind:'receipt',value:next.lastReceipt};});
   }
   privacy(context: OwnerMutation,input: Parameters<OwnerService['privacy']>[1]): Promise<InvalidationReceipt> {
     return this.mutate(context,'privacy',input,async()=>{this.state(input.target.sessionId);const next=await this.engine.dispatch(input.target.sessionId,{type:'privacy',...input},this.options(context,{operation:'privacy',...input}));if(!next.lastReceipt)throw new ApiError(503,'save_failed','The privacy change could not be saved.');return {kind:'receipt',value:next.lastReceipt};});
@@ -158,7 +161,7 @@ export class RuntimeOwnerService implements OwnerService {
     return this.mutate(context,operation,{id,patch},async()=>{
       const {state}=this.entity(id,'lore'),lore=state.lore.find(l=>l.id===id);if(!lore||lore.revision!==context.baseRevision)throw conflict();
       const value={term:patch.term??lore.term,explanation:patch.explanation??lore.explanation,aliases:patch.aliases??lore.aliases,originMs:patch.originMs===undefined?lore.originMs:patch.originMs},source=this.statement(state,context.principal,value.explanation);
-      const next=await this.engine.dispatch(state.session.id,{type:'lore.edit',id,baseRevision:lore.revision,source,...value},this.options(context,{operation,id,patch,baseRevision:context.baseRevision}));
+      const next=await this.engine.dispatch(state.session.id,{type:'lore.edit',id,baseRevision:lore.revision,source,...value},{...this.options(context,{operation,id,patch,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});
       const edited=next.lore.find(l=>l.id===id)!;
       void this.review([{id:'term',text:value.term},{id:'explanation',text:value.explanation},...value.aliases.map((text,index)=>({id:`alias:${index}`,text}))]).then(async results=>{await this.engine.dispatch(state.session.id,{type:'lore.review',id,baseRevision:edited.revision,sourceId:source.id,sourceRevision:source.revision,term:results.find(r=>r.id==='term')!.text,explanation:results.find(r=>r.id==='explanation')!.text,aliases:value.aliases.map((_,index)=>results.find(r=>r.id===`alias:${index}`)!.text),originMs:value.originMs,safety:this.combined(results)});}).catch(()=>undefined);
       return {kind:'lore',sessionId:state.session.id,id};
@@ -169,7 +172,7 @@ export class RuntimeOwnerService implements OwnerService {
       const row=this.engine.repository.getEntity(this.engine.scope,id);if(!row||row.kind!=='lore')throw new ApiError(404,'not_found','This item is unavailable.');
       const state=this.state(row.sessionId),lore=state.lore.find(l=>l.id===id);if(!lore||lore.revision!==context.baseRevision)throw conflict();
       const event:DomainEvent=blocked?{type:'privacy',target:{kind:'term',sessionId:state.session.id,term:lore.term},reason:'owner_block'}:{type:'term.unblock',term:lore.term};
-      await this.engine.dispatch(state.session.id,event,this.options(context,{operation:'lore.block',id,blocked,baseRevision:context.baseRevision}));
+      await this.engine.dispatch(state.session.id,event,{...this.options(context,{operation:'lore.block',id,blocked,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});
       return {kind:'lore',sessionId:state.session.id,id};
     });
   }
@@ -178,7 +181,7 @@ export class RuntimeOwnerService implements OwnerService {
   }
   previewRecap(principal: Principal,sessionId: string): RecapPlan|null {
     this.authorize(principal);const state=this.state(sessionId);if(!state.published)return null;
-    return compileRecap(state.published,state.settings.layout,{id:'owner-preview',sessionId,reason:'manual',occurredAt:this.engine.clock.iso()},{media:state.media,durationMs:state.settings.recapDurationMs,generatedAt:this.engine.clock.iso()});
+    return compileRecap(state.published,state.settings.layout,{id:'owner-preview',sessionId,reason:'manual',occurredAt:this.engine.clock.iso()},{media:state.media.filter(media=>canDispatch(state,{sessionId,privacyEpoch:state.session.privacyEpoch,dependencyRefs:media.refs})),durationMs:state.settings.recapDurationMs,generatedAt:this.engine.clock.iso()});
   }
   triggerRecap(context: OwnerMutation,input: {sessionId: string;reason: 'manual'|'hotkey'}): Promise<PlaybackRef> {
     return this.mutate(context,'recap.trigger',input,async()=>{this.state(input.sessionId);const triggerId=`owner:${hash(context.idempotencyKey).slice(0,32)}`;const state=await this.engine.dispatch(input.sessionId,{type:'recap.trigger',trigger:{id:triggerId,...input,occurredAt:this.engine.clock.iso()}},this.options(context,{operation:'recap.trigger',...input}));const playback=state.playbacks.find(p=>p.id===`playback:${triggerId}`)??state.playbacks.find(p=>p.status==='queued');if(!playback)throw new ApiError(409,'recap_unavailable','A recap could not be prepared.');return {kind:'playback',sessionId:input.sessionId,id:playback.id};});
@@ -186,7 +189,7 @@ export class RuntimeOwnerService implements OwnerService {
   cancelRecap(context: OwnerMutation,id: string): Promise<void> {return this.playback(context,id,'cancel');}
   acknowledgeRecap(context: OwnerMutation,id: string,input: PlaybackAck): Promise<void> {return this.playback(context,id,input.state==='started'?'start':input.state==='ended'?'end':input.state,input);}
   private playback(context: OwnerMutation,id: string,action: 'prepared'|'start'|'end'|'cancel'|'error',input?: PlaybackAck): Promise<void> {
-    return this.mutate(context,`playback.${action}`,{id,input},async()=>{const {state}=this.entity(id,'playback');const playback=state.playbacks.find(p=>p.id===id);if(!playback)throw new ApiError(404,'not_found','This recap is unavailable.');if(['ended','cancelled','skipped'].includes(playback.status))return {kind:'void'};await this.engine.dispatch(state.session.id,{type:'playback',id,action},this.options(context,{operation:`playback.${action}`,id,input}));return {kind:'void'};});
+    return this.mutate(context,`playback.${action}`,{id,input},async()=>{const {state}=this.entity(id,'playback');const playback=state.playbacks.find(p=>p.id===id);if(!playback||['ended','cancelled','skipped'].includes(playback.status))return {kind:'void'};await this.engine.dispatch(state.session.id,{type:'playback',id,action},this.options(context,{operation:`playback.${action}`,id,input}));return {kind:'void'};});
   }
 }
 export const createOwnerService = (engine: OwnerEnginePort): OwnerService => new RuntimeOwnerService(engine);

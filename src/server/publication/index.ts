@@ -39,10 +39,11 @@ export class LocalPublisher {
       const response=await (this.options.fetch??fetch)(new URL(path,this.options.publicOrigin),{method:'POST',headers:{'content-type':'application/json',...signedHeaders(this.options.secret,'POST',path,scope.channelId,lease.publishSeq,frozen.body,now)},body:frozen.body,signal:AbortSignal.timeout(20_000)});
       if(response.ok){
         const ack=await response.json() as PublicationAck;
-        if(ack.publishSeq!==lease.publishSeq||typeof ack.headEtag!=='string'||!Number.isFinite(Date.parse(ack.lastSyncedAt)))throw new Error('Invalid publication ACK');
+        if(ack.publishSeq!==lease.publishSeq||typeof ack.headEtag!=='string'||!ack.headEtag||!Number.isSafeInteger(ack.publicRevision)||ack.publicRevision<0||!Number.isFinite(Date.parse(ack.lastSyncedAt)))throw new Error('Invalid publication ACK');
         // A privacy transaction may have cancelled this lease during fetch; never clear its pending status.
         if(!await this.options.validate(lease,operation)||!repository.finishOutbox(scope,lease.id,lease.leaseToken,'done'))return 'cancelled';
-        repository.acknowledgePublication(scope,lease.publishSeq,frozen.bodyHash);await this.options.onAck?.(ack,operation);return 'acknowledged';
+        if(!repository.acknowledgePublication(scope,lease.publishSeq,frozen.bodyHash))return 'cancelled';
+        await this.options.onAck?.(ack,operation);return 'acknowledged';
       }
       if(response.status>=400&&response.status<500&&response.status!==429){repository.finishOutbox(scope,lease.id,lease.leaseToken,'failed');return 'cancelled';}
       throw new Error('Publication requires retry');

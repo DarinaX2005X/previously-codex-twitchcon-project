@@ -12,14 +12,15 @@ export interface MediaCacheOptions {directory:string;allowedHosts:readonly strin
 export class MediaError extends Error {constructor(readonly code:'revoked'|'unavailable'|'capacity'|'invalid'){super(`Media ${code}.`);}}
 export function createFFmpegProbe(options:{ffprobe?:string;ffmpeg?:string}={}) {
   return async(file:string,kind:MediaInput['kind']):Promise<MediaProbe>=>{
-    const result=await execute(options.ffprobe??'ffprobe',['-v','error','-show_entries','format=duration,format_name:stream=codec_type,codec_name,sample_rate,channels,width,height','-of','json',file],{timeout:15000,maxBuffer:100000,windowsHide:true});
+    const formats=kind==='video'?'mov,matroska,webm':'wav,mp3,ogg';
+    const result=await execute(options.ffprobe??'ffprobe',['-v','error','-protocol_whitelist','file,pipe','-format_whitelist',formats,'-show_entries','format=duration,format_name:stream=codec_type,codec_name,sample_rate,channels,width,height','-of','json',file],{timeout:15000,maxBuffer:100000,windowsHide:true});
     const parsed=JSON.parse(result.stdout),durationMs=Number(parsed.format?.duration)*1000;
     if(!Number.isFinite(durationMs)||durationMs<=0||durationMs>120000||!Array.isArray(parsed.streams))throw new MediaError('invalid');
     const audio=parsed.streams.find((s:any)=>s.codec_type==='audio'),video=parsed.streams.find((s:any)=>s.codec_type==='video');
     if(kind==='video'&&(!video||!Number.isFinite(video.width)||!Number.isFinite(video.height)))throw new MediaError('invalid');
     if(kind==='audio'&&(!audio||!Number.isFinite(Number(audio.sample_rate))||Number(audio.sample_rate)<8000||!audio.channels))throw new MediaError('invalid');
     // Probe metadata alone is not proof that a truncated file decodes.
-    await execute(options.ffmpeg??'ffmpeg',['-v','error','-xerror','-i',file,'-f','null','-'],{timeout:30000,maxBuffer:100000,windowsHide:true});
+    await execute(options.ffmpeg??'ffmpeg',['-v','error','-xerror','-protocol_whitelist','file,pipe','-format_whitelist',formats,'-i',file,'-f','null','-'],{timeout:30000,maxBuffer:100000,windowsHide:true});
     const format=String(parsed.format?.format_name??'');const mimeType=kind==='video'?(format.includes('webm')?'video/webm':format.includes('mp4')||format.includes('mov')?'video/mp4':''):(format.includes('wav')?'audio/wav':format.includes('mp3')?'audio/mpeg':format.includes('ogg')?'audio/ogg':'');
     if(!mimeType)throw new MediaError('invalid');return {durationMs:Math.round(durationMs),mimeType};
   };

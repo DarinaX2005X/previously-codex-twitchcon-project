@@ -5,6 +5,7 @@ import { BudgetStore } from './budget.js';
 export { StorageError } from './database.js';
 export { SqliteRepository } from './repository.js';
 export type { WorkInput, WorkLease, EntityInput, PrivacyOptions, AcceptedAudio } from './repository.js';
+export type {DomainCheckpoint,DomainEntity,DomainHydration,DomainCommitInput,DomainCommitResult,MutationReceipt} from './domain-types.js';
 export { TokenVault, SessionStore, hashOpaqueId } from './auth.js';
 export { BudgetStore } from './budget.js';
 

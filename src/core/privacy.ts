@@ -3,9 +3,9 @@ import type { DomainState, DomainEffect } from './types.js';
 import { normalizeTerm, overlaps, leafRefs, uniqueRefs } from './evidence.js';
 
 /** Called on a cloned transition state. Storage must commit target + graph + checkpoint atomically. */
-export function invalidateDomain(state:DomainState,target:PrivacyTarget,effects:DomainEffect[]):void {
+export function invalidateDomain(state:DomainState,target:PrivacyTarget,effects:DomainEffect[],additionalRanges:{startMs:number;endMs:number}[]=[]):void {
   if(target.sessionId!==state.session.id)return;
-  const affected=new Set<string>(),ranges:{startMs:number;endMs:number}[]=[];
+  const affected=new Set<string>(),ranges:{startMs:number;endMs:number}[]=[...additionalRanges];
   const sourceMatch=(s:Source)=>target.kind==='session'||target.kind==='source'&&s.id===target.id||target.kind==='message'&&s.externalMessageId===target.externalMessageId||target.kind==='user'&&s.actorId===target.actorId&&s.startMs<=target.throughMs||target.kind==='interval'&&overlaps(s.startMs,s.endMs,target.fromMs,target.toMs);
   if(['source','message','user','interval','session'].includes(target.kind)){
     if(!state.tombstones.some(t=>JSON.stringify(t)===JSON.stringify(target)))state.tombstones.push(target);
@@ -21,18 +21,23 @@ export function invalidateDomain(state:DomainState,target:PrivacyTarget,effects:
   }
   if(target.kind==='session')for(const id of Object.keys(state.nodes))affected.add(id);
   for(const media of state.media)if(ranges.some(r=>overlaps(media.captureStartMs,media.captureEndMs,r.startMs,r.endMs)))affected.add(media.id);
+  if(target.kind==='session'||ranges.some(r=>overlaps(state.session.metadataMaxDependencyEndMs,state.session.metadataMaxDependencyEndMs,r.startMs,r.endMs))&&state.sources.some(source=>source.kind==='channel_metadata'&&affected.has(source.id)&&source.endMs===state.session.metadataMaxDependencyEndMs)){
+    state.metadataReviewed=false;state.session.title='';state.session.category='';state.session.metadataMaxDependencyEndMs=0;
+    if(state.published)state.published.session={...state.published.session,title:'',category:'',metadataMaxDependencyEndMs:0};
+  }
   // Both support and exposure edges participate, regardless of pin, language or object kind.
   let changed=true;while(changed){changed=false;for(const node of Object.values(state.nodes))if(!affected.has(node.id)&&[...node.supports,...node.exposedTo].some(r=>affected.has(r.id))){affected.add(node.id);changed=true;}}
   for(const node of Object.values(state.nodes))if(affected.has(node.id)){node.active=false;node.body=null;node.revision++;effects.push({type:'entity.upsert',node:{...node}});}
   state.memory=state.memory.filter(m=>!affected.has(m.id)&&!m.refs.some(r=>affected.has(r.id)));
   state.chapters=state.chapters.filter(c=>!affected.has(c.id));
-  state.lore=state.lore.filter(l=>!affected.has(l.id));
+  state.lore=state.lore.flatMap(l=>!affected.has(l.id)?[l]:target.kind==='term'?[{...l,revision:l.revision+1,explanation:'',originMs:null,originKind:'unknown' as const,momentId:null,maxDependencyEndMs:0,status:'blocked' as const,dependencyRefs:[],safety:{moderation:'unavailable' as const,pii:'review' as const,checkedAt:null,reason:null}}]:[]);
   state.moments=state.moments.filter(m=>!affected.has(m.id));
   state.candidates=state.candidates.filter(c=>!affected.has(c.id)&&!affected.has(c.entityId)&&!c.inputRefs.some(r=>affected.has(r.id)));
   state.phrases=state.phrases.filter(p=>!p.refs.some(r=>affected.has(r.id)));
   state.windows=[];state.openWindow=null;
   const externalClipActions:{clipId:string;manageUrl:string}[]=[];
   for(const media of state.media)if(affected.has(media.id)){media.state='revoked';if(media.clipId&&media.manageUrl)externalClipActions.push({clipId:media.clipId,manageUrl:media.manageUrl});}
+  for(const moment of state.moments)if(moment.mediaId&&affected.has(moment.mediaId)){moment.mediaId=null;moment.mediaState='revoked';moment.clip=null;moment.revision++;const node=state.nodes[moment.id];if(node){node.revision=moment.revision;node.body=moment;effects.push({type:'entity.upsert',node:structuredClone(node)});}}
   // Keep only identifier/interval metadata for revoked assets, never old media source refs/body.
   state.media=state.media.map(m=>m.state==='revoked'?{...m,refs:[]}:m);
   if(state.pendingGeneration){affected.add(state.pendingGeneration.ticket.jobId);state.pendingGeneration=null;}

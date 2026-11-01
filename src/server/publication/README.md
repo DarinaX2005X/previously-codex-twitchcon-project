@@ -23,7 +23,7 @@ Endpoints:
 - `GET /api/public/replays/:id?revision=...`: gated current manifest and 6-second visibility lease. Old revisions and revoked IDs return 410.
 - `GET /api/public/replays/:id/assets/:assetId?revision=...`: current manifest gate on every request, including Range. Only one bounded explicit `bytes=start-end` range is supported; malformed/multiple/out-of-bounds ranges return 416.
 
-All reads use Blob `useCache:false`; HTTP responses use no-store at browser and CDN layers. Private Blob URLs are never returned. Snapshot IDs/hashes are not public lookup routes. Caps: snapshot 1,000,000 bytes; head 128,000 bytes; 100 episode pointers; 10 manifests. Capacity exhaustion is explicit and never silently drops active content.
+All reads use Blob `useCache:false` and `Accept-Encoding: identity` so larger compressed JSON representations do not change the ETag used for CAS. HTTP responses use no-store at browser and CDN layers. Private Blob URLs are never returned. Snapshot IDs/hashes are not public lookup routes. Caps: snapshot 1,000,000 bytes; head 128,000 bytes; 100 episode pointers; 10 manifests. Capacity exhaustion is explicit and never silently drops active content.
 
 `PublicPoller` is a browser-only primitive for visible 2-second polling, focus revalidation, bounded failure backoff, and live/replay 6-second visibility expiry. On unavailability callers must remove story UI and stop replay worker/video/audio, revoke object URLs, and erase source memory. A public Twitch “Watch live” link can remain. Finalized text may opt out of the local heartbeat lease; replay manifests must continue revocation polling.
 

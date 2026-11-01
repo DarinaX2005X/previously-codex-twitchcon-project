@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSettings, PublicSnapshotSchema, RecapPlanSchema, type Source, type Safety, type StoryPatch, type Clock } from '../../src/shared/contracts/index.js';
-import { createDomainState, reduceDomain, stateHash, buildEvidencePacket, evidencePacketBytes, EVIDENCE_PACKET_BYTE_CAP, exportDomainState, hydrateDomainState, loreAnswer, canDispatch, type DomainState, type DomainEvent } from '../../src/core/index.js';
+import { createDomainState, reduceDomain, stateHash, buildEvidencePacket, evidencePacketBytes, EVIDENCE_PACKET_BYTE_CAP, exportDomainState, hydrateDomainState, recoverDomainState, loreAnswer, canDispatch, type DomainState, type DomainEvent } from '../../src/core/index.js';
 
 // AUTHORED DEVELOPMENT FIXTURE. No recorded stream, real Twitch delivery or model call.
 const start=Date.parse('2026-11-02T00:00:00Z');
@@ -94,7 +94,7 @@ describe('moments, lore, recap and closing',()=>{
   it('holds repeated lore without origin and persists term block across hydration',()=>{
     const h=harness();for(const [i,actor] of ['one','two'].entries()){h.set(1000+i);const source:Source={channelId:'channel',runId:'run',sessionId:'session',id:`phrase${i}`,revision:1,kind:'chat',startMs:1000+i,endMs:1000+i,actorId:actor,languageCodes:['en'],timePrecision:'event',text:'BRICK',status:'active',externalMessageId:null,moderation:'allowed'};h.send({type:'source',source,phrase:'ＢＲＩＣＫ'});}
     h.send({type:'lore.propose',id:'lore',term:'brick',explanation:'It started because a brick broke the app.',originRefs:[],safety:allowed});expect(h.state.lore[0]?.status).toBe('held');expect(loreAnswer(h.state,'brick')).toContain('not confirmed');
-    h.send({type:'privacy',target:{kind:'term',sessionId:'session',term:' BRICK '}});h.state=hydrateDomainState(exportDomainState(h.state),{privacyEpoch:h.state.session.privacyEpoch});expect(h.state.blockedTerms).toEqual(['brick']);expect(h.state.lore).toHaveLength(0);
+    h.send({type:'privacy',target:{kind:'term',sessionId:'session',term:' BRICK '}});h.state=hydrateDomainState(exportDomainState(h.state),{privacyEpoch:h.state.session.privacyEpoch});expect(h.state.blockedTerms).toEqual(['brick']);expect(h.state.lore[0]?.status).toBe('blocked');expect(h.state.lore[0]?.explanation).toBe('');
   });
   it('dedupes raids, bounds welcome queue and never waits for held lore',()=>{
     const h=harness();h.set(200000);
@@ -125,5 +125,63 @@ describe('bounded replay',()=>{
   },60000);
   it('replaying identical normalized inputs and clocks produces identical state fingerprints',()=>{
     const run=()=>{const h=harness();h.set(10000);h.source('a','I am fixing persistence.');h.finish();h.set(85000);h.send({type:'tick'});h.send({type:'recap.trigger',trigger:{id:'raid',sessionId:'session',reason:'raid',occurredAt:h.clock.iso()}});return stateHash(h.state);};expect(run()).toBe(run());
+  });
+});
+
+describe('integration-facing editorial and recovery contracts',()=>{
+  function published(){const h=harness();h.set(10000);h.source('a','I am building note persistence.');h.finish(undefined,'goal');h.set(85000);h.send({type:'tick'});return h;}
+  it('finishes pending owner review atomically and keeps earlier candidate content immutable',()=>{
+    const h=published(),old=structuredClone(h.state.candidates[0]!),chapter=h.state.chapters[0]!;
+    const source={...h.state.sources[0]!,id:'owner-pending',kind:'owner_statement' as const,revision:1,startMs:85000,endMs:85000,text:'Unreviewed owner correction.',moderation:'pending' as const};
+    h.send({type:'owner.edit',entityId:chapter.id,baseRevision:chapter.revision,source,title:'Correction',summary:'Unreviewed owner correction.',pinned:true,safety:pending});expect(h.state.chapters[0]?.publicationState).toBe('held');expect(h.state.published!.chapters).toHaveLength(0);
+    h.send({type:'owner.review',entityId:chapter.id,ownerRevision:1,sourceId:source.id,sourceRevision:1,title:'Correction',summary:'Reviewed owner correction.',safety:allowed});expect(h.state.published!.chapters[0]?.summary).toBe('Reviewed owner correction.');expect(h.state.published!.chapters[0]?.pinned).toBe(true);expect(h.state.session.privacyEpoch).toBe(0);expect(old.chapter.summary).toBe('I am building note persistence.');
+  });
+  it('edits finalized episodes and clears the old online acknowledgement',()=>{
+    const h=published(),chapter=h.state.chapters[0]!;h.state.session.status='finalized';h.state.session.endedAt=h.clock.iso();h.state.session.finalizedAt=h.clock.iso();h.state.session.finalSnapshotAckAt=h.clock.iso();
+    const source={...h.state.sources[0]!,id:'owner-archive',kind:'owner_statement' as const,revision:1,startMs:85000,endMs:85000,text:'Archived correction.'};
+    const result=h.send({type:'owner.edit',entityId:chapter.id,baseRevision:chapter.revision,source,title:'Archived correction',summary:'Archived correction.',safety:allowed});expect(h.state.published!.chapters[0]?.summary).toBe('Archived correction.');expect(h.state.published!.liveLeaseUntil).toBeNull();expect(h.state.session.finalSnapshotAckAt).toBeNull();expect(result.effects.some(e=>e.type==='publication'&&e.final)).toBe(true);
+  });
+  it('increments pin revision and rejects a stale second mutation without changing immutable candidate',()=>{
+    const h=published(),chapter=h.state.chapters[0]!,rev=chapter.revision,old=JSON.stringify(h.state.candidates[0]?.chapter);
+    h.send({type:'owner.pin',entityId:chapter.id,baseRevision:rev,pinned:true});expect(h.state.chapters[0]?.revision).toBe(rev+1);h.send({type:'owner.pin',entityId:chapter.id,baseRevision:rev,pinned:false});expect(h.state.chapters[0]?.pinned).toBe(true);expect(JSON.stringify(h.state.candidates[0]?.chapter)).toBe(old);
+  });
+  it('switches translated current and chapters together through settings, then pauses generation',()=>{
+    const h=published(),chapter=h.state.chapters[0]!;
+    h.send({type:'presentation',entityId:chapter.id,baseRevision:chapter.revision,ownerRevision:0,language:'ru',title:'Сохранение заметок',summary:'Автор добавляет сохранение заметок.',current:{goal:'Сохранить заметки',change:null,now:'Проверяет сохранение',sourceTimeMs:0,maxDependencyEndMs:0},safety:allowed,inputRefs:chapter.dependencyRefs});
+    h.send({type:'settings',baseRevision:0,settings:{...h.state.settings,revision:1,recapLanguage:'ru'}});expect(h.state.published!.language).toBe('ru');expect(h.state.published!.current?.goal).toBe('Сохранить заметки');expect(h.state.published!.chapters[0]?.summary).toContain('Автор');
+    h.set(100000);h.source('b','Another change.');expect(h.state.pendingGeneration).not.toBeNull();h.send({type:'settings',baseRevision:1,settings:{...h.state.settings,revision:2,listeningPaused:true}});expect(h.state.pendingGeneration).toBeNull();expect(h.state.captureEpoch).toBe(1);
+  });
+  it('quarantines cleared chat with descendant invalidation but preserves owner evidence and speech',()=>{
+    const h=harness();h.set(10000);h.source('chat','Maybe fixed.',10000,{kind:'chat',actorId:'viewer'});h.finish('Chat thinks the issue may be fixed.','question');h.set(85000);h.send({type:'tick'});expect(h.state.published!.chapters).toHaveLength(1);
+    h.send({type:'chat.clear',throughMs:10000});expect(h.state.sources[0]?.text).toBe('Maybe fixed.');expect(h.state.sources[0]?.status).toBe('quarantined');expect(h.state.tombstones).toHaveLength(0);expect(h.state.published!.chapters).toHaveLength(0);expect(h.state.session.privacyEpoch).toBe(1);
+    h.source('late-chat','Late old chat.',9000,{kind:'chat',actorId:'viewer'});expect(h.state.sources.find(s=>s.id==='late-chat')?.status).toBe('quarantined');
+    h.source('speech','Speech remains useful.',9000);expect(h.state.sources.find(s=>s.id==='speech')?.status).toBe('active');
+  });
+  it('does not regenerate an editorially hidden chapter from its retained transcript',()=>{
+    const h=published(),id=h.state.chapters[0]!.id;h.send({type:'privacy',target:{kind:'entity',sessionId:'session',id}});expect(h.state.sources[0]?.text).toContain('building');expect(buildEvidencePacket(h.state).sources).toHaveLength(0);expect(buildEvidencePacket(h.state).memory).toHaveLength(0);h.set(200000);h.send({type:'tick'});expect(h.state.pendingGeneration).toBeNull();
+  });
+  it('reconstructs a surviving canonical published projection without a checkpoint',()=>{
+    const h=published(),state=h.state;
+    const restored=recoverDomainState({channel:state.channel,session:state.session,settings:state.settings,revision:state.revision,privacyEpoch:state.session.privacyEpoch,checkpoint:null,sources:state.sources,entities:Object.values(state.nodes).map(n=>({...n,ownerRevision:state.ownerRevisions[n.id]??0,ownerLocked:state.ownerLocks.includes(n.id),pinned:false})),candidates:state.candidates,published:null,tombstones:state.tombstones,blockedTerms:[],bannedActors:[],captureEpoch:0,chatClearThroughMs:null});
+    expect(restored.published?.chapters[0]?.summary).toContain('building');expect(restored.published?.current?.goal).toContain('building');expect(restored.playbacks).toHaveLength(0);expect(restored.published?.session.title).toBe('');expect(PublicSnapshotSchema.safeParse(restored.published).success).toBe(true);
+  });
+  it('caps unsafe pending candidates and does not silently replace a held version',()=>{
+    const h=harness();for(let i=0;i<6;i++){h.set(10000+i*45000);h.source(`input${i}`,`The explicit development step is ${i}.`);h.finish(undefined,'state',pending);}expect(h.state.candidates).toHaveLength(4);expect(h.state.published).toBeNull();
+  });
+  it('withdraws both presentations and their current projections on source erasure',()=>{
+    const h=published(),chapter=h.state.chapters[0]!;h.send({type:'presentation',entityId:chapter.id,baseRevision:chapter.revision,ownerRevision:0,language:'ru',title:'Заметки',summary:'Сохранение заметок.',safety:allowed,inputRefs:chapter.dependencyRefs});expect(h.state.candidates).toHaveLength(2);
+    h.send({type:'privacy',target:{kind:'source',sessionId:'session',id:'a'}});expect(h.state.candidates).toHaveLength(0);expect(Object.values(h.state.nodes).filter(n=>n.kind==='current_state')).toHaveLength(0);expect(h.state.published?.current).toBeNull();
+  });
+  it('requires explicit accepted-tail drainage before completing, even after intake closes',()=>{
+    const h=published();h.set(100000);h.send({type:'closing',endedAt:h.clock.iso()});h.finish();h.set(200000);h.send({type:'tick'});expect(h.state.session.status).toBe('closing');h.send({type:'tail.drained'});expect(h.state.session.status).toBe('finalized');
+  });
+  it('cancels preparation after 1.5 seconds and never repeats its completed trigger',()=>{
+    const h=harness();h.set(200000);const trigger={id:'silent-overlay',sessionId:'session',reason:'raid' as const,occurredAt:h.clock.iso()};h.send({type:'recap.trigger',trigger});h.set(201499);h.send({type:'tick'});expect(h.state.playbacks).toHaveLength(1);h.set(201500);const expired=h.send({type:'tick'});expect(h.state.playbacks).toHaveLength(0);expect(expired.effects.some(e=>e.type==='playback.cancel')).toBe(true);h.send({type:'recap.trigger',trigger});expect(h.state.playbacks).toHaveLength(0);
+  });
+  it('skips a missed start after three seconds instead of replaying on reconnect',()=>{
+    const h=harness();h.set(200000);h.send({type:'recap.trigger',trigger:{id:'missed-start',sessionId:'session',reason:'raid',occurredAt:h.clock.iso()}});const id=h.state.playbacks[0]!.id;h.send({type:'playback',id,action:'prepared'});h.set(203301);const result=h.send({type:'tick'});expect(h.state.playbacks).toHaveLength(0);expect(result.effects.some(e=>e.type==='playback.cancel'&&e.playback.status==='skipped')).toBe(true);h.send({type:'playback',id,action:'start'});expect(h.state.playbacks).toHaveLength(0);
+  });
+  it('ends playing scenes by clock and grants the queued welcome its own preparation timeout',()=>{
+    const h=harness();h.set(200000);for(const id of ['first','second'])h.send({type:'recap.trigger',trigger:{id,sessionId:'session',reason:'raid',occurredAt:h.clock.iso()}});const first=h.state.playbacks[0]!.id;h.send({type:'playback',id:first,action:'prepared'});h.set(200300);h.send({type:'playback',id:first,action:'start'});h.set(205300);const done=h.send({type:'tick'});expect(h.state.playbacks).toHaveLength(1);expect(h.state.playbacks[0]?.id).toBe('playback:second');expect(h.state.playbacks[0]?.status).toBe('preparing');expect(done.effects.some(e=>e.type==='playback.prepare'&&e.playback.id==='playback:second')).toBe(true);h.set(206799);h.send({type:'tick'});expect(h.state.playbacks).toHaveLength(1);h.set(206800);h.send({type:'tick'});expect(h.state.playbacks).toHaveLength(0);
   });
 });

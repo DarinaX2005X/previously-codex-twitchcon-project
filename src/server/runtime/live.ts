@@ -1,0 +1,129 @@
+import { Router, type RequestHandler } from 'express';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { ChannelSchema, type Channel, type Clock } from '../../shared/contracts/index.js';
+import { ProviderTransport, OpenAIStoryProvider, OpenAITranscriptionProvider, SafetyService, OpenAIContextualPrivacy, OpenAIModeration } from '../providers/index.js';
+import { AudioIntakeService } from '../audio/intake.js';
+import { createAudioRouter } from '../audio/router.js';
+import { PrivateMediaCache } from '../media/cache.js';
+import { createMediaRouter } from '../media/router.js';
+import { resolveConfiguredChannel } from '../twitch/helix.js';
+import { createTwitchRuntime } from './twitch-runtime.js';
+import { createCloudRuntime } from './cloud-runtime.js';
+import { createOverlayRouter } from './overlay-routes.js';
+import { StoryEngine, type RuntimeStorage } from './engine.js';
+import { createOwnerService } from './owner-service.js';
+import { createOwnerRouter } from './owner-routes.js';
+import { BoundedScheduler } from './scheduler.js';
+import type { RuntimeConfig } from './config.js';
+import type { RevisionStream } from './updates.js';
+import { ApiError } from './errors.js';
+
+async function channelIdentity(config: RuntimeConfig): Promise<Channel | null> {
+  const {clientId, clientSecret, channelLogin} = config.twitch;
+  if (!clientId || !clientSecret || !channelLogin) return null;
+  const file = resolve(config.dataDir, 'channel-identity.json');
+  try {
+    const value = ChannelSchema.parse(JSON.parse(await readFile(file, 'utf8')));
+    if (value.login === channelLogin.toLowerCase() && /^\d+$/.test(value.id)) return value;
+  } catch { /* An absent cache requires a fresh public identity lookup. */ }
+  const value = await resolveConfiguredChannel({clientId, clientSecret, login: channelLogin.toLowerCase()});
+  await mkdir(config.dataDir, {recursive: true});
+  await writeFile(file, JSON.stringify(value), {mode: 0o600});
+  return value;
+}
+
+/** Compose the live adapters only. Recorded replay has a separate, network-free composition. */
+export async function createLiveRuntime(options: {config: RuntimeConfig; storage: RuntimeStorage; updates: RevisionStream; clock: Clock; channel?: Channel}) {
+  const {config, storage, updates, clock} = options;
+  const channel = options.channel ?? await channelIdentity(config);
+  if (!channel || !config.sessionSecret || !storage.tokenVault || !config.twitch.clientId || !config.twitch.clientSecret) return null;
+  const scope = {channelId: channel.id, runId: 'live'};
+  storage.repository.ensureChannel(scope, channel.login);
+  const settings = storage.repository.getSettings(scope);
+  if (settings.revision === 0 && (settings.recapLanguage !== config.language || settings.publicationDelaySeconds !== config.publicationDelaySeconds)) {
+    storage.repository.updateSettings(scope, settings.revision, {recapLanguage: config.language, publicationDelaySeconds: config.publicationDelaySeconds});
+  }
+  storage.budget.setPaidEnabled(Boolean(config.paidCallsEnabled && config.openaiApiKey && storage.budget.status().usedMicroUsd < storage.budget.status().limitMicroUsd));
+  const transport = new ProviderTransport({apiKey: config.openaiApiKey, runId: 'live', budget: storage.budget, externalCallsEnabled: config.paidCallsEnabled, now: clock.now});
+  const safety = new SafetyService(new OpenAIContextualPrivacy(transport), new OpenAIModeration(transport), clock.now);
+  const story = new OpenAIStoryProvider(transport);
+  let twitch: ReturnType<typeof createTwitchRuntime>;
+  let cloud: ReturnType<typeof createCloudRuntime>;
+  const engine = new StoryEngine({channel, scope, storage, clock, updates, safety, story,
+    isOwnEcho: id => twitch?.isOwnEcho(id) ?? false,
+    onEffects: (sessionId, effects, state) => {
+      twitch?.onEffects(sessionId, effects, state);
+      cloud?.onEffects(sessionId, effects, state);
+      for (const effect of effects) {
+        if (effect.type === 'playback.prepare' || effect.type === 'playback.start') {
+          for (const asset of effect.playback.plan?.media ?? []) media.protect(asset.id, clock.now() + 30_000);
+        }
+        if (effect.type === 'privacy') {
+          for (const id of effect.receipt.hiddenEntityIds) void media.revoke(id).catch(() => {});
+        }
+      }
+    },
+  });
+  const media = new PrivateMediaCache({directory: resolve(config.dataDir, 'media'), allowedHosts: ['production.assets.clips.twitchcdn.net'], now: clock.now,
+    visible: input => twitch?.allowsMedia(input) ?? false,
+    onRevoke: () => updates.publish({...scope, event: 'privacy.invalidated', data: {sessionId: engine.activeSessionId(), revision: 0}}),
+  });
+  twitch = createTwitchRuntime({config, scope, channel, storage, engine, updates, clock, media});
+  cloud = createCloudRuntime({scope, channel, engine, storage, publicOrigin: config.publicOrigin, sharedSecret: config.publishSharedSecret, clock, updates});
+  const audio = new AudioIntakeService({repository: storage.repository, secret: config.sessionSecret, directory: resolve(config.dataDir, 'audio'), transcription: new OpenAITranscriptionProvider(transport), safety, now: clock.now,
+    onSource: source => engine.drain(source.sessionId),
+    onGap: async (sessionId, startMs, endMs) => {await engine.dispatch(sessionId, {type: 'gap', startMs, endMs});},
+  });
+  const owner = createOwnerService(engine);
+  const ownerRouter = Router();
+  ownerRouter.use(twitch.ownerRouter);
+  ownerRouter.use(createAudioRouter(audio, (_req, _res, next) => next()));
+  ownerRouter.use(createOwnerRouter(owner));
+  const mediaAuthorization: RequestHandler = async (req, res, next) => {
+    try {
+      const principal = await twitch.auth.authenticate(req, 'owner') ?? await twitch.auth.authenticate(req, 'overlay');
+      if (!principal || principal.expiresAtMs <= clock.now()) throw new ApiError(401, 'session_required', 'Sign in to continue.');
+      if (principal.channelId !== scope.channelId || principal.runId !== 'live') throw new ApiError(403, 'role_forbidden', 'This session cannot access that media.');
+      res.locals.principal = principal; next();
+    } catch (error) {next(error);}
+  };
+  const scheduler = new BoundedScheduler(storage.repository, [
+    {scope, kinds: ['stt'], concurrency: 2, execute: (job, signal) => audio.execute(scope, job, signal)},
+    {scope, kinds: ['story'], concurrency: 1, execute: (job, signal) => engine.executeStory(job, signal)},
+  ]);
+  let stopped = false, ticking = false, lastCleanupAt = 0;
+  let interval: ReturnType<typeof setInterval> | undefined;
+  const tick = async () => {
+    if (stopped || ticking) return;
+    ticking = true;
+    try {
+      await engine.tick();
+      await twitch.tick();
+      await cloud.tick();
+      if (config.paidCallsEnabled && config.openaiApiKey) void engine.checkPendingSources().catch(() => {});
+      if (clock.now() - lastCleanupAt >= 30_000) {lastCleanupAt = clock.now(); await audio.cleanup();}
+    } catch {
+      engine.setStatus('story', {state: 'error', lastObservedAt: clock.iso(), message: 'An update could not be saved. The previous safe recap remains available.', action: 'Check local storage'});
+    } finally {ticking = false;}
+  };
+  return {
+    engine, owner, audio, media, channel, scope, auth: twitch.auth,
+    routers: {auth: twitch.authRouter, owner: ownerRouter, overlay: createOverlayRouter({engine, clock}), media: createMediaRouter(media, mediaAuthorization)},
+    setup: () => ({twitch: twitch.status(), openai: {connected: false, configured: Boolean(config.openaiApiKey), paidCallsEnabled: storage.budget.status().enabled}}),
+    authorizeStream: (principal: {sessionId: string; role: 'owner'|'overlay'|'demo'; channelId: string; runId: string}) => principal.channelId === scope.channelId && principal.runId === 'live' && Boolean(storage.sessions.verify(scope, principal.sessionId, principal.role)),
+    async start() {
+      await engine.recoverPlayback();
+      await media.initialize(); await audio.cleanup();
+      await twitch.start();
+      scheduler.start();
+      interval = setInterval(() => {void tick();}, 1000); interval.unref();
+      void tick();
+    },
+    async close() {
+      if (stopped) return; stopped = true;
+      if (interval) clearInterval(interval);
+      await twitch.stop(); await scheduler.stop(); await cloud.close(); await engine.idle();
+    },
+  };
+}

@@ -4,6 +4,8 @@ import { SourceSchema, EventEnvelopeSchema, GenerationTicketSchema, StoryPatchSc
 import { StorageDatabase, StorageError, integer, json } from './database.js';
 import { ControlPersistence } from './control.js';
 import type { MutationReceipt } from './domain-types.js';
+import type { DomainCommitInput, DomainCommitResult, DomainHydration, DomainCheckpoint } from './domain-types.js';
+import { DomainPersistence } from './domain.js';
 
 export type WorkInput = {id?: string; sessionId: string; kind: string; businessKey: string; payload: unknown; priority?: number; nextAtMs?: number; dependencyRefs?: VersionRef[]};
 export type WorkLease = {id: string; sessionId: string; kind: string; payload: unknown; privacyEpoch: number; leaseToken: string; leaseUntilMs: number; attempts: number; publishSeq: number|null;frozenPublication?:{body:string;bodyHash:string}};
@@ -20,13 +22,26 @@ function canonical(value: unknown): string {
 
 export class SqliteRepository {
   private readonly controls:ControlPersistence;
-  constructor(private readonly db: StorageDatabase, private readonly now: () => number) {this.controls=new ControlPersistence(db,now);}
+  private readonly domain:DomainPersistence;
+  constructor(private readonly db: StorageDatabase, private readonly now: () => number) {this.controls=new ControlPersistence(db,now);this.domain=new DomainPersistence(db,now,this);}
+  getDomainCheckpoint(scope:Scope,sessionId:string):DomainCheckpoint{return this.domain.checkpoint(scope,sessionId);}
+  getDomainHydration(scope:Scope,sessionId:string):DomainHydration{return this.domain.hydration(scope,sessionId);}
+  applyDomainTransition(scope:Scope,sessionId:string,input:DomainCommitInput):DomainCommitResult{return this.domain.apply(scope,sessionId,input);}
   controlGet<T=unknown>(scope:Scope,key:string):T|null{return this.controls.get<T>(scope,key);}
   controlPut(scope:Scope,key:string,value:unknown,expiresAtMs?:number):void{this.controls.put(scope,key,value,expiresAtMs);}
   controlDelete(scope:Scope,key:string):boolean{return this.controls.delete(scope,key);}
   controlTake<T=unknown>(scope:Scope,key:string):T|null{return this.controls.take<T>(scope,key);}
   controlClaim(scope:Scope,key:string,value:unknown,expiresAtMs?:number):boolean{return this.controls.claim(scope,key,value,expiresAtMs);}
   controlUpdate<T>(scope:Scope,key:string,updater:(current:T|null)=>T|null,expiresAtMs?:number):T|null{return this.controls.update(scope,key,updater,expiresAtMs);}
+  runIdempotentControl<T>(scope:Scope,key:string,requestBody:unknown,action:()=>T):T {
+    return this.db.transaction(()=>{
+      if(!key || key.length>256)throw new StorageError('invalid_input','Control mutation key exceeds its limit.');
+      const storageKey=`control-receipt:${digest(key)}`,requestHash=digest(requestBody),previous=this.controlGet<{requestHash:string;result:T}>(scope,storageKey);
+      if(previous){if(previous.requestHash!==requestHash)throw new StorageError('conflict','Idempotency key was already used for a different request.');return previous.result;}
+      const result=action();if(result instanceof Promise || (result && typeof result==='object' && 'then' in result))throw new StorageError('invalid_input','Control mutations must be synchronous.');
+      this.controlPut(scope,storageKey,{requestHash,result});return result;
+    });
+  }
   getSettings(scope:Scope):Settings{return this.controls.settings(scope);}
   updateSettings(scope:Scope,baseRevision:number,patch:Partial<Omit<Settings,'revision'>>,options?:{idempotencyKey:string;requestBody:unknown}):Settings {
     return this.db.transaction(()=>{
@@ -94,6 +109,13 @@ export class SqliteRepository {
       ${cursor ? 'AND (started_at>? OR (started_at=? AND id>?))' : ''} ORDER BY started_at,id LIMIT ?`,
     ...this.scope(scope), ...(cursor ? [cursor.startedAt,cursor.startedAt,cursor.id] : []), limit);
     return rows.map(row => this.getSession(scope,String(row.id)));
+  }
+  getActiveSession(scope:Scope):Session|null {
+    const row=this.db.get("SELECT id FROM sessions WHERE channel_id=? AND run_id=? AND status IN ('live','closing') ORDER BY started_at DESC,id DESC LIMIT 1",...this.scope(scope));
+    return row ? this.getSession(scope,String(row.id)) : null;
+  }
+  listOpenSessions(scope:Scope,limit=100):Session[] {
+    return this.db.all("SELECT id FROM sessions WHERE channel_id=? AND run_id=? AND status IN ('live','closing') ORDER BY started_at DESC,id DESC LIMIT ?",...this.scope(scope),Math.min(integer(limit,1),100)).map(row=>this.getSession(scope,String(row.id)));
   }
   private ref(scope: Scope, ref: VersionRef): boolean {
     const source = this.db.get('SELECT revision,status FROM sources WHERE channel_id=? AND run_id=? AND id=?', ...this.scope(scope),ref.id);
@@ -263,6 +285,20 @@ export class SqliteRepository {
   }
   finishJob(scope:Scope,id:string,leaseToken:string,state:'done'|'failed'|'unknown_outcome',nextAtMs?:number) { return this.finish('jobs',scope,id,leaseToken,state,nextAtMs); }
   finishOutbox(scope:Scope,id:string,leaseToken:string,state:'done'|'failed'|'unknown_outcome',nextAtMs?:number) { return this.finish('outbox',scope,id,leaseToken,state,nextAtMs); }
+  pendingJobCount(scope:Scope,sessionId:string,kinds?:string[]):number {
+    this.session(scope,sessionId);if(kinds && kinds.length>32)throw new StorageError('invalid_input','Job kind filter exceeds its limit.');
+    return Number(this.db.get(`SELECT COUNT(*) AS n FROM jobs WHERE channel_id=? AND run_id=? AND session_id=? AND state IN ('queued','running') ${kinds?.length ? `AND kind IN (${kinds.map(()=>'?').join(',')})` : ''}`,...this.scope(scope),sessionId,...(kinds ?? []))!.n);
+  }
+  cancelSessionEffects(scope:Scope,sessionId:string,kinds:string[]=['chat','clip','marker']):{cancelled:number;unknown:number} {
+    return this.db.transaction(()=>{
+      this.session(scope,sessionId);if(!kinds.length || kinds.some(kind=>!['chat','clip','marker'].includes(kind)))throw new StorageError('invalid_input','Unsupported session effect cancellation.');
+      const placeholders=kinds.map(()=>'?').join(',');
+      let cancelled=Number(this.db.run(`UPDATE outbox SET state='cancelled',payload=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND session_id=? AND state='queued' AND kind IN (${placeholders})`,...this.scope(scope),sessionId,...kinds).changes);
+      const unknown=Number(this.db.run(`UPDATE outbox SET state='unknown_outcome',payload=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND session_id=? AND state='running' AND kind IN (${placeholders})`,...this.scope(scope),sessionId,...kinds).changes);
+      if(kinds.includes('clip'))cancelled+=Number(this.db.run("UPDATE jobs SET state='cancelled',payload=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND session_id=? AND kind='twitch.clip.intent' AND state IN ('queued','running')",...this.scope(scope),sessionId).changes);
+      return {cancelled,unknown};
+    });
+  }
   registerGeneration(ticket:GenerationTicket,entityId:string):void {
     if (!GenerationTicketSchema.safeParse(ticket).success) throw new StorageError('invalid_input','Generation ticket does not match the shared contract.');
     this.db.transaction(()=>{
@@ -521,6 +557,8 @@ export class SqliteRepository {
         if(existing.sha256!==input.sha256 || existing.actor_id!==input.actorId || Number(existing.start_ms)!==input.startMs || Number(existing.end_ms)!==input.endMs)throw new StorageError('conflict','Audio sequence already has different content.');
         return {jobId:String(existing.job_id),sourceId:String(existing.source_id),duplicate:true};
       }
+      const prior=this.db.get('SELECT sequence,end_ms FROM audio_chunks WHERE channel_id=? AND run_id=? AND session_id=? AND lease_epoch=? ORDER BY sequence DESC LIMIT 1',...this.scope(scope),input.sessionId,input.leaseEpoch);
+      if(prior && (input.sequence<=Number(prior.sequence) || input.startMs<Number(prior.end_ms)-2))throw new StorageError('conflict','Audio sequence overlaps an accepted chunk.');
       const suffix=digest([scope,input.sessionId,input.leaseEpoch,input.sequence]).slice(0,40),sourceId=`audio_${suffix}`,jobId=`stt_${suffix}`;
       const placeholder:Source={...scope,id:sourceId,sessionId:input.sessionId,revision:1,kind:'speech',startMs:input.startMs,endMs:input.endMs,actorId:null,languageCodes:[],timePrecision:'chunk',text:null,status:'active',externalMessageId:null,moderation:'pending'};
       if(this.tombstoned(scope,placeholder))throw new StorageError('conflict','This audio interval was forgotten.');

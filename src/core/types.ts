@@ -5,11 +5,11 @@ export type NodeKind = 'claim'|'relation'|'chapter'|'current_state'|'presentatio
 export type DerivedNode = { id: string; revision: number; kind: NodeKind; supports: VersionRef[]; exposedTo: VersionRef[]; startMs: number; endMs: number; active: boolean; body: unknown };
 export type MemoryFact = { id: string; text: string; refs: VersionRef[]; role: GroundedClaim['role']; firstAtMs: number; lastAtMs: number };
 export type GroundingReview = { acceptedClaimIds: string[]; acceptedRelationKeys: string[]; issues?: string[] };
-export type StoryCandidate = { id: string; entityId: string; revision: number; ownerRevision: number; privacyEpoch: number; inputRefs: VersionRef[]; eligibleAtMs: number; chapter: Chapter; current: CurrentState|null; safety: Safety; language: RecapLanguage; status: 'pending'|'published'|'rejected'; };
+export type StoryCandidate = { id: string; entityId: string; revision: number; ownerRevision: number; privacyEpoch: number; inputRefs: VersionRef[]; eligibleAtMs: number; chapter: Chapter; current: CurrentState|null; currentNodeId?: string; safety: Safety; language: RecapLanguage; status: 'pending'|'published'|'rejected'; };
 export type GenerationRequest = { ticket: GenerationTicket; entityId: string; reason: 'current'|'chapter'|'metadata'|'topic'|'final'; packet: EvidencePacket; requestedAtMs: number; sourceRevision: number };
 export type ReactionWindow = { startMs: number; actors: Record<string, number>; count: number; emotes: number; laughter: number; clipIt: number; refs: VersionRef[] };
 export type PhraseObservation = { term: string; aliases: string[]; firstMs: number; lastMs: number; actors: string[]; refs: VersionRef[] };
-export type DomainMedia = { id: string; revision: number; momentId: string|null; refs: VersionRef[]; captureStartMs: number; captureEndMs: number; durationMs: number; state: 'pending'|'ready'|'unavailable'|'revoked'; kind: 'video'|'image'|'audio'; previousSession: boolean; ownerApproved: boolean; clipId?: string; manageUrl?: string };
+export type DomainMedia = { id: string; revision: number; momentId: string|null; refs: VersionRef[]; captureStartMs: number; captureEndMs: number; durationMs: number; state: 'pending'|'ready'|'unavailable'|'revoked'; kind: 'video'|'image'|'audio'; previousSession: boolean; ownerApproved: boolean; clipId?: string; manageUrl?: string; clip?:{id:string;url:string;embedUrl:string} };
 export type DomainState = {
   version: 1; revision: number; channel: Channel; session: Session; settings: Settings;
   metadataReviewed: boolean;
@@ -24,6 +24,7 @@ export type DomainState = {
   pendingGeneration: GenerationRequest|null; boundary: 'metadata'|'topic'|null; sequence: number;
   windows: ReactionWindow[]; openWindow: ReactionWindow|null; lastAutoMomentAtMs: number|null; pendingClipId: string|null;
   phrases: PhraseObservation[]; playbacks: PlaybackRef[]; seenTriggers: string[]; lastRecapRevision: number|null;
+  playbackTiming: Record<string,{prepareAtMs:number|null;startAtMs:number|null}>;
   closing: { endedAtMs: number; intakeUntilMs: number; deadlineMs: number; tailDrained: boolean; finalProcessedRevision: number; failed: boolean }|null;
   nextGenerationAfterMs: number;
   gaps: {startMs:number;endMs:number}[]; lastReceipt: InvalidationReceipt|null;
@@ -40,8 +41,9 @@ export type DomainEvent =
   | { type: 'ban'; actorId: string; throughMs: number }
   | { type: 'unban'; actorId: string }
   | { type: 'pause'; paused: boolean }
+  | { type: 'settings'; settings: Settings; baseRevision: number }
   | { type: 'chat.clear'; throughMs: number }
-  | { type: 'owner.edit'; entityId: string; baseRevision: number; source: Source; title: string; summary: string; safety: Safety; language?: RecapLanguage }
+  | { type: 'owner.edit'; entityId: string; baseRevision: number; source: Source; title: string; summary: string; safety: Safety; language?: RecapLanguage; pinned?: boolean }
   | { type: 'owner.review'; entityId: string; ownerRevision: number; sourceId: string; sourceRevision: number; title: string; summary: string; safety: Safety; language?: RecapLanguage; current?: CurrentState }
   | { type: 'owner.pin'; entityId: string; baseRevision: number; pinned: boolean }
   | { type: 'candidate.safety'; candidateId: string; safety: Safety }
