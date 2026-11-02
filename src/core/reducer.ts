@@ -5,6 +5,7 @@ import { buildEvidencePacket, packetRefs, validateStoryPatch, canonical, stateHa
 import { invalidateDomain } from './privacy.js';
 import { advanceWindows, observeChat, observePhrase, saveMoment } from './moments.js';
 import { compileRecap, canDispatch, recapLineage } from './recap.js';
+import { MONTAGE_OUTRO_MS } from '../shared/montage.js';
 import { reconcilePrivacyEpoch } from './epoch.js';
 import { publishedLore, loreLanguageReady, recordLorePresentation, retireLorePresentations } from './lore-presentations.js';
 import { retainRecentSources } from './source-retention.js';
@@ -25,11 +26,13 @@ function promotePlayback(s:DomainState,effects:DomainEffect[],clock:Clock){
   if(!next.plan||!canDispatch(s,next.plan)){next.status='cancelled';next.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(next)});return;}
   next.status='preparing';next.startAt=null;s.playbackTiming[next.id]={prepareAtMs:clock.now(),startAtMs:null};effects.push({type:'playback.prepare',playback:structuredClone(next)});
 }
+/** A skipped recap ends one outro after the skip, never later than its plan. */
+export function playbackEndMs(p:{startAt:string|null;skipAt?:string|null;plan:{durationMs:number}|null}):number{const start=Date.parse(p.startAt??'');const end=start+(p.plan?.durationMs??0);return p.skipAt?Math.min(end,Date.parse(p.skipAt)+MONTAGE_OUTRO_MS):end;}
 function advancePlayback(s:DomainState,effects:DomainEffect[],clock:Clock){
   for(const p of s.playbacks){const timing=s.playbackTiming[p.id];if(!timing)continue;
     if(p.status==='preparing'&&p.startAt===null&&timing.prepareAtMs!==null&&clock.now()-timing.prepareAtMs>=1500){p.status='cancelled';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}
     else if(p.status==='preparing'&&p.startAt!==null&&clock.now()-Date.parse(p.startAt)>3000){p.status='skipped';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}
-    else if(p.status==='playing'&&p.plan&&p.startAt&&clock.now()>=Date.parse(p.startAt)+p.plan.durationMs){p.status='ended';effects.push({type:'playback.cancel',playback:structuredClone(p)});}
+    else if(p.status==='playing'&&p.plan&&p.startAt&&clock.now()>=playbackEndMs(p)){p.status='ended';effects.push({type:'playback.cancel',playback:structuredClone(p)});}
   }
   promotePlayback(s,effects,clock);
 }
@@ -190,6 +193,8 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
     case 'source.safety':{
       const source=s.sources.find(x=>x.id===event.id);if(!source||source.revision!==event.baseRevision||source.status==='deleted'||sourceTombstoned(s,source)||s.bannedActors.includes(source.actorId??''))break;
       if(s.session.status==='finalized'&&['speech','chat'].includes(source.kind)){effects.push({type:'held',reason:'session_finalized',entityId:source.id});break;}
+      // Cleared chat stays quarantined; a late moderation result never brings it back into evidence.
+      if(source.kind==='chat'&&s.chatClearThroughMs!==null&&source.startMs<=s.chatClearThroughMs)break;
       const next={...source,revision:source.revision+1,text:event.text,moderation:safetyAllowsPublication(event.safety)?(event.safety.pii==='redacted'?'redacted' as const:'allowed' as const):'unavailable' as const,status:safetyAllowsPublication(event.safety)?'active' as const:'quarantined' as const};
       if(['allowed','redacted'].includes(source.moderation)){if(acceptSource(s,next,effects,clock)&&sourceAllowed(s,next)&&next.text&&next.text.length<=80)observePhrase(s,next,next.text);break;}
       s.sources=s.sources.map(x=>x.id===source.id?next:x);s.sourceRevision++;effects.push({type:'source.persist',source:structuredClone(next)});
@@ -235,6 +240,9 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
       const targets=s.sources.filter(source=>source.kind==='chat'&&source.startMs<=event.throughMs).map(source=>structuredClone(source));
       const tombstones=[...s.tombstones],epoch=s.session.privacyEpoch;
       for(const source of targets){invalidateDomain(s,{kind:'source',sessionId:s.session.id,id:source.id},effects);const updated={...source,status:'quarantined' as const,revision:source.revision+1};s.sources=s.sources.map(x=>x.id===source.id?updated:x);}
+      // Chat already pruned to leaf metadata still supports older chapters; withdraw those as bans and Forget do.
+      const pruned=Object.values(s.nodes).filter(node=>{const metadata=(node.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata;return node.active&&metadata?.kind==='chat'&&metadata.startMs<=event.throughMs;}).map(node=>node.id);
+      for(const id of pruned)if(s.nodes[id]?.active)invalidateDomain(s,{kind:'source',sessionId:s.session.id,id},effects);
       s.tombstones=tombstones;s.session.privacyEpoch=epoch+1;
       effects.splice(0,effects.length,...effects.filter(e=>e.type!=='privacy'&&!(e.type==='source.persist'&&targets.some(t=>t.id===e.source.id))));
       for(const source of targets)effects.push({type:'source.persist',source:{...source,status:'quarantined',revision:source.revision+1}});
@@ -361,7 +369,9 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
     }
     case 'playback':{
       const p=s.playbacks.find(p=>p.id===event.id);if(!p)break;
-      if(event.action==='cancel'||event.action==='error'){p.status='cancelled';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}
+      // The owner's cancel of a playing recap skips gracefully to its outro; anything else is cancelled at once.
+      if(event.action==='cancel'&&p.status==='playing'&&p.plan&&p.startAt&&canDispatch(s,p.plan)){if(!p.skipAt){p.skipAt=iso(Math.max(clock.now(),Date.parse(p.startAt)));effects.push({type:'playback.start',playback:structuredClone(p)});}}
+      else if(event.action==='cancel'||event.action==='error'){p.status='cancelled';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}
       else if(event.action==='end')p.status='ended';
       else if(!p.plan||!canDispatch(s,p.plan)){p.status='cancelled';p.plan=null;effects.push({type:'playback.cancel',playback:structuredClone(p)});}
       else if(event.action==='prepared'&&p.status==='preparing'&&p.startAt===null){p.startAt=iso(clock.now()+300);s.playbackTiming[p.id]={prepareAtMs:s.playbackTiming[p.id]?.prepareAtMs??clock.now(),startAtMs:clock.now()+300};effects.push({type:'playback.start',playback:structuredClone(p)});}

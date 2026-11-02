@@ -84,7 +84,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
       <div className="rp-watch">
         <section className="rp-player" aria-label="Stream">
           <Screen footage={footage} atMs={t.atMs} durationMs={t.durationMs} playing={t.playing} speed={t.speed}>
-            {activePlan&&<ScenePlayer className="rp-scene" plan={activePlan} timeMs={elapsed} playing={t.playing} channel={s.channel.displayName} title={published?.session.title} soundEnabled={false} resolveMedia={resolveMedia}/>}
+            {activePlan&&<ScenePlayer className="rp-scene" plan={activePlan} timeMs={elapsed} viewerSkip clipAudio playing={t.playing} channel={s.channel.displayName} title={published?.session.title} soundEnabled={false} resolveMedia={resolveMedia}/>}
             {incoming&&!held&&<Caption source={incoming}/>}
             {!t.playing&&t.atMs===0&&<button type="button" className="rp-screen__start" disabled={busy} onClick={()=>void run(()=>client.controlReplay({action:'play'}))}><span aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg></span>Play the recording</button>}
           </Screen>

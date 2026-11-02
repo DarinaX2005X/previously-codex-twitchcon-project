@@ -28,7 +28,19 @@ const BASE = opt('base', process.env.FILM_BASE || 'http://127.0.0.1:4330');
     if (b64) { fs.writeFileSync(opt('scene-sfx'), Buffer.from(b64, 'base64')); fs.writeFileSync(opt('scene-sfx').replace(/\.wav$/, '.events.json'), JSON.stringify(await page.evaluate(() => window.SCENE_EVENTS()), null, 1)); console.log('scene sfx', opt('scene-sfx')); }
   }
   const SETTLE = Number(opt('settle', 60)); const lastScroll = {};
-  const shot = async t => { await ensureUi(page, t, uiState); await page.evaluate(t => window.renderAt(t), t); const want = await page.evaluate(() => window.__scroll || {}); for (const [n, y] of Object.entries(want)) { const f = page.frame({ name: n }); if (f) { const moved = await f.evaluate(y => { if (Math.abs(window.scrollY - y) > 0.5) { window.scrollTo({ top: y, behavior: 'instant' }); return true; } return false; }, y); if (moved) lastScroll[n] = -1; } } if (await page.evaluate(() => window.__liveVisible)) { await page.waitForTimeout(SETTLE); await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))); } return stage.screenshot({ type: 'jpeg', quality: 93 }); };
+  const shot1 = async t => { await ensureUi(page, t, uiState); await page.evaluate(t => window.renderAt(t), t); const want = await page.evaluate(() => window.__scroll || {}); for (const [n, y] of Object.entries(want)) { const f = page.frame({ name: n }); if (f) { const moved = await f.evaluate(y => { if (Math.abs(window.scrollY - y) > 0.5) { window.scrollTo({ top: y, behavior: 'instant' }); return true; } return false; }, y); if (moved) lastScroll[n] = -1; } } if (await page.evaluate(() => window.__liveVisible)) { await page.waitForTimeout(SETTLE); await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))); } return stage.screenshot({ type: 'jpeg', quality: 93 }); };
+  // a dev-server reload or a crashed frame must not lose the render: reload, set the pages up again, retry the frame
+  const shot = async t => {
+    for (let k = 0; k < 3; k++) {
+      try { return await shot1(t); } catch (e) {
+        console.log(`frame ${t.toFixed(3)} failed (${String(e.message).slice(0, 120)}), reloading`);
+        await page.goto(`${BASE}/docs/video/film/index.html?capture=1`, { timeout: 60000 });
+        await page.waitForFunction(() => window.__ready, null, { timeout: 60000 }); await page.evaluate(() => window.__ready);
+        await setupUi(page); for (const k2 of Object.keys(uiState)) delete uiState[k2]; for (const k2 of Object.keys(lastScroll)) delete lastScroll[k2];
+      }
+    }
+    throw new Error('frame failed three times: ' + t);
+  };
   if (opt('stills')) {
     for (const t of opt('stills').split(',').map(Number)) fs.writeFileSync(path.join(out, `t${t.toFixed(3).padStart(8, '0')}.jpg`), await shot(t));
     console.log('stills done');

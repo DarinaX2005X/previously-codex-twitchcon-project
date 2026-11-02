@@ -7,6 +7,8 @@ export { signedHeaders, sha256 } from '../../cloud/signing.js';
 export type { PublicationOperation, PublicationAck, AssetUpload, ExportManifest } from '../../cloud/contracts.js';
 
 export type FrozenPublication={body:string;bodyHash:string};
+/** Thrown while building a lease that can never succeed; it is finished without a retry. */
+export class TerminalPublicationError extends Error {}
 export type PublicationLease=WorkLease&{frozenPublication?:FrozenPublication|null};
 export interface PublicationRepository {
   claimOutbox(scope:Scope,options:{kinds:string[];leaseMs:number}):PublicationLease|null;
@@ -47,7 +49,8 @@ export class LocalPublisher {
       }
       if(response.status>=400&&response.status<500&&response.status!==429){repository.finishOutbox(scope,lease.id,lease.leaseToken,'failed');return 'cancelled';}
       throw new Error('Publication requires retry');
-    }catch{
+    }catch(error){
+      if(lease&&error instanceof TerminalPublicationError){repository.finishOutbox(scope,lease.id,lease.leaseToken,'failed');return 'cancelled';}
       if(lease){const backoff=Math.min(60_000,1000*2**Math.min(6,lease.attempts));repository.finishOutbox(scope,lease.id,lease.leaseToken,'failed',(this.options.now?.()??Date.now())+backoff);}
       return 'retry';
     }finally{this.running=false;}

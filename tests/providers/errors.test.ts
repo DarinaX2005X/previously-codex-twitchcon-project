@@ -51,3 +51,41 @@ describe('OpenAI failure reporting for a first live run',()=>{
     expect(result.value).toMatchObject({text:'hello there',languageCodes:[]});
   });
 });
+
+describe('OpenAI budget reservations for calls that were never billed (review B2)',()=>{
+  function ledger(){const reserved=new Map<string,number>();return {reserved,status:()=>({enabled:true}),reserve:vi.fn((id:string,amount:number)=>{reserved.set(id,amount);return true;}),settle:vi.fn(),releaseUnsent:vi.fn((id:string)=>{reserved.delete(id);})};}
+  const networkError=(code:string)=>Object.assign(new TypeError('fetch failed'),{cause:Object.assign(new Error('connect failed'),{code})});
+  const post=(transport:ProviderTransport)=>transport.post('responses',JSON.stringify({model:'gpt-6-luna'}),2000).catch((error:unknown)=>error as ProviderError);
+  it.each([400,401,403,404])('returns the reservation after an unbilled %s',async status=>{
+    const b=ledger(),transport=new ProviderTransport({apiKey:'fake',runId:'live',externalCallsEnabled:true,budget:b,fetch:failing(status,{code:'x'}) as unknown as typeof fetch,log:vi.fn()});
+    expect(await post(transport)).toMatchObject({code:'unavailable',httpStatus:status});expect(b.reserve).toHaveBeenCalledOnce();expect(b.reserved.size).toBe(0);
+  });
+  it.each(['ENOTFOUND','ECONNREFUSED','UND_ERR_CONNECT_TIMEOUT'])('returns the reservation when the request was never sent (%s)',async code=>{
+    const b=ledger(),transport=new ProviderTransport({apiKey:'fake',runId:'live',externalCallsEnabled:true,budget:b,fetch:vi.fn().mockRejectedValue(networkError(code)) as unknown as typeof fetch,log:vi.fn()});
+    expect(await post(transport)).toMatchObject({code:'unavailable'});expect(b.reserved.size).toBe(0);
+  });
+  it('keeps the reservation when the outcome is unknown or billable',async()=>{
+    for(const fetcher of [vi.fn().mockRejectedValue(networkError('ECONNRESET')),vi.fn().mockRejectedValue(new DOMException('timed out','TimeoutError')),failing(500,{code:'server_error'}),failing(429,{code:'rate_limit_exceeded'})]){
+      const b=ledger(),transport=new ProviderTransport({apiKey:'fake',runId:'live',externalCallsEnabled:true,budget:b,fetch:fetcher as unknown as typeof fetch,log:vi.fn()});
+      await post(transport);expect(b.reserved.size).toBe(1);expect(b.releaseUnsent).not.toHaveBeenCalled();
+    }
+  });
+  it('stops calling OpenAI after the key is rejected, without reserving again',async()=>{
+    const b=ledger(),issues=vi.fn(),fetcher=failing(401,{code:'invalid_api_key'}),transport=new ProviderTransport({apiKey:'sk-bad',runId:'live',externalCallsEnabled:true,budget:b,fetch:fetcher as unknown as typeof fetch,log:vi.fn(),onIssue:issues});
+    const first=await post(transport),second=await post(transport);
+    expect(fetcher).toHaveBeenCalledOnce();expect(b.reserve).toHaveBeenCalledOnce();expect(second).toBe(first);expect(second).toMatchObject({code:'unavailable',httpStatus:401,retryable:false});
+    expect(issues.mock.calls.at(-1)).toEqual(['story',expect.objectContaining({code:'openai_key_rejected'})]);
+  });
+});
+
+describe('Realtime narration reservations (review B2)',()=>{
+  it('returns the reservation when the handshake is rejected, and stops after a rejected key',async()=>{
+    const {OpenAIRealtimeNarrationProvider}=await import('../../src/server/providers/index.js');
+    const released=vi.fn(),b={status:()=>({enabled:true}),reserve:vi.fn(()=>true),settle:vi.fn(),releaseUnsent:released};
+    const transport=new ProviderTransport({apiKey:'fake',runId:'live',externalCallsEnabled:true,budget:b,log:vi.fn()});
+    const make=vi.fn(()=>{const listeners=new Map<string,(...args:unknown[])=>void>();queueMicrotask(()=>listeners.get('error')?.(new Error('Unexpected server response: 401')));return {on:(name:string,callback:(...args:unknown[])=>void)=>listeners.set(name,callback),send:vi.fn(),close:vi.fn()};});
+    const provider=new OpenAIRealtimeNarrationProvider(transport,{approved:()=>true,socket:make});
+    await expect(provider.synthesize('Approved words','en')).rejects.toMatchObject({code:'unavailable'});expect(released).toHaveBeenCalledOnce();
+    await expect(provider.synthesize('Approved words','en')).rejects.toMatchObject({httpStatus:401});expect(make).toHaveBeenCalledOnce();expect(b.reserve).toHaveBeenCalledOnce();
+  });
+});

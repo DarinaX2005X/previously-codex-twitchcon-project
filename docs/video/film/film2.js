@@ -239,7 +239,7 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
 
   // ================= P9: Codex (102-126), dark with a soft glow =================
   const p9 = L('p9');
-  const c1 = S(p9, { ...CAP, y: 200, size: 104, color: 'var(--paper)' }, [{ t0: 102.05, t1: 107.85, text: ['Built', 'in', 'one', { text: 'Codex session', emph: 'plate-paper' }] }]);
+  const c1 = S(p9, { ...CAP, y: 200, size: 104, color: 'var(--paper)' }, [{ t0: 101.8, t1: 107.85, text: ['Built', 'in', 'one', { text: 'Codex session', emph: 'plate-paper' }] }]);
   const c2 = S(p9, { ...CAP, y: 120, size: 104, color: 'var(--paper)' }, [{ t0: 107.95, t1: 110.5, text: [{ text: `${CODEX.workers}`, emph: 'verm' }, 'parallel', 'workers'] }]);
   const space = el('div', 'layer', p9); space.style.perspective = '900px'; space.style.perspectiveOrigin = '50% 52%';
   const space3 = el('div', 'layer', space); space3.style.transformStyle = 'preserve-3d';
@@ -260,6 +260,7 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
         const ch = str[i] ?? '';
         c.style.display = i < str.length ? '' : 'none';
         if (/\d/.test(ch)) {
+          Object.assign(c.style, { overflow: 'hidden', alignSelf: 'flex-start', margin: '0', height: size * 1.02 + 'px', fontSize: size + 'px' });
           if (c.dataset.k !== 'd') { c.strip.innerHTML = ''; for (let d = 0; d <= 10; d++) { const s = el('div', '', c.strip, String(d % 10)); s.style.height = size * 1.02 + 'px'; } c.dataset.k = 'd'; }
           const v = (frac[i] ?? +ch);
           c.strip.style.transform = `translateY(${-v * size * 1.02}px)`;
@@ -290,6 +291,38 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
   const ans = el('div', 'abs', p9, CODEX.question.answer); Object.assign(ans.style, { width: '1640px', textAlign: 'center', background: 'var(--lime)', color: 'var(--ink)', fontWeight: 800, fontSize: '66px', lineHeight: 1.15, letterSpacing: '-.02em', padding: '26px 44px 32px', borderRadius: '28px', boxShadow: '0 9px 0 var(--lime-side)', transformOrigin: '50% 50%' });
   const testO = odo(p9, 280, 'var(--verm)');
   const testL = el('div', 'abs', p9); Object.assign(testL.style, { width: '1920px', textAlign: 'center', fontSize: '56px', letterSpacing: '-.02em', fontWeight: 750, color: 'var(--paper)' });
+  const runO = odo(p9, 240, 'var(--lime)');
+  const runL = el('div', 'abs', p9, 'chat messages in one long load run, 3.80 virtual hours'); Object.assign(runL.style, { width: '1920px', textAlign: 'center', fontSize: '54px', letterSpacing: '-.02em', fontWeight: 750, color: 'var(--paper)' });
+  // "and polished in Claude Code": the work products leave the code in 2.5D, on both sides
+  const cc = S(p9, { ...CAP, y: 90, size: 96, color: 'var(--paper)' }, [{ t0: 123.45, t1: 125.85, text: ['and', 'polished', 'in', { text: 'Claude Code', emph: 'plate-paper' }] }]);
+  const stage3 = el('div', 'layer', p9); stage3.style.perspective = '1400px'; stage3.style.perspectiveOrigin = '50% 55%';
+  const space4 = el('div', 'layer', stage3); space4.style.transformStyle = 'preserve-3d';
+  const code = el('div', 'abs', space4);
+  Object.assign(code.style, { width: '640px', padding: '30px 36px 34px', borderRadius: '26px', background: '#0C0E11', boxShadow: '0 0 0 2px #2C333C, 0 60px 120px -40px rgb(0 0 0 / .9)', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '25px', lineHeight: 1.6, color: '#A9B1BC', whiteSpace: 'pre', transformOrigin: '50% 50%' });
+  code.innerHTML = [
+    '<span style="color:#FF5A36">:root</span> {',
+    '  --pv-ink: <span style="color:#F4EFE6">#14171B</span>;',
+    '  --pv-paper: <span style="color:#F4EFE6">#F4EFE6</span>;',
+    '  --pv-vermilion: <span style="color:#FF5A36">#FF5A36</span>;',
+    '  --pv-lime: <span style="color:#C8F560">#C8F560</span>;',
+    '  --pv-display-tracking: -.035em;',
+    '}',
+  ].join('\n');
+  const SVG = {
+    slides: `<svg viewBox="0 0 300 210"><rect x="34" y="26" width="250" height="160" rx="16" fill="#CFC5B3"/><rect x="22" y="16" width="250" height="160" rx="16" fill="#E4DDD0"/><rect x="8" y="6" width="250" height="160" rx="16" fill="#F4EFE6"/><rect x="28" y="30" width="120" height="16" rx="5" fill="#14171B"/><rect x="28" y="56" width="170" height="10" rx="4" fill="#4A4F57"/><rect x="28" y="76" width="140" height="10" rx="4" fill="#4A4F57"/><rect x="150" y="96" width="88" height="54" rx="9" fill="#FF5A36"/><rect x="28" y="104" width="100" height="40" rx="8" fill="#14171B"/></svg>`,
+    video: `<svg viewBox="0 0 300 210"><rect x="6" y="18" width="288" height="174" rx="18" fill="#0C0E11"/><rect x="18" y="30" width="264" height="132" rx="10" fill="#273644"/><circle cx="150" cy="96" r="30" fill="#FF5A36"/><path d="M141 81 L165 96 L141 111 Z" fill="#14171B"/><rect x="18" y="172" width="264" height="6" rx="3" fill="#2C333C"/><rect x="18" y="172" width="150" height="6" rx="3" fill="#FF5A36"/><g fill="#F4EFE6">${[0, 1, 2, 3, 4, 5, 6, 7].map(i => `<rect x="${26 + i * 33}" y="21" width="16" height="5" rx="2"/>`).join('')}</g></svg>`,
+    readme: `<svg viewBox="0 0 220 280"><rect x="6" y="6" width="208" height="268" rx="16" fill="#F4EFE6"/><rect x="26" y="28" width="30" height="30" rx="9" fill="#FF5A36"/><path fill-rule="evenodd" d="M33 35h11a7 7 0 0 1 0 14h-4v5h-7z" fill="#14171B"/><rect x="64" y="34" width="100" height="16" rx="5" fill="#14171B"/><rect x="26" y="76" width="168" height="74" rx="10" fill="#273644"/><rect x="26" y="164" width="168" height="9" rx="4" fill="#4A4F57"/><rect x="26" y="182" width="150" height="9" rx="4" fill="#4A4F57"/><rect x="26" y="200" width="160" height="9" rx="4" fill="#4A4F57"/><rect x="26" y="226" width="168" height="30" rx="8" fill="#14171B"/></svg>`,
+    visuals: `<svg viewBox="0 0 300 220"><rect x="6" y="6" width="288" height="208" rx="18" fill="#1E232A"/><rect x="22" y="22" width="80" height="80" rx="14" fill="#FF5A36"/><rect x="110" y="22" width="80" height="80" rx="14" fill="#F4EFE6"/><rect x="198" y="22" width="80" height="80" rx="14" fill="#C8F560"/><text x="22" y="186" font-family="Onest" font-weight="800" font-size="84" fill="#F4EFE6" letter-spacing="-4">Aa</text><rect x="150" y="122" width="128" height="76" rx="12" fill="#14171B" stroke="#2C333C" stroke-width="3"/><rect x="164" y="138" width="60" height="10" rx="4" fill="#FF5A36"/><rect x="164" y="158" width="96" height="8" rx="4" fill="#A9B1BC"/><rect x="164" y="174" width="80" height="8" rx="4" fill="#A9B1BC"/></svg>`,
+    landing: `<svg viewBox="0 0 320 220"><rect x="6" y="6" width="308" height="208" rx="16" fill="#14171B"/><rect x="6" y="6" width="308" height="28" rx="16" fill="#272D35"/><circle cx="24" cy="20" r="5" fill="#FF5A36"/><circle cx="40" cy="20" r="5" fill="#4A5360"/><rect x="24" y="52" width="130" height="18" rx="5" fill="#F4EFE6"/><rect x="24" y="76" width="110" height="18" rx="5" fill="#F4EFE6"/><rect x="24" y="104" width="120" height="8" rx="4" fill="#A9B1BC"/><rect x="24" y="130" width="96" height="26" rx="10" fill="#FF5A36"/><rect x="170" y="52" width="128" height="120" rx="12" fill="#273644"/><rect x="186" y="132" width="96" height="28" rx="8" fill="#F4EFE6"/></svg>`,
+  };
+  const products = [
+    { k: 'slides', label: 'Slides', w: 380, side: -1, x: 420, y: 470, z: 80, ry: 24, d: 0.0 },
+    { k: 'readme', label: 'README', w: 250, side: -1, x: 175, y: 830, z: -160, ry: 30, d: 0.12 },
+    { k: 'visuals', label: 'Visuals', w: 340, side: -1, x: 560, y: 850, z: 40, ry: 20, d: 0.24 },
+    { k: 'landing', label: 'Landing', w: 400, side: 1, x: 1500, y: 480, z: 80, ry: -24, d: 0.06 },
+    { k: 'video', label: 'Video', w: 370, side: 1, x: 1600, y: 830, z: -80, ry: -26, d: 0.18 },
+  ].map(o => { const e = el('div', 'abs', space4); e.innerHTML = SVG[o.k]; const sv = e.querySelector('svg'); sv.style.width = o.w + 'px'; sv.style.display = 'block'; sv.style.filter = 'drop-shadow(0 30px 40px rgb(0 0 0 / .55))'; const lb = el('div', '', e, o.label); Object.assign(lb.style, { marginTop: '14px', textAlign: 'center', color: '#F4EFE6', fontWeight: 750, fontSize: '34px', letterSpacing: '-.02em' }); Object.assign(e.style, { width: o.w + 'px', transformOrigin: '50% 50%' }); return { ...o, e }; });
+  p9.appendChild(cc.root);
   const paperCircle = el('div', 'abs', root); paperCircle.style.background = '#F3EEE6'; paperCircle.style.borderRadius = '50%';
 
   // ================= P10: try it, then the mark (126-138), light =================
@@ -383,9 +416,12 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
     for (let i = 0; i < 16; i++) ev(`tc-${i}`, 110.5 + i * 0.09, 'tick', { x: 0.5, gain: 0.28 });
     ev('bug-0', 113.3, 'flick', { x: 0.5 }); ev('fixed-0', 115.0, 'stamp', { x: 0.75, gain: 1.1 });
     ev('bug-1', 116.4, 'flick', { x: 0.5 }); ev('fixed-1', 118.1, 'stamp', { x: 0.75, gain: 1.1 });
-    ev('q', 119.5, 'flick', { x: 0.5 }); ev('ans', 120.9, 'stamp', { x: 0.5 });
-    ev('tests', 122.8, 'thumpBig', { x: 0.5, gain: 0.7 });
-    for (let i = 0; i < 10; i++) ev(`tr-${i}`, 124.0 + i * 0.07, 'tick', { x: 0.5, gain: 0.35 });
+    ev('run', 119.5, 'thumpBig', { x: 0.5, gain: 0.7 }); for (let i = 0; i < 14; i++) ev(`run-${i}`, 119.6 + i * 0.08, 'tick', { x: 0.5, gain: 0.3 });
+    ev('tests', 121.5, 'thumpBig', { x: 0.5, gain: 0.7 });
+    for (let i = 0; i < 10; i++) ev(`tr-${i}`, 122.2 + i * 0.065, 'tick', { x: 0.5, gain: 0.35 });
+    ev('cc-code', 123.35, 'air', { dur: 0.6, x: 0.5 });
+    [0, 0.06, 0.12, 0.18, 0.24].forEach((d, i) => ev(`cc-${i}`, 123.85 + d, 'whoosh', { dur: 0.45, x: 0.5, pan2: i % 2 ? 0.9 : 0.1, gain: 0.55 }));
+    [0, 0.06, 0.12, 0.18, 0.24].forEach((d, i) => ev(`ccl-${i}`, 124.3 + d, 'pop', { x: i % 2 ? 0.8 : 0.2, gain: 0.5, note: 2 + i }));
     ev('to-light', 125.3, 'riser', { dur: 0.75, gain: 0.7 });
     ev('url', 132.3, 'pop', { x: 0.5 });
     ev('gather-end', 133.15, 'riser', { dur: 0.85, gain: 0.8 });
@@ -405,9 +441,9 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
     // ---------- fields ----------
     const tint = { warm: 1, cool: 1, lime: (t > 48.6 && t < 52.4) ? 0.9 : 0 };
     renderFields(t, tint);
-    const airyOn = (t >= 29.0 && t < 102.3) || t >= 125.95;
+    const airyOn = (t >= 29.0 && t < 101.96) || t >= 125.95;
     show(airy, airyOn);
-    show(dark, t >= 101.6 && t < 126.2);
+    show(dark, t >= 101.94 && t < 126.2);
     // P4 vermilion field shrinks into the "Example recording" tag of the player (mask reveal of the light field)
     const PL = { x: 370, y: 205, w: 1180 }; PL.vh = PL.w * 9 / 16; PL.h = 64 + PL.vh;
     const tagR = { x: PL.x + PL.w - 26 - 74 - 16 - 226, y: PL.y + 11, w: 226, h: 42, r: 9 };
@@ -418,8 +454,8 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
     }
     // P8 -> P9: zoom through the dark dock
     // P9 -> P10: a light circle grows out of the last number
-    if (show(paperCircle, t >= 125.0 && t < 126.25)) {
-      const p = expoIn(seg(t, 125.0, 126.0)), r = lerp(0, 1300, p);
+    if (show(paperCircle, t >= 125.45 && t < 126.25)) {
+      const p = expoIn(seg(t, 125.45, 126.0)), r = lerp(0, 1300, p);
       Object.assign(paperCircle.style, { width: 2 * r + 'px', height: 2 * r + 'px', transform: `translate(${960 - r}px,${520 - r}px)` });
     }
 
@@ -792,11 +828,11 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
         Object.assign(landRing.style, { width: c1.x - c0.x + 2 * g + 'px', height: c1.y - c0.y + 2 * g + 'px', borderRadius: 24 + g + 'px', transform: `translate(${c0.x - g}px,${c0.y - g}px)`, opacity: 1 - q2 });
       }
       // zoom through the dark dock into the Codex passage
-      if (show(zoomDark, t >= 101.3 && t < 102.3)) { const c = at(yes), r = 2300 * expoIn(seg(t, 101.3, 102.0)); Object.assign(zoomDark.style, { width: 2 * r + 'px', height: 2 * r + 'px', borderRadius: '50%', transform: `translate(${c.x - r}px,${c.y - r}px)`, opacity: 1 }); }
+      if (show(zoomDark, t >= 101.3 && t < 102.3)) { const c = { x: 960, y: 640 }, r = 1500 * expoInOut(seg(t, 101.3, 101.95)); Object.assign(zoomDark.style, { width: 2 * r + 'px', height: 2 * r + 'px', borderRadius: '50%', transform: `translate(${c.x - r}px,${c.y - r}px)`, opacity: 1 }); }
     } else show(zoomDark, false);
 
     // ---------- P9: Codex, one fact at a time ----------
-    if (show(p9, t >= 102.0 && t < 126.2)) {
+    if (show(p9, t >= 101.7 && t < 126.2)) {
       if (show(durO.box, t >= 104.0 && t < 108.0)) {
         const g = clamp(springAt(t - 104.0, 0.6, 12), 0, 1.08), out = expoIn(seg(t, 107.6, 108.0));
         const m = 574 * cubicInOut(seg(t, 104.1, 105.6)), hh = m / 60, mm = m % 60;
@@ -806,9 +842,9 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
         durL.style.transform = `translate(0px,${720 - 160 * out}px)`; durL.style.opacity = seg(t, 104.4, 104.8) * (1 - out); show(durL, true);
       } else show(durL, false);
       // the 27 workers fly through real 3D space around the camera, near ones large and sharp, far ones small and soft
-      const swOn = t >= 107.9 && t < 110.5;
+      const swOn = t >= 107.9 && t < 110.4;
       if (show(space, swOn)) {
-        const a = expoOut(seg(t, 107.9, 108.9)), out = expoIn(seg(t, 109.8, 110.45));
+        const a = expoOut(seg(t, 107.9, 108.9)), out = expoIn(seg(t, 109.7, 110.35));
         const travel = (t - 107.9) * 560 + 2200 * out;
         swarm.forEach((w, i) => {
           let z = ((w.z0 * 3400 + travel) % 3400) - 2800;     // -2800 (far) .. 600 (passing the camera)
@@ -820,12 +856,13 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
           w.e.style.opacity = clamp((z + 2800) / 700) * clamp((600 - z) / 250) * a * (1 - out);
         });
       }
-      if (show(toolO.box, t >= 110.55 && t < 113.15)) {
-        const g = clamp(springAt(t - 110.55, 0.6, 12), 0, 1.08), out = expoIn(seg(t, 112.8, 113.15));
-        const v = 4798 * cubicInOut(seg(t, 110.5, 111.9));
-        const n = Math.floor(v), s4 = String(n).padStart(4, '0');
-        const f = {}; [1000, 100, 10, 1].forEach((pl, i) => { f[i < 1 ? 0 : i + 1] = odoVal(v, pl, pl === 1); });
-        toolO.set(`${s4[0]},${s4.slice(1)}`, f);
+      if (show(toolO.box, t >= 110.7 && t < 113.15)) {
+        const g = clamp(springAt(t - 110.7, 0.6, 12), 0, 1.08), out = expoIn(seg(t, 112.8, 113.15));
+        const v = 4798 * cubicInOut(seg(t, 110.7, 112.0));
+        const n = Math.floor(v), str = n >= 1000 ? `${Math.floor(n / 1000)},${String(n % 1000).padStart(3, '0')}` : String(n);
+        const f = {}; let place = 1;
+        for (let i = str.length - 1; i >= 0; i--) { if (str[i] === ',') continue; f[i] = odoVal(v, place, place === 1); place *= 10; }
+        toolO.set(str, f);
         toolO.box.style.transform = `translate(0px,${330 - 120 * out}px) scale(${0.92 + 0.08 * g})`; toolO.box.style.opacity = clamp(g * 2) * (1 - out);
         show(toolL, true); toolL.style.transform = `translate(0px,${620 - 120 * out}px)`; toolL.style.opacity = seg(t, 110.8, 111.2) * (1 - out);
       } else show(toolL, false);
@@ -839,16 +876,45 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
         const s = 1.9 - 0.9 * expoOut(seg(t, t0 + 1.7, t0 + 1.82));
         b.st.style.transform = `rotate(-7deg) scale(${t >= t0 + 1.7 ? s : 0})`;
       });
-      if (show(q, t >= 119.5 && t < 122.7)) { const a = expoOut(seg(t, 119.5, 120.0)), out = expoIn(seg(t, 122.35, 122.7)); q.style.transform = `translate(80px,${lerp(240, 150, a) - 600 * out}px)`; q.style.opacity = a * (1 - out); }
-      if (show(ans, t >= 120.9 && t < 122.7)) { const g = clamp(springAt(t - 120.9, 0.6, 14), 0, 1.1), out = expoIn(seg(t, 122.35, 122.7)); ans.style.transform = `translate(140px,${640 - 600 * out}px) scale(${g})`; }
-      if (show(testO.box, t >= 122.75 && t < 125.6)) {
-        const g = clamp(springAt(t - 122.75, 0.6, 12), 0, 1.08);
-        const v = lerp(609, 656, cubicInOut(seg(t, 124.0, 124.8)));
+      show(q, false); show(ans, false);
+      // the long load run, as a fact
+      if (show(runO.box, t >= 119.5 && t < 121.55)) {
+        const g = clamp(springAt(t - 119.5, 0.6, 12), 0, 1.08), out = expoIn(seg(t, 121.2, 121.55));
+        const v = 280780 * cubicInOut(seg(t, 119.55, 120.7)), n = Math.floor(v);
+        const str = n >= 1000 ? `${Math.floor(n / 1000)},${String(n % 1000).padStart(3, '0')}` : String(n);
+        const f = {}; let place = 1;
+        for (let i = str.length - 1; i >= 0; i--) { if (str[i] === ',') continue; f[i] = odoVal(v, place, place === 1); place *= 10; }
+        runO.set(str, f);
+        runO.box.style.transform = `translate(0px,${330 - 140 * out}px) scale(${0.92 + 0.08 * g})`; runO.box.style.opacity = clamp(g * 2) * (1 - out);
+        show(runL, true); runL.style.transform = `translate(0px,${620 - 140 * out}px)`; runL.style.opacity = seg(t, 119.8, 120.2) * (1 - out);
+      } else show(runL, false);
+      if (show(testO.box, t >= 121.5 && t < 123.45)) {
+        const g = clamp(springAt(t - 121.5, 0.6, 12), 0, 1.08), out = expoIn(seg(t, 123.1, 123.45));
+        const v = lerp(609, 656, cubicInOut(seg(t, 122.2, 122.85)));
         testO.set(String(Math.floor(v)), { 0: odoVal(v, 100, false), 1: odoVal(v, 10, false), 2: odoVal(v, 1, true) });
-        testO.box.style.transform = `translate(0px,${320}px) scale(${0.92 + 0.08 * g})`; testO.box.style.opacity = clamp(g * 2);
-        show(testL, true); testL.textContent = t < 124.0 ? 'tests passed when the Codex session ended' : 'tests pass today, across 73 files';
-        testL.style.transform = `translate(0px,${640}px)`; testL.style.opacity = clamp(g * 2) * (1 - seg(t, 123.85, 124.0) + seg(t, 124.0, 124.15));
+        testO.box.style.transform = `translate(0px,${320 - 140 * out}px) scale(${0.92 + 0.08 * g})`; testO.box.style.opacity = clamp(g * 2) * (1 - out);
+        show(testL, true); testL.textContent = t < 122.2 ? 'tests passed when the Codex session ended' : 'tests pass today, across 73 files';
+        testL.style.transform = `translate(0px,${640 - 140 * out}px)`; testL.style.opacity = clamp(g * 2) * (1 - seg(t, 122.05, 122.2) + seg(t, 122.2, 122.35)) * (1 - out);
       } else show(testL, false);
+      // and polished in Claude Code: the code panel rises, the work products leave it in depth to both sides
+      const ccOn = t >= 123.3 && t < 126.1;
+      if (show(stage3, ccOn)) {
+        const up = clamp(springAt(t - 123.35, 0.62, 11), 0, 1.06);
+        const cw = 640;
+        code.style.transform = `translate3d(${960 - cw / 2}px,${lerp(900, 470, up)}px,${lerp(-300, 0, clamp(up))}px) rotateX(${12 * (1 - clamp(up)) + 2 * Math.sin(t * 0.9)}deg)`;
+        products.forEach(o => {
+          const t0 = 123.85 + o.d;
+          const a = clamp(springAt(t - t0, 0.58, 9), 0, 1.08), vis = t >= t0;
+          const sx = 960 - o.w / 2, sy = 580;
+          const fx = o.x - o.w / 2, fy = o.y - 150;
+          const x = lerp(sx, fx, a), y = lerp(sy, fy, a) - 60 * Math.sin(Math.PI * clamp(a));     // an arc out of the code
+          const z = lerp(-500, o.z, clamp(a));
+          const bob = 8 * Math.sin((t - t0) * 2.2 + o.d * 9);
+          o.e.style.transform = `translate3d(${x}px,${y + bob}px,${z}px) rotateY(${o.ry * clamp(a) + 4 * Math.sin(t * 0.8 + o.d * 5)}deg) rotateX(${6 * Math.sin(t * 0.6 + o.d * 3)}deg) scale(${lerp(0.3, 1, clamp(a))})`;
+          o.e.style.opacity = vis ? clamp(a * 2.5) : 0;
+          o.e.style.filter = Math.abs(o.z) > 100 ? `blur(${(o.z < 0 ? 1.6 : 0.6) * clamp(a)}px)` : 'none';
+        });
+      }
     }
 
     // ---------- P10: the real setup page, the real replay, then the mark ----------

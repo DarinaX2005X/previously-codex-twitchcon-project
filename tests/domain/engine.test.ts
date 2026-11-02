@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MONTAGE_OUTRO_MS } from '../../src/shared/montage.js';
 import { defaultSettings, PublicSnapshotSchema, RecapPlanSchema, type Source, type Safety, type StoryPatch, type Clock } from '../../src/shared/contracts/index.js';
 import { createDomainState, reduceDomain, stateHash, buildEvidencePacket, evidencePacketBytes, EVIDENCE_PACKET_BYTE_CAP, exportDomainState, hydrateDomainState, recoverDomainState, loreAnswer, canDispatch, type DomainState, type DomainEvent } from '../../src/core/index.js';
 
@@ -255,5 +256,20 @@ describe('integration-facing editorial and recovery contracts',()=>{
   });
   it('rejects an older asynchronous metadata review after a newer channel update',()=>{
     const h=harness();h.set(20000);h.send({type:'metadata',title:'New topic',category:'Development',atMs:20000,safety:allowed});h.send({type:'metadata',title:'Old topic',category:'Development',atMs:10000,safety:allowed});expect(h.state.session.title).toBe('New topic');expect(h.state.session.metadataMaxDependencyEndMs).toBe(20000);
+  });
+});
+
+describe('skipping a playing recap',()=>{
+  it('the owner skip goes to the outro and ends one outro later; a queued recap is still cancelled',()=>{
+    const h=harness();h.set(200000);
+    for(const id of ['first','second'])h.send({type:'recap.trigger',trigger:{id,sessionId:'session',reason:'raid',occurredAt:h.clock.iso()}});
+    const first=h.state.playbacks[0]!.id;h.send({type:'playback',id:first,action:'prepared'});h.set(200300);h.send({type:'playback',id:first,action:'start'});
+    h.set(201000);const skip=h.send({type:'playback',id:first,action:'cancel'});
+    const playing=h.state.playbacks.find(p=>p.id===first)!;
+    expect(playing.status).toBe('playing');expect(playing.plan).not.toBeNull();expect(playing.skipAt).toBe(new Date(start+201000).toISOString());
+    expect(skip.effects.some(e=>e.type==='playback.start')).toBe(true);
+    h.set(201000+MONTAGE_OUTRO_MS-1);h.send({type:'tick'});expect(h.state.playbacks.find(p=>p.id===first)?.status).toBe('playing');
+    h.set(201000+MONTAGE_OUTRO_MS);h.send({type:'tick'});expect(h.state.playbacks.some(p=>p.id===first)).toBe(false);
+    const queued=h.state.playbacks[0]!;h.send({type:'playback',id:queued.id,action:'cancel'});expect(h.state.playbacks.some(p=>p.id===queued.id)).toBe(false);
   });
 });

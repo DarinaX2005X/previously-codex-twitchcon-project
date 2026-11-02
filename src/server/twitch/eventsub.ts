@@ -29,7 +29,9 @@ export class TwitchEventSub {
   private timers=new Map<WebSocket,ReturnType<typeof setTimeout>>();private retry:ReturnType<typeof setTimeout>|null=null;
   private running=false;private backoff=0;private quotesReady=false;private gapSince:string|null=null;private state:ConnectionState='disconnected';
   private chain:Promise<void>=Promise.resolve();private generation=0;
-  private ordinary:Wire[]=[];private ordinaryDraining=false;private retryableChatKeys=new Set<string>();
+  private ordinary:Wire[]=[];private ordinaryDraining=false;
+  /** Frames retained from before the current session's welcome. They wait for ban sync, so they do not count against new intake. */
+  private carried=0;private retryableChatKeys=new Set<string>();
   private privacyDraining=false;private privacyBlocked=false;private unpersistedPrivacy:Wire|null=null;
   private activeKeepaliveMs=10000;
   private readonly now:()=>number;
@@ -38,7 +40,7 @@ export class TwitchEventSub {
   diagnostics(){return {queuedOrdinary:this.ordinary.length,ordinaryDraining:this.ordinaryDraining,privacyDraining:this.privacyDraining};}
   private set(state:ConnectionState,reason?:string){this.state=state;try{this.options.status?.(state,{quotesReady:this.quotesReady,gapSince:this.gapSince,reason,privacyBlocked:this.privacyBlocked});}catch{/* Status persistence cannot interrupt socket shutdown or recovery. */}}
   async start(){if(this.running)return;this.running=true;this.generation++;this.quotesReady=false;this.schedulePrivacy();await this.chain;if(this.running&&!this.privacyBlocked&&!this.retry)this.open(this.options.url??'wss://eventsub.wss.twitch.tv/ws',false);}
-  async stop(){this.running=false;this.generation++;if(this.retry)clearTimeout(this.retry);this.retry=null;for(const socket of this.sockets){socket.removeAllListeners('message');this.clearTimer(socket);socket.close();}this.sockets.clear();this.current=null;this.migrating=null;this.quotesReady=false;this.set('disconnected');for(;;){const pending=this.chain;await pending;if(pending===this.chain)break;}}
+  async stop(){this.running=false;this.generation++;if(this.retry)clearTimeout(this.retry);this.retry=null;for(const socket of this.sockets){socket.removeAllListeners('message');this.clearTimer(socket);socket.close();}this.sockets.clear();this.current=null;this.migrating=null;this.quotesReady=false;this.gapSince=null;this.set('disconnected');for(;;){const pending=this.chain;await pending;if(pending===this.chain)break;}}
   private clearTimer(socket:WebSocket){const timer=this.timers.get(socket);if(timer)clearTimeout(timer);this.timers.delete(socket);}
   private watchdog(socket:WebSocket,ms:number){this.clearTimer(socket);const timer=setTimeout(()=>{socket.terminate();this.fail('keepalive_timeout');},ms);timer.unref();this.timers.set(socket,timer);}
   private open(url:string,transfer:boolean){
@@ -68,7 +70,7 @@ export class TwitchEventSub {
         }
         this.schedulePrivacy();return;
       }
-      if(this.ordinary.length>=100){this.fail('ingest_backpressure');return;}
+      if(this.ordinary.length>=100+this.carried||this.ordinary.length>=1000){this.fail('ingest_backpressure');return;}
       this.ordinary.push(wire);this.scheduleOrdinary();
     });
     socket.on('error',()=>{if(this.running&&(socket===this.current||socket===this.migrating))this.fail('socket_error');});
@@ -77,17 +79,18 @@ export class TwitchEventSub {
   private controls<T>(action:()=>T):T{return this.options.control.transaction?this.options.control.transaction(action):action();}
   /** No collection timer: consume only the FIFO prefix that is already available when this task runs. */
   private scheduleOrdinary(){
-    if(this.ordinaryDraining||!this.ordinary.length||this.state==='gap')return;this.ordinaryDraining=true;let failed=false,deferred=false;
+    if(this.ordinaryDraining||!this.ordinary.length||!this.quotesReady)return;this.ordinaryDraining=true;let failed=false,deferred=false;
     this.chain=this.chain.then(async()=>{
-      // Keep received work intact while reestablishing channel restrictions. Consuming it with
-      // quotesReady=false would turn a transport gap into avoidable rejection of the entire backlog.
-      if(this.state==='gap'){deferred=true;return;}
+      // Keep received work intact while reestablishing channel restrictions (gap, re-subscribe, ban sync).
+      // Consuming it with quotesReady=false would turn a transport gap into avoidable rejection of the
+      // entire backlog. welcome() drains it once the new session is active.
+      if(!this.quotesReady){deferred=true;return;}
       const kind=(wire:Wire)=>wire.payload.subscription?.type??wire.metadata.subscription_type;
       const batch:Wire[]=[this.ordinary[0]!];
       if(this.options.ingestBatch&&kind(batch[0])==='channel.chat.message')for(const wire of this.ordinary.slice(1,20)){if(kind(wire)!=='channel.chat.message')break;batch.push(wire);}
       if(this.options.ingestBatch&&kind(batch[0])==='channel.chat.message')await this.chatBatch(batch);else await this.notification(batch[0]);
       // A failed transaction leaves this entire FIFO prefix available for reconnect retry.
-      this.ordinary.splice(0,batch.length);
+      this.ordinary.splice(0,batch.length);this.carried=Math.max(0,this.carried-batch.length);
     }).catch(()=>{failed=true;this.fail('ingest_failed');}).finally(()=>{
       this.ordinaryDraining=false;
       // Requeue behind an already-scheduled durable privacy drain, never ahead of it.
@@ -173,7 +176,7 @@ export class TwitchEventSub {
   private async welcome(socket:WebSocket,wire:Wire,transfer:boolean){
     const session=wire.payload.session;if(!session?.id)throw new Error('Missing welcome session');
     if(transfer){if(socket!==this.migrating)return;const old=this.current;this.current=socket;this.migrating=null;if(old){this.clearTimer(old);old.close();}this.set('active');return;}
-    const version=this.generation;this.set('welcome');this.set('subscribing');
+    const version=this.generation;this.carried=this.ordinary.length;this.set('welcome');this.set('subscribing');
     const sync=`${session.id}:${this.now()}`;await this.options.bans.begin(sync);
     // Subscribe first: Twitch's welcome deadline is ten seconds; synchronize bans afterwards.
     await Promise.all(subscriptions(this.options.channelId).map(sub=>this.options.helix.subscribe(sub.type,sub.version,sub.condition,session.id)));
@@ -184,7 +187,8 @@ export class TwitchEventSub {
     const stream=await this.options.helix.currentStream();if(version!==this.generation||!this.running)return;await this.options.onStream(stream,new Date(this.now()).toISOString());
     if(version!==this.generation||!this.running)return;
     if(this.privacyBlocked||this.unpersistedPrivacy){this.fail('privacy_recovery_pending');return;}
-    this.quotesReady=true;this.backoff=0;this.set('active');this.scheduleOrdinary();
+    // The gap closes here; the next outage starts its own.
+    this.quotesReady=true;this.backoff=0;this.gapSince=null;this.set('active');this.scheduleOrdinary();
   }
   private fail(reason:string){
     if(!this.running||this.retry)return;this.generation++;this.quotesReady=false;this.gapSince??=new Date(this.now()).toISOString();

@@ -30,13 +30,15 @@ export function narrationTicket(state:DomainState,clock:Clock):NarrationTicket|n
   const plan=compileRecap(state.published,state.settings.layout,{id:'narration-prewarm',sessionId:state.session.id,reason:'manual',occurredAt:clock.iso()},{
     ...recapLineage(state),media:state.media.filter(media=>media.kind!=='audio'),durationMs:state.settings.recapDurationMs,narrationEnabled:false,generatedAt:clock.iso(),
   });
-  if(plan.variant==='welcome'||plan.beats.length<2||plan.durationMs===5000)return null;
+  if(plan.variant==='welcome'||plan.beats.length<2)return null;
+  // Narration is a short spoken summary of the beats, never the length of the whole clip montage.
+  const maxNarrationMs=Math.min(12000,state.settings.recapDurationMs);
   const script=narrationScript(plan);if(!script||Buffer.byteLength(script,'utf8')>1200)return null;
   const refs=plan.dependencyRefs.map(ref=>{const candidate=state.candidates.find(item=>item.entityId===ref.id&&item.revision===ref.revision&&item.language===state.published!.language&&item.status==='published');return candidate?{id:candidate.id,revision:1}:ref;});
   const dependencyRefs=[...new Map(refs.map(ref=>[`${ref.id}:${ref.revision}`,ref])).values()].sort((a,b)=>a.id.localeCompare(b.id)||a.revision-b.revision);
   if(!dependencyRefs.length||dependencyRefs.length>100)return null;
   const ranges=[...plan.beats.map(beat=>beat.sourceRange),...dependencyRefs.flatMap(ref=>{const node=state.nodes[ref.id];return node?[{startMs:node.startMs,endMs:node.endMs}]:[];})];
-  const body={version:1 as const,sessionId:state.session.id,privacyEpoch:state.session.privacyEpoch,language:plan.language,script,dependencyRefs,captureStartMs:Math.max(0,Math.min(...ranges.map(range=>range.startMs))),captureEndMs:Math.max(0,...ranges.map(range=>range.endMs)),maxDurationMs:plan.durationMs};
+  const body={version:1 as const,sessionId:state.session.id,privacyEpoch:state.session.privacyEpoch,language:plan.language,script,dependencyRefs,captureStartMs:Math.max(0,Math.min(...ranges.map(range=>range.startMs))),captureEndMs:Math.max(0,...ranges.map(range=>range.endMs)),maxDurationMs:maxNarrationMs};
   const assetId='narration:'+createHash('sha256').update(canonical(body)).digest('hex');
   return TicketSchema.parse({...body,assetId});
 }

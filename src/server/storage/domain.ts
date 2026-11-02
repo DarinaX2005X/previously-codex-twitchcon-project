@@ -5,6 +5,7 @@ import { EVIDENCE_HORIZON_MS, NON_CHAT_SOURCE_RESERVE, newestSourceFirst } from 
 import type { Scope, Source, VersionRef, EventEnvelope, PrivacyTarget, InvalidationReceipt, Lore } from '../../shared/contracts/index.js';
 import { EventEnvelopeSchema, SourceSchema, SessionSchema, SettingsSchema, ChapterSchema, PublicSnapshotSchema, GenerationTicketSchema, safetyAllowsPublication } from '../../shared/contracts/index.js';
 import type { SqliteRepository } from './repository.js';
+import { normalizeTermText } from '../../shared/text.js';
 import { StorageDatabase, StorageError, integer, json } from './database.js';
 import type { DomainCheckpoint, DomainEntity, DomainHydration, DomainCommitInput, DomainCommitResult } from './domain-types.js';
 
@@ -14,7 +15,7 @@ const canonical=(value:unknown):string=>{
   return `{${Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>`${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
 };
 const hash=(value:unknown)=>createHash('sha256').update(canonical(value)).digest('hex');
-const CHECKPOINT_BYTES=16_777_216;
+export const CHECKPOINT_BYTES=16_777_216;
 
 /** The reducer runs before entering this adapter. Only persistence and fence checks run here. */
 export class DomainPersistence {
@@ -135,7 +136,8 @@ export class DomainPersistence {
     if(source.status==='deleted')this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),eventId);
   }
   private nodes(scope:Scope,state:DomainState,nodes:DerivedNode[],ownerAction:boolean) {
-    const final=[...new Map(nodes.map(node=>[node.id,node])).values()];
+    // Leaf metadata of a pruned source is a reducer projection of its source row, never a stored entity.
+    const final=[...new Map(nodes.map(node=>[node.id,node])).values()].filter(node=>!(node.kind==='provider_cache' && (node.body===null || (node.body as {evidenceMetadata?:unknown}).evidenceMetadata) && this.repository.getSource(scope,node.id)));
     for(const node of final){
       integer(node.revision);const old=this.repository.getEntity(scope,node.id);
       if(old && old.sessionId!==state.session.id)throw new StorageError('inaccessible','Entity belongs to another session.');
@@ -217,7 +219,10 @@ export class DomainPersistence {
       const eventPayload=event.payload && typeof event.payload==='object' ? event.payload as Record<string,unknown> : {},eventType=typeof eventPayload.type==='string' ? eventPayload.type : event.kind;
       const requestShape=input.requestBody as {operation?:unknown;input?:{blocked?:unknown}}|undefined;
       const explicitUnblock=eventType==='term.unblock' || requestShape?.operation==='lore.block' && requestShape.input?.blocked===false;
-      const removedTerms=(before.checkpoint?.blockedTerms ?? (explicitUnblock ? this.repository.listBlockedTerms(scope,sessionId,{limit:500}) : [])).filter(term=>!input.transition.state.blockedTerms.includes(term));
+      // Only an explicit unblock removes a block. Both sides are folded the same way, so a checkpoint written before
+      // a case-folding change (for example 'straße' and 'strasse') never reads as a removed block.
+      const nextTerms=new Set(input.transition.state.blockedTerms.map(normalizeTermText));
+      const removedTerms=explicitUnblock ? [...new Set((before.checkpoint?.blockedTerms ?? this.repository.listBlockedTerms(scope,sessionId,{limit:500})).map(normalizeTermText))].filter(term=>!nextTerms.has(term)) : [];
       const removingBlock=removedTerms.length>0;
       if(input.expectedEntity){const entity=this.repository.getEntity(scope,input.expectedEntity.id),allowHidden=removingBlock && entity?.kind==='lore';if(!entity || entity.sessionId!==sessionId || (entity.status!=='active'&&!allowHidden) || entity.revision!==input.expectedEntity.revision)throw new StorageError('conflict','Entity revision changed.');}
       const state=structuredClone(input.transition.state),effects=input.transition.effects;
@@ -235,7 +240,7 @@ export class DomainPersistence {
       for(const [index,effect] of effects.entries())if(effect.type==='privacy')receipts.push(this.repository.invalidate(scope,effect.target,{idempotencyKey:`domain-privacy:${hash([mutationKey,index])}`,reason:'privacy'}));
       const clearBefore=this.repository.controlGet<number>(scope,`chat-clear:${sessionId}`),clearChanged=state.chatClearThroughMs!==null && (clearBefore===null || state.chatClearThroughMs>clearBefore);
       const corrections=sourceChanges.filter(source=>{const old=this.repository.getSource(scope,source.id);return old && source.status!=='deleted' && source.revision>old.revision && (revisedSourceIds.has(source.id)||['allowed','redacted'].includes(old.moderation));}).map(source=>source.id);
-      if(corrections.length || clearChanged)receipts.push(this.repository.invalidateSourceVersions(scope,sessionId,corrections,{idempotencyKey:`domain-revision:${hash(mutationKey)}`,reason:'source_revision'}));
+      if(corrections.length || clearChanged)receipts.push(this.repository.invalidateSourceVersions(scope,sessionId,corrections,{idempotencyKey:`domain-revision:${hash(mutationKey)}`,reason:'source_revision',...(clearChanged ? {chatThroughMs:state.chatClearThroughMs!} : {})}));
       if(clearChanged)this.repository.controlPut(scope,`chat-clear:${sessionId}`,state.chatClearThroughMs);
       const currentSession=this.repository.getSession(scope,sessionId);
       if(state.session.privacyEpoch!==currentSession.privacyEpoch)throw new StorageError('conflict','Domain privacy epoch does not match its persisted fences.');
@@ -245,6 +250,8 @@ export class DomainPersistence {
       if(['unban','channel.unban'].includes(eventType) && typeof eventPayload.actorId==='string')this.db.run('DELETE FROM channel_bans WHERE channel_id=? AND run_id=? AND actor_id=?',...this.scoped(scope),eventPayload.actorId);
       for(const term of removedTerms)this.repository.unblockTerm(scope,term);
       for(const source of sourceChanges){if(source.sessionId!==sessionId)throw new StorageError('inaccessible','Source belongs to another session.');this.source(scope,eventId,source);}
+      // Cleared chat outside the reducer's bounded window is quarantined here, like the window's own chat.
+      if(clearChanged)this.db.run("UPDATE sources SET status='quarantined' WHERE channel_id=? AND run_id=? AND session_id=? AND kind='chat' AND start_ms<=? AND status='active' AND id NOT IN (SELECT value FROM json_each(?))",...this.scoped(scope),sessionId,state.chatClearThroughMs,json(state.sources.map(source=>source.id)));
       const payload=event.payload && typeof event.payload==='object' ? event.payload as {type?:unknown} : {};
       const ownerAction=event.kind.startsWith('owner.') || event.kind.startsWith('lore.') || typeof payload.type==='string' && (payload.type.startsWith('owner.') || payload.type.startsWith('lore.')) || sourceChanges.some(source=>source.kind==='owner_statement') || Object.entries(state.ownerRevisions).some(([id,revision])=>revision>(before.checkpoint?.ownerRevisions[id] ?? 0));
       this.nodes(scope,state,effects.filter(effect=>effect.type==='entity.upsert').map(effect=>effect.node),ownerAction);
@@ -276,7 +283,7 @@ export class DomainPersistence {
         if(!receipts.length){this.db.run('UPDATE channels SET privacy_revision=privacy_revision+1 WHERE channel_id=? AND run_id=?',...this.scoped(scope));this.db.run('UPDATE publication_sync SET pending_privacy=1 WHERE channel_id=? AND run_id=?',...this.scoped(scope));}
         // One final projection represents this atomic transition. Retract intents created
         // by the privacy helper are superseded here, while standalone privacy keeps them.
-        this.db.run("UPDATE outbox SET state='cancelled',payload=NULL,frozen_body=NULL,frozen_hash=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND session_id=? AND kind IN ('publish','retract','export_manifest') AND state IN ('queued','running')",...this.scoped(scope),sessionId);
+        this.db.run("UPDATE outbox SET state='cancelled',payload=NULL,frozen_body=NULL,frozen_hash=NULL,lease_token=NULL,lease_until_ms=NULL WHERE channel_id=? AND run_id=? AND session_id=? AND kind IN ('publish','retract') AND state IN ('queued','running')",...this.scoped(scope),sessionId);
       }
       for(const effect of effects){
         if(effect.type==='generation.request')this.generation(scope,sessionId,effect.request);

@@ -122,3 +122,37 @@ describe('validation lifecycle fences',()=>{
     try{await expect(tokens.authorizedFetch('https://api.twitch.tv/authored')).rejects.toMatchObject({code:'reconnect_required'});expect(store.tokenVault!.get(scope,'twitch')).toBeNull();expect(store.sessions.verify(scope,session,'owner')).toBeNull();expect(revoked).toHaveBeenCalledOnce();}finally{store.close();}
   });
 });
+
+describe('transient token endpoint failures (review B1, B11)',()=>{
+  it.each([429,408,503])('keeps the grant on a %s refresh and backs off, honouring Retry-After',async status=>{
+    const store=fixture(),revoked=vi.fn();let now=100000,grants=0,limited=true;store.tokenVault!.put(scope,'twitch',oldCredentials(now+5000));const session=store.sessions.issue(scope,'123','owner');
+    const fetcher:typeof fetch=async url=>{
+      if(String(url).endsWith('/token')){grants++;return limited?new Response('{"status":429}',{status,headers:{'Retry-After':'5'}}):Response.json({access_token:'new',refresh_token:'rotated'});}
+      if(String(url).endsWith('/validate'))return valid();
+      return new Response(null,{status:204});
+    };
+    const tokens=new TwitchTokens({...tokenOptions(store,fetcher,revoked),now:()=>now});
+    try{
+      await expect(tokens.authorizedFetch('https://api.twitch.tv/authored')).rejects.toMatchObject({code:'provider_unavailable'});
+      expect(store.tokenVault!.get(scope,'twitch')).toEqual(oldCredentials(105000));expect(revoked).not.toHaveBeenCalled();expect(store.sessions.verify(scope,session,'owner')).not.toBeNull();
+      // Inside the Retry-After window the token endpoint is not called again.
+      now+=4000;await expect(tokens.authorizedFetch('https://api.twitch.tv/authored')).rejects.toMatchObject({code:'provider_unavailable'});expect(grants).toBe(1);
+      now+=1500;limited=false;expect((await tokens.authorizedFetch('https://api.twitch.tv/authored')).status).toBe(204);expect(grants).toBe(2);
+      expect(store.tokenVault!.get(scope,'twitch')).toMatchObject({accessToken:'new',refreshToken:'rotated'});expect(tokens.status().connected).toBe(true);
+    }finally{store.close();}
+  });
+  it('still revokes when the refresh token itself is rejected with 400',async()=>{
+    const store=fixture(),revoked=vi.fn();store.tokenVault!.put(scope,'twitch',oldCredentials(0));
+    const tokens=new TwitchTokens(tokenOptions(store,async url=>String(url).endsWith('/token')?new Response('{"status":400,"message":"Invalid refresh token"}',{status:400}):valid(),revoked));
+    try{await expect(tokens.authorizedFetch('https://api.twitch.tv/authored')).rejects.toMatchObject({code:'reconnect_required'});expect(store.tokenVault!.get(scope,'twitch')).toBeNull();expect(revoked).toHaveBeenCalledOnce();}finally{store.close();}
+  });
+  it('hourly validation tries the refresh token before revoking on a 401',async()=>{
+    const store=fixture(),revoked=vi.fn();store.tokenVault!.put(scope,'twitch',oldCredentials());
+    const fetcher:typeof fetch=async(url,init)=>{
+      if(String(url).endsWith('/token'))return Response.json({access_token:'renewed',refresh_token:'rotated'});
+      return new Headers(init?.headers).get('Authorization')==='OAuth old'?new Response(null,{status:401}):valid();
+    };
+    const tokens=new TwitchTokens(tokenOptions(store,fetcher,revoked));
+    try{expect(await tokens.validate()).toBe(true);expect(store.tokenVault!.get(scope,'twitch')).toMatchObject({accessToken:'renewed',refreshToken:'rotated'});expect(tokens.status().connected).toBe(true);expect(revoked).not.toHaveBeenCalled();}finally{store.close();}
+  });
+});

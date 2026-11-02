@@ -40,3 +40,21 @@ describe('lease, synchronization and private revocation',()=>{
     const s=setup();s.controller.start();await flush();s.advance(400);s.hooks.onHeartbeat();s.advance(5000);s.hooks.onHeartbeat();s.advance(10000);s.hooks.onHeartbeat();s.advance(12300);await flush();expect(s.view.playback).toBeNull();expect(s.release).toHaveBeenCalledOnce();await s.controller.refresh();expect(s.view.playback).toBeNull();expect(vi.mocked(s.client.acknowledge).mock.calls.filter(c=>c[1]==='ended')).toHaveLength(1);s.controller.stop();
   });
 });
+
+describe('transient overlay failures (review B10, B18)',()=>{
+  it('retries a failed prepared acknowledgement instead of reporting a layout failure',async()=>{
+    const s=setup(),acknowledge=s.client.acknowledge as ReturnType<typeof vi.fn>,original=acknowledge.getMockImplementation()!;
+    acknowledge.mockImplementationOnce(async()=>{throw new Error('ack_capacity');});
+    s.controller.start();await flush();
+    expect(s.view.status).toBe('preparing');expect(s.view.playback?.id).toBe('playback:1');
+    acknowledge.mockImplementation(original);await s.controller.refresh();await flush();
+    expect(acknowledge.mock.calls.filter(call=>call[1]==='prepared')).toHaveLength(2);expect(acknowledge.mock.calls.some(call=>call[1]==='error')).toBe(false);
+    s.advance(400);await flush();expect(s.view.playing).toBe(true);s.controller.stop();
+  });
+  it('reports a lost lease once rather than on every animation frame',async()=>{
+    const s=setup(),changes:string[]=[];s.controller.start();await flush();
+    const onChange=(s.controller as unknown as {options:{onChange:(view:OverlayView)=>void}}).options;const forward=onChange.onChange;onChange.onChange=view=>{changes.push(view.status);forward(view);};
+    for(let frame=0;frame<60;frame++)s.advance(7000+frame*16);
+    expect(changes.filter(status=>status==='disconnected')).toHaveLength(1);s.controller.stop();
+  });
+});

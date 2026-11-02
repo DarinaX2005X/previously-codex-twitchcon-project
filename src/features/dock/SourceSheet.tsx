@@ -24,7 +24,8 @@ export function SourceSheet({ context, owner, onClose, onForget }: { context: So
     } catch { if (ticket === generation.current) setError('Could not load these sources. Retry sources.'); }
     finally { if (ticket === generation.current) { busy.current = false; setLoading(false); } }
   }
-  useEffect(() => { void load(); return () => { ++generation.current; }; }, []);
+  // Reset busy too: StrictMode remounts after the first load's finally was fenced off.
+  useEffect(() => { void load(); return () => { ++generation.current; busy.current = false; }; }, []);
   return <Sheet open onOpenChange={open => { if (!open) onClose(); }} title="Chapter sources" description={context.title} className="dock-paper" footer={<QuietButton onClick={onClose}>Close sources</QuietButton>}>
     <p className="pv-secondary">Deleting a chapter keeps these sources. Forget removes an interval and anything derived from it.</p>
     {error && <InlineNotice tone="danger" action={<QuietButton onClick={() => void load(cursor ?? undefined)}>Retry sources</QuietButton>}>{error}</InlineNotice>}

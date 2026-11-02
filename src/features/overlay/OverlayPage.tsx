@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { OverlayController, type OverlayClient, type OverlayView } from './controller.js';
+import { OverlayController, skipOffsetMs, type OverlayClient, type OverlayView } from './controller.js';
 import { prepareMedia } from './media.js';
 import { resolveSceneLayout, type MeasureText } from './geometry.js';
 import { sceneTextFits } from './scene.js';
@@ -31,7 +31,7 @@ export function OverlayPage({client,channel,title,soundEnabled,volume,showDiagno
     return()=>{cancelAnimationFrame(animation);window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',visibility);controller.stop();};
   },[client]);
   return <main className="overlay-page" aria-label="Previously broadcast source" data-overlay-state={view.status}>
-    <ScenePlayer plan={view.playing?view.playback?.plan??null:null} timeMs={view.timeMs} playing={view.playing} preparedMedia={view.media??undefined} channel={channel??view.channel} title={title??view.title} soundEnabled={soundEnabled??view.soundEnabled??false} volume={volume??view.volume??.45} onStatus={status=>callbacks.current?.(status)}/>
+    <ScenePlayer plan={view.playing?view.playback?.plan??null:null} timeMs={view.timeMs} skipAtMs={skipOffsetMs(view.playback)??undefined} clipAudio playing={view.playing} preparedMedia={view.media??undefined} channel={channel??view.channel} title={title??view.title} soundEnabled={soundEnabled??view.soundEnabled??false} volume={volume??view.volume??.45} onStatus={status=>callbacks.current?.(status)}/>
     {showDiagnostics&&['disconnected','layout_required','text_too_long'].includes(view.status)&&<p className="overlay-setup-message">{view.status==='disconnected'?'The broadcast source is disconnected. Reconnect it in setup.':view.status==='text_too_long'?'The recap text does not fit at broadcast size. Shorten its published wording before showing it.':'The scene needs more free space. Adjust protected areas in scene settings.'}</p>}
   </main>;
 }

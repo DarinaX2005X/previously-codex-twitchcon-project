@@ -6,7 +6,7 @@ import { StorageDatabase, StorageError, integer, json } from './database.js';
 import { ControlPersistence } from './control.js';
 import type { MutationReceipt } from './domain-types.js';
 import type { DomainCommitInput, DomainCommitResult, DomainHydration, DomainCheckpoint } from './domain-types.js';
-import { DomainPersistence } from './domain.js';
+import { DomainPersistence, CHECKPOINT_BYTES } from './domain.js';
 import { HistoryPersistence } from './history.js';
 import type {EntityGraph,EntityHistoryCursor,EntityHistoryPage} from './domain-types.js';
 
@@ -17,6 +17,7 @@ export type EntityInput = {id: string; sessionId: string; kind: 'claim'|'relatio
 export type PrivacyOptions = {idempotencyKey: string; reason: string};
 export type AcceptedAudio={sessionId:string;actorId:string;leaseEpoch:number;captureEpoch:number;sequence:number;sha256:string;startMs:number;endMs:number;sampleRate:number;rawPath:string;receivedAtMs:number;privacyEpoch:number};
 export const normalizeBlockedTerm=(term:string):string=>normalizeTermText(term);
+const OWED_RETRACTION='retraction-owed:';
 const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -227,7 +228,7 @@ export class SqliteRepository {
       if(changed)for(const row of this.db.all('SELECT session_id,body,revision FROM domain_checkpoints WHERE channel_id=? AND run_id=? AND body IS NOT NULL',...this.scope(scope))) {
         const body=JSON.parse(String(row.body)) as {blockedTerms?:string[];revision:number};
         body.blockedTerms=(body.blockedTerms ?? []).filter(value=>normalizeBlockedTerm(value)!==normalized);body.revision=Number(row.revision)+1;
-        this.db.run('UPDATE domain_checkpoints SET revision=?,body=?,updated_at_ms=? WHERE channel_id=? AND run_id=? AND session_id=?',body.revision,json(body,8_388_608),this.now(),...this.scope(scope),String(row.session_id));
+        this.db.run('UPDATE domain_checkpoints SET revision=?,body=?,updated_at_ms=? WHERE channel_id=? AND run_id=? AND session_id=?',body.revision,json(body,CHECKPOINT_BYTES),this.now(),...this.scope(scope),String(row.session_id));
       }
       return changed;
     });
@@ -258,9 +259,36 @@ export class SqliteRepository {
     if (Number(pending.count)>=(input.kind==='stt' ? 3 : 1000) && input.kind!=='retract') throw new StorageError('capacity','Durable work queue is full.');
     const id=input.id ?? randomUUID();
     this.db.run(`INSERT INTO ${table}(channel_id,run_id,id,session_id,kind,business_key,payload,privacy_epoch,priority,next_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?)`,...this.scope(scope),id,input.sessionId,input.kind,input.businessKey,json(input.payload),Number(session.privacy_epoch),input.priority ?? 0,input.nextAtMs ?? this.now());
-    if (table==='outbox' && ['publish','retract','export_manifest'].includes(input.kind)) this.assignPublicationSequence(scope,id);
+    if (table==='outbox' && ['publish','retract','export_manifest'].includes(input.kind)) {
+      const publishSeq=this.assignPublicationSequence(scope,id);
+      if (input.kind==='retract') this.oweRetraction(scope,input.sessionId,input.payload,publishSeq);
+    }
     this.edges(scope,id,input.dependencyRefs ?? [],'exposed_to');
     return id;
+  }
+  /**
+   * A retraction is owed per session/export from the moment its intent commits. The obligation outlives the
+   * outbox row that first carried it (retries, revalidation, supersession) and clears only when an acknowledged
+   * retract that covers it, sequenced at or after the obligation, lands in the cloud.
+   */
+  private oweRetraction(scope:Scope,sessionId:string,payload:unknown,publishSeq:number):void {
+    const body=payload && typeof payload==='object' ? payload as Record<string,unknown> : {};
+    const strings=(value:unknown)=>Array.isArray(value) ? value.filter((item):item is string=>typeof item==='string') : [];
+    const sessions=body.exportOnly===true ? [] : [sessionId,...strings(body.affectedSessionIds),...strings(body.sessionIds)];
+    const exports=[...strings(body.exportIds),...strings(body.affectedIds).filter(id=>this.getEntity(scope,id)?.kind==='export')];
+    for (const [kind,ids] of [['session',sessions],['export',exports]] as const) for (const target of new Set(ids)) {
+      const key=`${OWED_RETRACTION}${kind}:${target}`,previous=this.controlGet<{publishSeq:number}>(scope,key);
+      this.controlPut(scope,key,{kind,id:target,sessionId,publishSeq:Math.max(previous?.publishSeq ?? 0,publishSeq)});
+    }
+  }
+  /** Sessions and exports whose public withdrawal has not been acknowledged yet. */
+  listOwedRetractions(scope:Scope,limit=500):{kind:'session'|'export';id:string;sessionId:string;publishSeq:number}[] {
+    return this.db.all(`SELECT body FROM control_state WHERE channel_id=? AND run_id=? AND key >= '${OWED_RETRACTION}' AND key < '${OWED_RETRACTION.slice(0,-1)};' ORDER BY key LIMIT ?`,...this.scope(scope),Math.min(integer(limit,1),1000)).map(row=>JSON.parse(String(row.body)) as {kind:'session'|'export';id:string;sessionId:string;publishSeq:number});
+  }
+  /** A claimable retract row exists, so an owed obligation is already on its way. */
+  hasPendingRetraction(scope:Scope):boolean {
+    return !!this.db.get(`SELECT 1 FROM outbox w JOIN sessions s ON s.channel_id=w.channel_id AND s.run_id=w.run_id AND s.id=w.session_id
+      WHERE w.channel_id=? AND w.run_id=? AND w.kind='retract' AND w.state IN ('queued','running') AND w.privacy_epoch=s.privacy_epoch LIMIT 1`,...this.scope(scope));
   }
   enqueueJob(scope:Scope,input:WorkInput): string { return this.db.transaction(()=>this.insertWork('jobs',scope,input)); }
   enqueueOutbox(scope:Scope,input:WorkInput): string { return this.db.transaction(()=>this.insertWork('outbox',scope,input)); }
@@ -274,7 +302,7 @@ export class SqliteRepository {
         AND (SELECT COUNT(*) FROM ${table} active WHERE active.channel_id=w.channel_id AND active.run_id=w.run_id AND active.kind=w.kind AND active.state='running' AND active.lease_until_ms>? AND (w.kind<>'story' OR active.session_id=w.session_id)) < CASE WHEN w.kind='stt' THEN 2 ELSE 1 END
         ${options.sessionId ? 'AND w.session_id=?' : ''}
         ${options.kinds?.length ? `AND w.kind IN (${options.kinds.map(()=>'?').join(',')})` : ''}
-        ORDER BY w.priority DESC,w.next_at_ms,w.id LIMIT 1`,...this.scope(scope),now,now,now,...(options.sessionId ? [options.sessionId] : []),...(options.kinds ?? []));
+        ORDER BY w.priority DESC,${table==='outbox' ? 'w.publish_seq,' : ''}w.next_at_ms,w.id LIMIT 1`,...this.scope(scope),now,now,now,...(options.sessionId ? [options.sessionId] : []),...(options.kinds ?? []));
       if (!row) return null;
       const token=randomUUID();
       this.db.run(`UPDATE ${table} SET state='running',lease_token=?,lease_until_ms=?,attempts=attempts+1 WHERE channel_id=? AND run_id=? AND id=?`,token,now+leaseMs,...this.scope(scope),String(row.id));
@@ -430,15 +458,17 @@ export class SqliteRepository {
     for(const row of rows){const id=String(row.id),old=this.controlGet<number>(scope,`metadata-fence:${id}`);this.controlPut(scope,`metadata-fence:${id}`,Math.max(old ?? 0,Number(row.metadata_end_ms)));this.db.run("UPDATE sessions SET title='',category='',metadata_end_ms=0 WHERE channel_id=? AND run_id=? AND id=?",...this.scope(scope),id);}
   }
   /** Invalidates exposed old versions without tombstoning the corrected/quarantined source. */
-  invalidateSourceVersions(scope:Scope,sessionId:string,sourceIds:string[],options:PrivacyOptions):InvalidationReceipt {
+  invalidateSourceVersions(scope:Scope,sessionId:string,sourceIds:string[],options:PrivacyOptions&{chatThroughMs?:number}):InvalidationReceipt {
     return this.db.transaction(()=>{
       this.session(scope,sessionId);if(sourceIds.length>500)throw new StorageError('capacity','Source revision batch exceeds its limit.');
-      const requestHash=digest({sessionId,sourceIds:[...sourceIds].sort(),operation:'source_revision'});
+      const requestHash=digest({sessionId,sourceIds:[...sourceIds].sort(),operation:'source_revision',...(options.chatThroughMs!==undefined ? {chatThroughMs:options.chatThroughMs} : {})});
       const previous=this.db.get('SELECT request_hash,receipt FROM privacy_receipts WHERE channel_id=? AND run_id=? AND idempotency_key=?',...this.scope(scope),options.idempotencyKey);
       if(previous){if(previous.request_hash!==requestHash)throw new StorageError('conflict','Source revision key was already used.');return JSON.parse(String(previous.receipt)) as InvalidationReceipt;}
       this.db.raw.exec('CREATE TEMP TABLE IF NOT EXISTS affected(id TEXT PRIMARY KEY); DELETE FROM affected; CREATE TEMP TABLE IF NOT EXISTS affected_sessions(id TEXT PRIMARY KEY); DELETE FROM affected_sessions;');
       this.db.run('INSERT INTO affected_sessions VALUES(?)',sessionId);
       for(const id of sourceIds)this.db.run('INSERT OR IGNORE INTO affected SELECT id FROM sources WHERE channel_id=? AND run_id=? AND session_id=? AND id=?',...this.scope(scope),sessionId,id);
+      // Chat clear also withdraws content derived from chat that already left the bounded in-memory window.
+      if(options.chatThroughMs!==undefined)this.db.run("INSERT OR IGNORE INTO affected SELECT id FROM sources WHERE channel_id=? AND run_id=? AND session_id=? AND kind='chat' AND start_ms<=? AND status='active'",...this.scope(scope),sessionId,integer(options.chatThroughMs));
       this.db.run(`INSERT OR IGNORE INTO affected SELECT e.id FROM entities e WHERE e.channel_id=? AND e.run_id=? AND e.session_id=? AND e.kind='media'
         AND EXISTS(SELECT 1 FROM sources s JOIN affected a ON a.id=s.id WHERE s.channel_id=e.channel_id AND s.run_id=e.run_id AND ranges_overlap(s.start_ms,s.end_ms,e.start_ms,e.end_ms))`,...this.scope(scope),sessionId);
       this.db.run(`INSERT OR IGNORE INTO affected WITH RECURSIVE descendants(id) AS (SELECT id FROM affected UNION SELECT d.child_id FROM dependencies d JOIN descendants a ON a.id=d.parent_id WHERE d.channel_id=? AND d.run_id=?) SELECT id FROM descendants`,...this.scope(scope));
@@ -672,9 +702,20 @@ export class SqliteRepository {
       if (!row||publishSeq>Number(row.publish_seq)) return false;
       const previous=this.db.get('SELECT ack_seq,ack_hash FROM publication_sync WHERE channel_id=? AND run_id=?',...this.scope(scope));
       if(previous && Number(previous.ack_seq)===publishSeq && previous.ack_hash && previous.ack_hash!==bodyHash)return false;
-      const frozen=this.db.get('SELECT frozen_hash FROM outbox WHERE channel_id=? AND run_id=? AND publish_seq=?',...this.scope(scope),publishSeq);
+      const frozen=this.db.get('SELECT kind,frozen_hash,frozen_body FROM outbox WHERE channel_id=? AND run_id=? AND publish_seq=?',...this.scope(scope),publishSeq);
       if(frozen?.frozen_hash && frozen.frozen_hash!==bodyHash)return false;
-      return this.db.run('UPDATE publication_sync SET ack_seq=?,ack_hash=?,last_synced_at_ms=?,pending_privacy=CASE WHEN ?=? THEN 0 ELSE pending_privacy END WHERE channel_id=? AND run_id=? AND ack_seq<=?',publishSeq,bodyHash,this.now(),publishSeq,Number(row.publish_seq),...this.scope(scope),publishSeq).changes===1;
+      if(this.db.run('UPDATE publication_sync SET ack_seq=?,ack_hash=?,last_synced_at_ms=? WHERE channel_id=? AND run_id=? AND ack_seq<=?',publishSeq,bodyHash,this.now(),...this.scope(scope),publishSeq).changes!==1)return false;
+      // Only the acknowledged retract's own frozen scope settles an obligation; a later ordinary ACK never does.
+      if(frozen?.kind==='retract' && frozen.frozen_body){
+        const body=JSON.parse(String(frozen.frozen_body)) as {operation?:unknown;sessionIds?:unknown;exportIds?:unknown};
+        const covered=(value:unknown)=>Array.isArray(value) ? value.filter((id):id is string=>typeof id==='string') : [];
+        if(body.operation==='retract')for(const [kind,ids] of [['session',covered(body.sessionIds)],['export',covered(body.exportIds)]] as const)for(const id of ids){
+          const key=`${OWED_RETRACTION}${kind}:${id}`,owed=this.controlGet<{publishSeq:number}>(scope,key);
+          if(owed && owed.publishSeq<=publishSeq)this.controlDelete(scope,key);
+        }
+      }
+      this.db.run('UPDATE publication_sync SET pending_privacy=? WHERE channel_id=? AND run_id=?',Number(this.listOwedRetractions(scope,1).length>0),...this.scope(scope));
+      return true;
     });
   }
   getPublicationState(scope:Scope) {

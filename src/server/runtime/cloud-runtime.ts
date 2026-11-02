@@ -1,6 +1,6 @@
 import {canonical,isRefActive,type DomainEffect,type DomainState} from '../../core/index.js';
 import {type Channel,type Clock,type PublicSnapshot,type Scope,type SourceStatus} from '../../shared/contracts/index.js';
-import {LocalPublisher,heartbeatOperation,validatePublicSnapshot,signedHeaders,type PublicationLease,type PublicationRepository} from '../publication/index.js';
+import {LocalPublisher,TerminalPublicationError,heartbeatOperation,validatePublicSnapshot,signedHeaders,type PublicationLease,type PublicationRepository} from '../publication/index.js';
 import {ManifestSchema,type PublicationOperation,type PublicationAck} from '../../cloud/contracts.js';
 import type {StoryEngine,RuntimeStorage} from './engine.js';
 import type {RevisionStream} from './updates.js';
@@ -42,8 +42,10 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
   async function buildOperation(lease:PublicationLease):Promise<PublicationOperation>{
     const current=sync(),body=payload(lease),common={channelId:scope.channelId,channelLogin:channel.login,publishSeq:lease.publishSeq!,privacyRevision:current.privacyRevision};
     if(lease.kind==='retract'){
-      const sessionIds=body.exportOnly===true?[]:[...new Set([lease.sessionId,...strings(body.affectedSessionIds),...strings(body.sessionIds)])];
-      const exportIds=[...new Set([...strings(body.exportIds),...strings(body.affectedIds).filter(id=>repository.getEntity(scope,id)?.kind==='export')])];
+      // Every retract also carries all still-owed withdrawals, so one dropped or superseded retract is never lost.
+      const owed=repository.listOwedRetractions(scope);
+      const sessionIds=[...new Set([...body.exportOnly===true?[]:[lease.sessionId,...strings(body.affectedSessionIds),...strings(body.sessionIds)],...owed.filter(item=>item.kind==='session').map(item=>item.id)])].slice(0,100);
+      const exportIds=[...new Set([...strings(body.exportIds),...strings(body.affectedIds).filter(id=>repository.getEntity(scope,id)?.kind==='export'),...owed.filter(item=>item.kind==='export').map(item=>item.id)])].slice(0,10);
       return {...common,operation:'retract',sessionIds,exportIds,snapshots:sessionIds.map(publicState).filter((s):s is PublicSnapshot=>s!==null)};
     }
     if(lease.kind==='export_manifest'){
@@ -53,6 +55,8 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
           if(closed||engine.outputsBlocked()||!repository.renewOutbox(scope,lease.id,lease.leaseToken,30_000))throw new Error('Recording publication was revoked');
           const path='/api/publish/export-assets',framed=Buffer.concat([Buffer.from(JSON.stringify(metadata)+'\n'),Buffer.from(bytes)]);
           const response=await (options.fetch??fetch)(new URL(path,options.publicOrigin!),{method:'POST',headers:{'Content-Type':'application/octet-stream',...signedHeaders(options.sharedSecret!,'POST',path,scope.channelId,lease.publishSeq!,framed,clock.now())},body:framed,redirect:'error',signal:AbortSignal.any([lifetime.signal,outputWindow.signal,AbortSignal.timeout(20_000)])});
+          // A newer publication overtook this upload's sequence; only a new publication attempt can succeed.
+          if(response.status===409){await response.body?.cancel();throw new TerminalPublicationError('Recording upload was overtaken');}
           if(!response.ok){await response.body?.cancel();throw new Error('Recording upload requires retry');}
           await response.body?.cancel();
         });
@@ -60,7 +64,7 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
       return {...common,operation:'export_manifest',manifest:ManifestSchema.parse(body.manifest)};
     }
     const activeSessionId=activeForCloud(lease.sessionId);
-    if(body.heartbeat===true){if(!activeSessionId||activeSessionId!==lease.sessionId)throw new Error('Heartbeat session is no longer active');return heartbeatOperation({...common,activeSessionId,now:clock.now()});}
+    if(body.heartbeat===true){if(!activeSessionId||activeSessionId!==lease.sessionId)throw new TerminalPublicationError('Heartbeat session is no longer active');return heartbeatOperation({...common,activeSessionId,now:clock.now()});}
     const snapshot=publicState(lease.sessionId);if(!snapshot)throw new Error('Published snapshot is unavailable');
     const snapshots=[snapshot];
     // An older episode can finalize while the new stream starts; atomically retain the new live pointer.
@@ -99,7 +103,8 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
     settled();
   }
   const port:PublicationRepository={
-    claimOutbox:(s,args)=>{lastLease=repository.claimOutbox(s,args);return lastLease;},
+    // While a withdrawal is owed, the cloud rejects newer privacy revisions without it: send the retraction first.
+    claimOutbox:(s,args)=>{lastLease=repository.claimOutbox(s,repository.listOwedRetractions(s,1).length?{...args,kinds:['retract']}:args);return lastLease;},
     freezePublication:(...args)=>repository.freezePublication(...args),renewOutbox:(...args)=>repository.renewOutbox(...args),acknowledgePublication:(...args)=>repository.acknowledgePublication(...args),
     finishOutbox:(s,id,token,state,nextAt)=>{
       const saved=repository.finishOutbox(s,id,token,state,nextAt);
@@ -115,6 +120,15 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
     catch{status('error','Public recap configuration needs attention.','Check public recap setup');}
   }else status('unconfigured',scope.runId==='live'?'Configure the public recap to publish safe updates.':'Replay stays local; cloud publication is disabled.');
 
+  let retractionRetryAtMs=0;
+  /** An owed withdrawal whose retract rows were dropped (revalidation, supersession, a rejected request) is sent again. */
+  function ensureRetraction(){
+    if(!publisher||closed||engine.outputsBlocked()||clock.now()<retractionRetryAtMs)return;
+    const owed=repository.listOwedRetractions(scope,1)[0];
+    if(!owed||repository.hasPendingRetraction(scope))return;
+    retractionRetryAtMs=clock.now()+10_000;
+    repository.preparePublication(scope,{sessionId:owed.sessionId,kind:'retract',businessKey:`owed-retraction:${sync().publishSeq}:${clock.now()}`,payload:{exportOnly:true,owed:true},priority:1000});
+  }
   function enqueueHeartbeat(force=false){
     if(!publisher||closed||engine.outputsBlocked())return;
     const current=sync(),marker=repository.controlGet<HeartbeatMarker>(scope,HEARTBEAT),activeSessionId=activeForCloud();
@@ -133,7 +147,7 @@ export function createCloudRuntime(options:CloudRuntimeOptions){
     async tick():Promise<'idle'|'acknowledged'|'retry'|'cancelled'>{
       if(closed||!publisher||busy||engine.outputsBlocked())return 'idle';busy=true;
       try{
-        enqueueHeartbeat();const result=await publisher.tick();
+        ensureRetraction();enqueueHeartbeat();const result=await publisher.tick();
         if(result==='retry')status('error','Saved locally. The public recap could not be reached and the update is pending.','Check connection');
         else if(result==='cancelled'){const current=sync();if(current.publishSeq>current.ackSeq)pending();else settled();}
         else if(result==='acknowledged')settled();

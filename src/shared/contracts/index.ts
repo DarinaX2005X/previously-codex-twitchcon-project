@@ -129,7 +129,8 @@ export const SettingsSchema = z.object({
   volume: z.number().min(0).max(1),
   uiSoundEnabled: z.boolean(),
   layout: OverlayLayoutSchema,
-  recapDurationMs: z.union([z.literal(10000), z.literal(12000), z.literal(15000)]),
+  /** Longest recap length. Short, standard and full are 30, 60 and 120 s; 10–15 s are accepted from older settings. */
+  recapDurationMs: z.union([z.literal(10000), z.literal(12000), z.literal(15000), z.literal(30000), z.literal(60000), z.literal(120000)]),
   hotkey: z.string().max(40),
   channelContext: z.string().max(500),
   earlyWelcomeClipId: IdSchema.nullable(),
@@ -141,7 +142,7 @@ export const defaultSettings: Settings = {
   narrationEnabled: false, broadcastSoundEnabled: false, volume: 0.35, uiSoundEnabled: false,
   // A typical face cam in the top-right corner. Streamers add or move areas in scene settings.
   layout: { preset: 'lower', protectedRects: [{ x: 1376, y: 64, width: 480, height: 270 }] },
-  recapDurationMs: 12000, hotkey: 'Alt+P', channelContext: '', earlyWelcomeClipId: null,
+  recapDurationMs: 60000, hotkey: 'Alt+P', channelContext: '', earlyWelcomeClipId: null,
 };
 export const ChannelSchema = z.object({ id: IdSchema, login: z.string().regex(/^[a-z0-9_]{1,25}$/), displayName: z.string().min(1).max(64) }).strict();
 export type Channel = z.infer<typeof ChannelSchema>;
@@ -222,7 +223,7 @@ export type PublicationCandidate = z.infer<typeof PublicationCandidateSchema>;
 export const RecapSceneSchema = z.object({
   channelName: z.string().max(64),
   streamTitle: z.string().max(200).nullable(),
-  chapters: z.array(z.object({ id: IdSchema, title: z.string().min(1).max(120), startMs: OffsetSchema, mediaId: IdSchema.nullable() }).strict()).max(3),
+  chapters: z.array(z.object({ id: IdSchema, title: z.string().min(1).max(120), summary: z.string().max(700).optional(), startMs: OffsetSchema, mediaId: IdSchema.nullable() }).strict()).max(12),
   moment: z.object({
     id: IdSchema, chapterId: IdSchema.nullable(), startMs: OffsetSchema, windowSeconds: z.number().int().min(1).max(600),
     count: z.number().int().min(0), mediaId: IdSchema.nullable(), messages: z.array(z.string().min(1).max(40)).max(14),
@@ -240,12 +241,12 @@ export const MOMENT_CLIP_LEAD_MS = 1000;
 export const RecapPlanSchema = z.object({
   id: IdSchema, sessionId: IdSchema, revision: RevisionSchema, privacyEpoch: RevisionSchema,
   language: LanguageSchema, variant: z.enum(['full', 'compact', 'welcome']),
-  durationMs: z.union([z.literal(5000), z.literal(10000), z.literal(12000), z.literal(15000)]),
+  durationMs: z.number().int().min(5000).max(120_000),
   dependencyRefs: z.array(VersionRefSchema).max(100), layout: OverlayLayoutSchema,
   arrivals: z.array(z.object({ triggerId: IdSchema, fromLogin: z.string().max(25), viewers: z.number().int().min(0) }).strict()).max(5),
   overflowArrivals: z.object({ channels: z.number().int().min(0), viewers: z.number().int().min(0) }).strict(),
   beats: z.array(z.object({ id: IdSchema, kind: z.enum(['context', 'attempt', 'change', 'origin', 'now']), text: z.string().max(300), atMs: OffsetSchema, untilMs: OffsetSchema, sourceRange: TimeRangeSchema, sourceIds: z.array(IdSchema).max(20), mediaId: IdSchema.nullable() }).strict()).max(4),
-  media: z.array(z.object({ id: IdSchema, kind: z.enum(['video', 'image']), inMs: OffsetSchema, outMs: OffsetSchema, captureStartMs: OffsetSchema, captureEndMs: OffsetSchema, previousSession: z.boolean() }).strict()).max(4),
+  media: z.array(z.object({ id: IdSchema, kind: z.enum(['video', 'image']), inMs: OffsetSchema, outMs: OffsetSchema, captureStartMs: OffsetSchema, captureEndMs: OffsetSchema, previousSession: z.boolean() }).strict()).max(12),
   audio: z.object({ id: IdSchema, startMs: OffsetSchema, durationMs: OffsetSchema }).strict().nullable(),
   soundEvents: z.array(z.object({ id: IdSchema, kind: z.string().max(40), atMs: OffsetSchema, gain: z.number().min(0).max(1) }).strict()).max(32),
   generatedAt: IsoTimeSchema,
@@ -253,7 +254,8 @@ export const RecapPlanSchema = z.object({
 }).strict();
 export type RecapPlan = z.infer<typeof RecapPlanSchema>;
 export type RecapTrigger = { id: string; sessionId: string; reason: 'raid' | 'manual' | 'hotkey'; occurredAt: string; fromLogin?: string; viewers?: number };
-export type PlaybackRef = { id: string; status: 'queued' | 'preparing' | 'playing' | 'ended' | 'cancelled' | 'skipped'; plan: RecapPlan | null; startAt: string | null };
+/** `skipAt`: the owner skipped a playing recap; the scene goes straight to its outro and ends a moment later. */
+export type PlaybackRef = { id: string; status: 'queued' | 'preparing' | 'playing' | 'ended' | 'cancelled' | 'skipped'; plan: RecapPlan | null; startAt: string | null; skipAt?: string | null };
 export type CaptureLease = { token: string; epoch: number; captureEpoch: number; expiresAt: string; sessionId: string; anchorTime: string; anchorOffsetMs: number };
 export type JobRef = { id: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown_outcome' };
 export type SourceStatus = { state: 'unconfigured' | 'disconnected' | 'connecting' | 'ready' | 'listening' | 'paused' | 'delayed' | 'error'; lastObservedAt: string | null; message: string | null; action: string | null };

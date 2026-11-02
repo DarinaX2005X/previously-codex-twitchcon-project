@@ -55,10 +55,12 @@ export async function saveChapterDraft(client: RecapClient, value: ChapterEditDr
     return { ok: false as const, draft, conflict, error: conflict ? 'This chapter changed. Your edit is still here. Compare the latest wording before saving.' : 'Could not save. Your edit is still here. Try Save chapter again.' };
   }
 }
-export function hotkeyMatches(event: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'shiftKey' | 'metaKey'>, binding: string): boolean {
+export function hotkeyMatches(event: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'shiftKey' | 'metaKey'> & { code?: string }, binding: string): boolean {
   const parts = binding.toLowerCase().split('+').map(part => part.trim());
   const key = parts.pop();
-  return Boolean(key) && event.key.toLowerCase() === key && event.altKey === parts.includes('alt') && event.ctrlKey === parts.includes('ctrl') && event.shiftKey === parts.includes('shift') && event.metaKey === parts.includes('meta');
+  // Shift+1 types "!" and macOS Alt+letter types a symbol: when the key is not a plain letter or digit, match the physical key.
+  const physical = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code ?? ''), base = physical ? (physical[1] ?? physical[2])!.toLowerCase() : null;
+  return Boolean(key) && (event.key.toLowerCase() === key || (!/^[a-z0-9]$/i.test(event.key) && base === key)) && event.altKey === parts.includes('alt') && event.ctrlKey === parts.includes('ctrl') && event.shiftKey === parts.includes('shift') && event.metaKey === parts.includes('meta');
 }
 
 /** Stops local hardware before awaiting either of the independent server operations. */
@@ -73,13 +75,17 @@ export async function pauseListening(client: RecapClient, snapshot: OwnerSnapsho
 
 export type DockState = { snapshot: OwnerSnapshot | null; error: string | null; loading: boolean; sourceEpoch: number; invalidatedIds: string[] | null };
 
-/** Request generations fence delayed refreshes, including requests predating a privacy event. */
+/** Request generations fence delayed refreshes, including requests predating a privacy event.
+ * Refreshes are coalesced: while one request is in flight, further calls share a single follow-up,
+ * so frequent update events cannot keep superseding every response. */
 export class DockStore {
   private state: DockState = { snapshot: null, error: null, loading: true, sourceEpoch: 0, invalidatedIds: [] };
   private listeners = new Set<() => void>();
   private generation = 0;
   private stop?: () => void;
   private active = false;
+  private current: Promise<void> | null = null;
+  private next: Promise<void> | null = null;
   constructor(readonly client: RecapClient) {}
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -103,7 +109,16 @@ export class DockStore {
     }
     void this.refresh();
   };
-  async refresh(): Promise<void> {
+  refresh(): Promise<void> {
+    if (!this.current) return this.start();
+    return this.next ??= this.current.then(() => { this.next = null; return this.start(); });
+  }
+  private start(): Promise<void> {
+    const run: Promise<void> = this.request().finally(() => { if (this.current === run) this.current = null; });
+    this.current = run;
+    return run;
+  }
+  private async request(): Promise<void> {
     const generation = ++this.generation;
     try {
       const snapshot = await this.client.getSnapshot();

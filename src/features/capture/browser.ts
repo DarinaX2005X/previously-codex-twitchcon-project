@@ -5,7 +5,8 @@ export function createBrowserCaptureEnvironment():CaptureEnvironment {
   return {now:()=>performance.now(),digest:async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new Uint8Array(bytes)))).map(byte=>byte.toString(16).padStart(2,'0')).join(''),every:(fn,ms)=>setInterval(fn,ms),cancelTimer:timer=>{if(timer!==undefined)clearInterval(timer as ReturnType<typeof setInterval>);},open:async()=>{
     if(!globalThis.isSecureContext||!navigator.mediaDevices?.getUserMedia)throw new Error('Secure microphone capture is unavailable.');
     const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});
-    let context:AudioContext;try{context=new AudioContext();}catch(error){stream.getTracks().forEach(track=>track.stop());throw error;}
+    // Uploads accept at most 96 kHz; ask interfaces running faster for 48 kHz, which the browser resamples to.
+    let context:AudioContext;try{context=new AudioContext();if(context.sampleRate>96000){void context.close();context=new AudioContext({sampleRate:48000});}}catch(error){stream.getTracks().forEach(track=>track.stop());throw error;}
     let node:AudioWorkletNode|undefined,source:MediaStreamAudioSourceNode|undefined;let stopped=false;
     const stop=()=>{if(stopped)return;stopped=true;stream.getTracks().forEach(track=>track.stop());if(node){node.port.onmessage=null;node.disconnect();}source?.disconnect();void context.close();};
     let flushed:(()=>void)|undefined;

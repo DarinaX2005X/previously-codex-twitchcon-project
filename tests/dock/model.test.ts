@@ -52,6 +52,22 @@ describe('dock async ownership and privacy', () => {
     expect(store.getSnapshot().snapshot?.revision).toBe(3);
     disconnect();
   });
+  it('applies refreshes while update events keep arriving faster than a round-trip (review B8)', async () => {
+    const requests = [deferred<OwnerSnapshot>(), deferred<OwnerSnapshot>(), deferred<OwnerSnapshot>()];
+    const connection = port(requests.map(request => request.promise));
+    const store = new DockStore(connection.client), disconnect = store.connect();
+    const changed = (revision: number) => connection.emit({ id: revision, event: 'snapshot.changed', data: { sessionId: 'session', revision } });
+    changed(2); changed(3);
+    requests[0]!.resolve(snapshot(1)); await tick();
+    expect(store.getSnapshot().snapshot?.revision).toBe(1);
+    changed(4); changed(5);
+    requests[1]!.resolve(snapshot(3)); await tick();
+    expect(store.getSnapshot().snapshot?.revision).toBe(3);
+    requests[2]!.resolve(snapshot(5)); await tick();
+    expect(store.getSnapshot().snapshot?.revision).toBe(5);
+    expect(connection.client.getSnapshot).toHaveBeenCalledTimes(3);
+    disconnect();
+  });
   it('drops a refresh after the dock disconnects', async () => {
     const request = deferred<OwnerSnapshot>(), connection = port([request.promise]);
     const store = new DockStore(connection.client), disconnect = store.connect(); disconnect();
@@ -137,6 +153,13 @@ describe('dock publication and interactions', () => {
     expect(hotkeyMatches(event, 'Alt+P')).toBe(true);
     expect(hotkeyMatches({ ...event, shiftKey: true }, 'Alt+P')).toBe(false);
     expect(hotkeyMatches(event, '')).toBe(false);
+  });
+  it('matches Shift+digit and macOS Alt+letter bindings by physical key (review B15)', () => {
+    const plain = { altKey: false, ctrlKey: false, shiftKey: false, metaKey: false };
+    expect(hotkeyMatches({ ...plain, key: '!', code: 'Digit1', shiftKey: true }, 'Shift+1')).toBe(true);
+    expect(hotkeyMatches({ ...plain, key: '®', code: 'KeyR', altKey: true }, 'Alt+R')).toBe(true);
+    expect(hotkeyMatches({ ...plain, key: '!', code: 'Digit1' }, 'Shift+1')).toBe(false);
+    expect(hotkeyMatches({ ...plain, key: 'q', code: 'KeyA', altKey: true }, 'Alt+A')).toBe(false);
   });
   it('only reports clipboard success when the clipboard write succeeds', async () => {
     expect(await copyValue('url')).toBe(false);

@@ -4,6 +4,7 @@ import type { DomainMedia, DomainState } from './types.js';
 import { canonical, isRefActive, normalizeTerm, sourceAllowed, uniqueRefs } from './evidence.js';
 import { safeLorePresentation } from './lore-presentations.js';
 import { messagesFor } from '../i18n/index.js';
+import { planMontage } from '../shared/montage.js';
 
 /** Every public consumer uses this projection; this selector never falls back to drafts. */
 export const selectPublicSnapshot = (state: DomainState): PublicSnapshot | null => state.published;
@@ -13,7 +14,7 @@ export type MomentLineage = { count: number; messages: { ref: VersionRef; text: 
 export type RecapLineage = { currentRefs?: VersionRef[]; loreRefs?: Record<string, VersionRef[]>; moments?: Record<string, MomentLineage> };
 export type RecapCompileOptions = RecapLineage & {
   media?: DomainMedia[];
-  durationMs?: 10000 | 12000 | 15000;
+  durationMs?: number;
   welcomeOnly?: boolean;
   generatedAt?: string;
   narrationEnabled?: boolean;
@@ -241,12 +242,14 @@ function buildScene(snapshot: PublicSnapshot, options: RecapCompileOptions, welc
   const currentChapter = currentChapterOf(snapshot);
   const earlier = [...snapshot.chapters].filter(chapter => chapter.id !== currentChapter?.id && chapter.title.trim())
     .sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id));
-  const chapters = earlier.slice(-3);
+  // The montage tells the stream in story order; the plan's length decides how many of these are shown.
+  const chapters = earlier.slice(-10);
   for (const chapter of chapters) {
     if (!take([chapterRef(chapter)])) break;
     const clip = mediaFor(chapter.momentIds);
     if (clip) media.push(clip);
-    value.chapters.push({ id: chapter.id, title: chapter.title.trim(), startMs: chapter.startMs, mediaId: clip?.id ?? null });
+    const summary = chapter.summary.trim();
+    value.chapters.push({ id: chapter.id, title: chapter.title.trim(), ...(summary && summary !== chapter.title.trim() ? { summary } : {}), startMs: chapter.startMs, mediaId: clip?.id ?? null });
   }
   const current = snapshot.current;
   if (current?.now?.trim() && options.currentRefs?.length && take(options.currentRefs)) {
@@ -282,9 +285,13 @@ export function narrationScript(input: Pick<RecapPlan, 'beats'> | RecapPlan['bea
   return (Array.isArray(input) ? input : input.beats).map(beat => beat.text).join(' ');
 }
 
+/** A spoken summary of the beats stays short, whatever the montage length. */
+export const NARRATION_MAX_MS = 12000;
+
 export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, trigger: RecapTrigger,
   options: RecapCompileOptions = {}): RecapPlan {
-  const allMedia = options.media ?? [], duration = options.durationMs ?? 12000;
+  // 10–15 s settings belong to the earlier short scene; the montage treats them as the standard one minute.
+  const allMedia = options.media ?? [], duration = Math.min(120_000, options.durationMs === undefined || options.durationMs < 30000 ? 60000 : options.durationMs);
   const visual = allMedia.filter(media => media.kind !== 'audio' && media.state === 'ready' && media.ownerApproved
     && Number.isFinite(media.durationMs) && media.durationMs > 0 && (media.previousSession
       || snapshot.moments.some(moment => moment.id === media.momentId && moment.mediaState === 'ready'
@@ -300,7 +307,7 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
       startMs: snapshot.session.metadataMaxDependencyEndMs, endMs: snapshot.session.metadataMaxDependencyEndMs,
     }, sourceIds: [], momentIds: [] }];
   }
-  const total = welcome ? 5000 : duration;
+  let total = welcome ? 5000 : duration;
   let refs = uniqueRefs(selected.flatMap(beat => beat.refs));
   const permitted: DomainMedia[] = [];
   for (const media of visual.filter(media => welcome ? media.previousSession
@@ -312,7 +319,7 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
   }
   const scene = buildScene(snapshot, options, welcome, visual, refs);
   refs = scene.refs;
-  for (const media of scene.media) if (!permitted.some(item => item.id === media.id) && permitted.length < 4) {
+  for (const media of scene.media) if (!permitted.some(item => item.id === media.id) && permitted.length < 12) {
     const nextRefs = uniqueRefs([...refs, { id: media.id, revision: media.revision }, ...media.refs]);
     if (nextRefs.length > 100) continue;
     refs = nextRefs; permitted.push(media);
@@ -325,6 +332,15 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
     moment: scene.value.moment ? { ...scene.value.moment, mediaId: keep(scene.value.moment.mediaId) } : null,
     now: scene.value.now ? { ...scene.value.now, mediaId: keep(scene.value.now.mediaId) } : null,
   };
+  const clipMs = (id: string | null) => { const m = id ? permitted.find(item => item.id === id) : undefined; if (!m) return null;
+    const moment = snapshot.moments.find(item => item.id === m.momentId);
+    const lead = moment && !m.previousSession ? moment.startMs - m.captureStartMs - MOMENT_CLIP_LEAD_MS : 0;
+    return Math.max(0, m.durationMs - Math.max(0, Math.min(Math.round(lead), Math.max(0, m.durationMs - 1000)))); };
+  if (!welcome) {
+    const montage = planMontage({ durationMs: duration, chapters: sceneValue.chapters.map(c => ({ clipMs: clipMs(c.mediaId), keep: !!sceneValue.moment && sceneValue.moment.chapterId === c.id })),
+      ...(sceneValue.now ? { now: { clipMs: clipMs(sceneValue.now.mediaId) } } : {}) });
+    total = Math.max(5000, Math.min(duration, montage.totalMs));
+  }
   const plan: RecapPlan = {
     id: `recap:${trigger.id}`, sessionId: snapshot.session.id, revision: snapshot.revision, privacyEpoch: snapshot.privacyEpoch,
     language: snapshot.language, variant: welcome ? 'welcome' : permitted.length ? 'full' : 'compact', durationMs: total,
@@ -344,7 +360,7 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
       const lead = moment && !media.previousSession ? moment.startMs - media.captureStartMs - MOMENT_CLIP_LEAD_MS : 0;
       const inMs = Math.max(0, Math.min(Math.round(lead), Math.max(0, media.durationMs - 1000)));
       return { id: media.id, kind: media.kind === 'image' ? 'image' as const : 'video' as const,
-        inMs, outMs: Math.min(media.durationMs, inMs + total), captureStartMs: media.captureStartMs,
+        inMs, outMs: media.durationMs, captureStartMs: media.captureStartMs,
         captureEndMs: media.captureEndMs, previousSession: media.previousSession };
     }),
     audio: null, soundEvents: [], generatedAt: options.generatedAt ?? trigger.occurredAt,
@@ -354,10 +370,12 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
     const script = narrationScript(plan);
     const audio = allMedia.find(media => media.kind === 'audio' && media.state === 'ready' && media.ownerApproved
       && media.narration?.language === plan.language && media.narration.script === script
-      && Number.isFinite(media.durationMs) && media.durationMs > 0 && media.durationMs <= total
+      && Number.isFinite(media.durationMs) && media.durationMs > 0 && media.durationMs <= NARRATION_MAX_MS
       && uniqueRefs([...refs, { id: media.id, revision: media.revision }, ...media.refs]).length <= 100);
     if (audio) {
       plan.audio = { id: audio.id, startMs: 0, durationMs: audio.durationMs };
+      // Narration plays to its end; the plan lasts at least as long.
+      plan.durationMs = Math.max(plan.durationMs, audio.durationMs);
       plan.dependencyRefs = uniqueRefs([...refs, { id: audio.id, revision: audio.revision }, ...audio.refs]);
     }
   }

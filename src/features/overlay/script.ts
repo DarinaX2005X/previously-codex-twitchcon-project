@@ -12,7 +12,7 @@ export type SceneScript = {
   viewersLabel: (n: number) => string;
   titleLead: string;          // "Previously"
   titleRest: string | null;   // "on Foxlight Dev"
-  chapters: { id: string; title: string; timecode: string; mediaId: string | null }[];
+  chapters: { id: string; title: string; summary: string | null; timecode: string; mediaId: string | null }[];
   /** `reactionMs`: where chat peaked, in ms after the clip's in-point (from the plan's burst and capture range); null when unknown. */
   moment: { chapterIndex: number; count: number; windowSeconds: number; messages: string[]; mediaId: string | null; reactionMs: number | null } | null;
   lore: { term: string; explanation: string | null; stamp: string } | null;
@@ -43,9 +43,9 @@ export function sceneScript(plan: RecapPlan, extra: { channel?: string; title?: 
   const welcomeOnly = plan.variant === 'welcome';
   const nowBeat = plan.beats.find(beat => beat.kind === 'now');
   const chapters = welcomeOnly ? [] : scene
-    ? scene.chapters.map(c => ({ id: c.id, title: plate(c.title), timecode: timecode(c.startMs), mediaId: c.mediaId && plan.media.some(m => m.id === c.mediaId) ? c.mediaId : null }))
+    ? scene.chapters.map(c => ({ id: c.id, title: plate(c.title), summary: c.summary?.trim() || null, timecode: timecode(c.startMs), mediaId: c.mediaId && plan.media.some(m => m.id === c.mediaId) ? c.mediaId : null }))
     : plan.beats.filter(beat => beat.kind !== 'now' && beat.kind !== 'origin').slice(-3)
-      .map(beat => ({ id: beat.id, title: beat.text, timecode: timecode(beat.sourceRange.startMs), mediaId: beat.mediaId }));
+      .map(beat => ({ id: beat.id, title: beat.text, summary: null, timecode: timecode(beat.sourceRange.startMs), mediaId: beat.mediaId }));
   let moment: SceneScript['moment'] = null;
   if (!welcomeOnly && scene?.moment) {
     const chapterIndex = scene.moment.chapterId ? chapters.findIndex(c => c.id === scene.moment!.chapterId) : -1;

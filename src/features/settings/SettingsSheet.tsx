@@ -64,7 +64,7 @@ export function SettingsSheet({ settings, client, onClose, onSaved, recording = 
       <section className="st-group" aria-labelledby="st-when">
         <h3 id="st-when">When it plays</h3>
         <Switch label="Show a recap when a raid arrives" checked={draft.autoRaid} onChange={value => patch({ autoRaid: value })} />
-        <div className="st-field"><span className="st-label">Scene length</span><SegmentedControl label="Scene length" value={String(draft.recapDurationMs)} onChange={value => patch({ recapDurationMs: Number(value) as Settings['recapDurationMs'] })} options={[{ value: '10000', label: '10 s' }, { value: '12000', label: '12 s' }, { value: '15000', label: '15 s' }]} /></div>
+        <div className="st-field"><span className="st-label">Scene length</span><SegmentedControl label="Scene length" value={String(draft.recapDurationMs < 30000 ? 60000 : draft.recapDurationMs)} onChange={value => patch({ recapDurationMs: Number(value) as Settings['recapDurationMs'] })} options={[{ value: '30000', label: 'Short, 30 s' }, { value: '60000', label: 'Standard, 1 min' }, { value: '120000', label: 'Full, 2 min' }]} /></div>
         <Field label="Show recap shortcut" value={draft.hotkey} maxLength={40} hint="Works while the dock has focus. Leave blank to turn it off." onChange={event => patch({ hotkey: event.target.value })} />
       </section>
       <section className="st-group" aria-labelledby="st-sound">

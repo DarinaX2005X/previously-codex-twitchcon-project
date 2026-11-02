@@ -76,7 +76,8 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
       narration?.onEffects(sessionId, effects, state);
       for (const effect of effects) {
         if (effect.type === 'playback.prepare' || effect.type === 'playback.start') {
-          for (const asset of effect.playback.plan?.media ?? []) media.protect(asset.id, clock.now() + 30_000);
+          // A montage can run up to two minutes; keep its clips until it has finished.
+          for (const asset of effect.playback.plan?.media ?? []) media.protect(asset.id, clock.now() + (effect.playback.plan?.durationMs ?? 0) + 30_000);
           if (effect.playback.plan?.audio) media.protect(effect.playback.plan.audio.id, clock.now() + 30_000);
         }
         if (effect.type === 'privacy') {
@@ -140,8 +141,10 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
       const principal = await twitch.auth.authenticate(req, 'owner') ?? await twitch.auth.authenticate(req, 'overlay');
       if (!principal || principal.expiresAtMs <= clock.now()) throw new ApiError(401, 'session_required', 'Sign in to continue.');
       if (principal.channelId !== scope.channelId || principal.runId !== 'live') throw new ApiError(403, 'role_forbidden', 'This session cannot access that media.');
-      const mediaId = req.path.split('/').filter(Boolean).at(-1);
-      if (principal.role === 'overlay' && (!mediaId || !(narration?.permitsOverlayMedia(decodeURIComponent(mediaId)) || twitch.permitsOverlayMedia(decodeURIComponent(mediaId))))) throw new ApiError(410, 'media_revoked', 'This media is no longer part of the active recap.');
+      const rawId = req.path.split('/').filter(Boolean).at(-1);
+      let mediaId: string | undefined;
+      try {mediaId = rawId === undefined ? undefined : decodeURIComponent(rawId);} catch {throw new ApiError(400, 'invalid_request', 'The media path is invalid.');}
+      if (principal.role === 'overlay' && (!mediaId || !(narration?.permitsOverlayMedia(mediaId) || twitch.permitsOverlayMedia(mediaId)))) throw new ApiError(410, 'media_revoked', 'This media is no longer part of the active recap.');
       res.locals.principal = principal; next();
     } catch (error) {next(error);}
   };

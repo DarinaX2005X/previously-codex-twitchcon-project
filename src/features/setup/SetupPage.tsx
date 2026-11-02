@@ -66,10 +66,17 @@ export function SetupPage({ client, setup, capture, renderPreview }: SetupPagePr
     } catch { if (ticket === generation.current) setError('Could not check local setup. Keep the local process running, then Check again.'); }
     finally { if (ticket === generation.current) setLoading(false); }
   }
+  // Update events can arrive faster than a load round-trip. Let the in-flight load finish and run
+  // exactly one more afterwards, instead of superseding every response.
+  const eventLoad = useRef<Promise<void> | null>(null), loadAgain = useRef(false);
+  function loadSoon() {
+    if (eventLoad.current) { loadAgain.current = true; return; }
+    eventLoad.current = load().finally(() => { eventLoad.current = null; if (loadAgain.current) { loadAgain.current = false; loadSoon(); } });
+  }
   useEffect(() => { void load(); return () => { ++generation.current; ++visibilityGeneration.current; }; }, [setup, client]);
   useEffect(() => client.subscribe(event => {
     if (event.event === 'privacy.invalidated' || event.event === 'snapshot.reset') { ++visibilityGeneration.current; ++generation.current; setClipPreview(''); setPreview(null); setPreviewOpen(false); setCandidate(null); }
-    if (event.event === 'source.status' || event.event === 'snapshot.changed') void load();
+    if (event.event === 'source.status' || event.event === 'snapshot.changed') loadSoon();
   }), [client, setup]);
   async function act(key: string, action: () => Promise<void>) {
     if (busy.current) return;
@@ -97,7 +104,8 @@ export function SetupPage({ client, setup, capture, renderPreview }: SetupPagePr
     await act(use ? 'useClip' : 'previewClip', async () => {
       const result = await setup.preparePreviousClip({ clipId: candidate.clip.id, sessionId: snapshot?.session?.id ?? null, use });
       if (visibility !== visibilityGeneration.current) return;
-      if (use && snapshot) { await client.setSettings({ earlyWelcomeClipId: candidate.clip.id, baseRevision: snapshot.settings.revision }); await load(); }
+      // The server already saved earlyWelcomeClipId and bumped the settings revision; only reload.
+      if (use) await load();
       setClipPending(result.status !== 'ready');
       if (!use && result.status === 'ready') { setClipPreview(`/api/media/${encodeURIComponent(result.mediaId)}`); setClipFailed(false); }
       setNotice(use ? 'Previous-stream clip allowed for early welcomes. Automatic clip creation is a separate setting.' : result.status === 'ready' ? 'Previous-stream preview ready.' : 'Preparing the previous-stream preview. Check the preview again when it is ready.');

@@ -1,5 +1,8 @@
 import type { PlaybackRef } from '../../shared/contracts/index.js';
 import type { PreparedMedia } from './media.js';
+import { MONTAGE_OUTRO_MS } from '../../shared/montage.js';
+/** Scene time at which the owner skipped to the outro, or null. */
+export function skipOffsetMs(playback:PlaybackRef|null):number|null {if(!playback?.skipAt||!playback.startAt)return null;const value=Date.parse(playback.skipAt)-Date.parse(playback.startAt);return Number.isFinite(value)?Math.max(0,value):null;}
 
 export type OverlayState = {sessionId:string|null;privacyEpoch:number;revision:number;serverNow:string;active:PlaybackRef|null;queued:PlaybackRef[];channel?:string;title?:string;soundEnabled?:boolean;volume?:number};
 export type OverlayUpdate = {event:string;data?:{sessionId?:string|null;revision?:number;affectedIds?:string[]}};
@@ -27,6 +30,7 @@ export class OverlayController {
   private request:AbortController|null=null;private generation=0;private live=true;private prepared=false;private started=false;
   private leaseUntil=0;private poll:ReturnType<typeof setInterval>|null=null;private unsubscribe:(()=>void)|null=null;
   private channel:string|undefined;private title:string|undefined;private soundEnabled:boolean|undefined;private volume:number|undefined;private refreshAgain=false;
+  private preparedAcked=false;private lastStatus:OverlayView['status']|null=null;
   constructor(private readonly options:OverlayControllerOptions){this.now=options.now??(()=>performance.now());this.completed=options.remembered??new Set();}
   start():void {
     this.unsubscribe=this.options.client.subscribe({onHeartbeat:()=>{this.leaseUntil=this.now()+6000;},onUpdate:update=>{
@@ -35,12 +39,12 @@ export class OverlayController {
     },onDisconnect:()=>{ /* Keep the current short lease; RAF tick fails closed at its deadline. */ }});
     void this.refresh();this.poll=setInterval(()=>void this.refresh(),2000);
   }
-  private emit(status:OverlayView['status'],timeMs=0,playing=false):void {this.options.onChange({playback:this.active,media:this.media,timeMs,playing,status,channel:this.channel,title:this.title,soundEnabled:this.soundEnabled,volume:this.volume});}
+  private emit(status:OverlayView['status'],timeMs=0,playing=false):void {this.lastStatus=status;this.options.onChange({playback:this.active,media:this.media,timeMs,playing,status,channel:this.channel,title:this.title,soundEnabled:this.soundEnabled,volume:this.volume});}
   private remember(id:string):void {this.completed.add(id);if(this.completed.size>100){const first=this.completed.values().next().value;if(first)this.completed.delete(first);}this.options.remember?.(id);}
   private clear(markCompleted:boolean):void {
     ++this.generation;this.pending?.abort();this.pending=null;
     if(markCompleted&&this.active)this.remember(this.active.id);
-    this.media?.release();this.media=null;this.active=null;this.prepared=false;this.started=false;
+    this.media?.release();this.media=null;this.active=null;this.prepared=false;this.preparedAcked=false;this.started=false;
   }
   invalidate():void {
     this.request?.abort();this.request=null;this.clear(true);this.emit('idle');
@@ -56,14 +60,17 @@ export class OverlayController {
       if(!playback?.plan||this.completed.has(playback.id)||playback.plan.privacyEpoch!==state.privacyEpoch||playback.plan.sessionId!==state.sessionId){this.clear(!!this.active);this.emit('idle');return;}
       if(this.active?.id===playback.id){
         if(this.active.plan?.privacyEpoch!==playback.plan.privacyEpoch||this.active.plan?.revision!==playback.plan.revision){this.clear(true);this.emit('idle');return;}
-        this.active=playback;this.tick();return;
+        this.active=playback;
+        // A failed prepared acknowledgement is retried here instead of abandoning the recap.
+        if(this.prepared&&!this.preparedAcked&&playback.status==='preparing'&&!playback.startAt)void this.ackPrepared(this.generation);
+        this.tick();return;
       }
       this.clear(!!this.active);this.active=playback;this.emit('preparing');
       const token=this.generation,controller=new AbortController();this.pending=controller;
       void this.options.prepare(playback,controller.signal).then(async media=>{
         if(!this.live||controller.signal.aborted||token!==this.generation){media.release();return;}
         this.media=media;this.prepared=true;
-        if(playback.status==='preparing'&&!playback.startAt){await this.ack('prepared');await this.refresh();}
+        if(playback.status==='preparing'&&!playback.startAt)await this.ackPrepared(token);
         else this.tick();
       }).catch(error=>{
         if(controller.signal.aborted||token!==this.generation)return;
@@ -73,19 +80,27 @@ export class OverlayController {
     }catch{if(!request.signal.aborted)this.tick();}
     finally{if(this.request===request)this.request=null;if(this.refreshAgain){this.refreshAgain=false;void this.refresh();}}
   }
+  /** Transient ack failures (network, ack capacity) keep the playback; layout errors are reserved for prepare. */
+  private async ackPrepared(token:number):Promise<void> {
+    this.preparedAcked=true;
+    try{await this.ack('prepared');}catch{if(token===this.generation)this.preparedAcked=false;return;}
+    if(token===this.generation)await this.refresh();
+  }
   private ack(state:'prepared'|'started'|'ended'|'error'):Promise<unknown> {
     const active=this.active;if(!active)return Promise.resolve();
     return this.options.client.acknowledge(active.id,state,new Date(this.clock.serverNow(this.now())).toISOString());
   }
   tick():void {
     if(!this.live)return;
-    if(this.now()>=this.leaseUntil){if(this.active)this.clear(true);this.emit('disconnected');return;}
+    // Runs every animation frame: report the disconnect once, not sixty times a second.
+    if(this.now()>=this.leaseUntil){if(this.active)this.clear(true);if(this.lastStatus!=='disconnected')this.emit('disconnected');return;}
     const active=this.active;if(!active||!active.plan)return;
     if(!this.prepared||!active.startAt){this.emit('preparing');return;}
     const elapsed=this.clock.elapsed(active.startAt,this.now());
     if(!Number.isFinite(elapsed)||(!this.started&&elapsed>3000)){void this.ack('error').catch(()=>{});this.clear(true);this.emit('idle');return;}
     if(elapsed<0){this.emit('preparing');return;}
-    if(elapsed>=active.plan.durationMs){void this.ack('ended').catch(()=>{});this.clear(true);this.emit('idle');return;}
+    const skipMs=skipOffsetMs(active);
+    if(elapsed>=(skipMs===null?active.plan.durationMs:Math.min(active.plan.durationMs,skipMs+MONTAGE_OUTRO_MS))){void this.ack('ended').catch(()=>{});this.clear(true);this.emit('idle');return;}
     if(!this.started){this.started=true;const token=this.generation;void this.ack('started').catch(()=>{if(token===this.generation){this.clear(true);this.emit('idle');}});}
     this.emit('playing',elapsed,true);
   }

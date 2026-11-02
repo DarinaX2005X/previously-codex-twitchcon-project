@@ -36,6 +36,8 @@ export function desiredVideoTime(plan:RecapPlan,id:string,sceneTimeMs:number,med
 }
 /** Drift correction is anchored to the scene, never to the preceding video frame. */
 const playAttempts=new WeakMap<HTMLMediaElement,{pending:boolean;blocked:boolean}>();
+/** Allow another play attempt (for example muted, after the browser refused autoplay with sound). */
+export function allowPlayRetry(element:HTMLMediaElement):void {const attempt=playAttempts.get(element);if(attempt)attempt.blocked=false;}
 export function syncMedia(element:HTMLMediaElement,targetSeconds:number,playing:boolean,onBlocked?:()=>void):void {
   const target=Number.isFinite(element.duration)?Math.min(Math.max(0,element.duration-.04),targetSeconds):targetSeconds;
   if(Math.abs(element.currentTime-target)>.12&&!element.seeking)element.currentTime=target;

@@ -180,3 +180,26 @@ describe('broadcast scene material', () => {
     expect(later.media[0]).toEqual(expect.objectContaining({ inMs: 3000, outMs: 12000 }));
   });
 });
+
+describe('previously montage length', () => {
+  function story(): PublicSnapshot {
+    const s = snapshot();
+    const chapter = s.chapters[0]!;
+    s.chapters = [
+      { ...chapter, id: 'one', title: 'First idea', summary: 'The first idea of the stream.', startMs: 5000, endMs: 90000, momentIds: ['moment'], maxDependencyEndMs: 90000 },
+      { ...chapter, id: 'two', title: 'Second idea', startMs: 100000, endMs: 200000, momentIds: [], maxDependencyEndMs: 200000 },
+      { ...chapter, id: 'now', title: 'Current work', startMs: 210000, endMs: 300000, momentIds: [], maxDependencyEndMs: 300000 },
+    ];
+    s.current = { goal: null, change: null, now: 'Testing the current work', sourceTimeMs: 300000, maxDependencyEndMs: 300000 };
+    return s;
+  }
+  it('lasts as long as its intro, clips, cards and outro, within the chosen length, and carries summaries', () => {
+    const plan = compile(story(), { currentRefs: [{ id: 'approved-current', revision: 1 }], media: [visual()], durationMs: 60000 });
+    expect(RecapPlanSchema.safeParse(plan).success).toBe(true);
+    expect(plan.durationMs).toBeLessThanOrEqual(60000);
+    expect(plan.durationMs).toBeGreaterThan(10000);
+    expect(plan.scene!.chapters.map(c => c.title)).toEqual(['First idea', 'Second idea']);
+    expect(plan.scene!.chapters[0]!.summary).toBe('The first idea of the stream.');
+    expect(compile(story(), { currentRefs: [{ id: 'approved-current', revision: 1 }], media: [visual()], durationMs: 30000 }).durationMs).toBeLessThanOrEqual(30000);
+  });
+});

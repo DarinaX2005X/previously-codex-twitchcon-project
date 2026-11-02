@@ -239,6 +239,10 @@ export class StoryEngine {
       if (session.status === 'closing' && session.endedAt && this.clock.now() >= Date.parse(session.endedAt) + 90_000 && !this.repository.pendingJobCount(this.scope, session.id, ['stt'])) {
         await this.dispatch(session.id, {type: 'tail.drained'});
       }
+      // A story job that ended without a result or failure (an early fence, a restart mid-call, a lost lease)
+      // would otherwise hold its ticket forever and stop every later generation.
+      const pending = this.state(session.id).pendingGeneration;
+      if (pending && !this.repository.pendingJobCount(this.scope, session.id, ['story'])) await this.dispatch(session.id, {type: 'generation.failed', jobId: pending.ticket.jobId, reason: 'generation_job_ended'});
       await this.dispatch(session.id, {type: 'tick'});
     }
   }
@@ -264,22 +268,32 @@ export class StoryEngine {
         for (const source of pending) {
           // Owner reviews cover their title and summary together, with their own revision fence.
           if (source.kind === 'owner_statement' || source.status === 'deleted' || !['pending', 'unavailable'].includes(source.moderation) || !source.text) continue;
+          // Cleared chat stays quarantined, so its text is never sent for review again.
+          if (source.kind === 'chat' && state.chatClearThroughMs !== null && source.startMs <= state.chatClearThroughMs) continue;
           const size = Buffer.byteLength(JSON.stringify(source.text));
           if (selected.length >= 30 || length + size > 3500) continue;
           selected.push(source); length += size;
         }
         if (!selected.length) continue;
         const checked = await this.safety.inspectBatch(selected.map(source => ({id: source.id, text: source.text!})));
+        // One source whose controls changed meanwhile does not discard the results for the rest of the batch.
+        let failure: unknown = null;
         for (const result of checked) {
           const source = selected.find(source => source.id === result.id);
-          if (source) await this.dispatch(session.id, {type: 'source.safety', id: source.id, baseRevision: source.revision, text: result.text, safety: result.safety});
+          if (source) await this.dispatch(session.id, {type: 'source.safety', id: source.id, baseRevision: source.revision, text: result.text, safety: result.safety}).catch(error => {failure ??= error;});
         }
+        if (failure) throw failure;
       }
     } finally {this.safetyBusy = false; this.nextSafetyAtMs = this.clock.now() + 30_000;}
   }
   async executeStory(job: WorkLease, signal: AbortSignal): Promise<JobResult> {
     const request = (job.payload as {request?: GenerationRequest})?.request;
-    if (!request || !this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) return {state: 'failed'};
+    if (!request) return {state: 'failed'};
+    if (!this.allowed({sessionId: job.sessionId, privacyEpoch: job.privacyEpoch, dependencyRefs: request.ticket.inputRefs})) {
+      // Release the ticket so new material can start another generation after the usual backoff.
+      try {if (this.state(job.sessionId).pendingGeneration?.ticket.jobId === request.ticket.jobId) await this.dispatch(job.sessionId, {type: 'generation.failed', jobId: request.ticket.jobId, reason: 'generation_inputs_changed'});} catch { /* The tick reconciliation retries this release. */ }
+      return {state: 'failed'};
+    }
     try {
       const prepared = await this.safety.prepareEvidence(request.packet, signal);
       if (canonical(prepared) !== canonical(request.packet)) throw new Error('Evidence requires a new reviewed revision.');

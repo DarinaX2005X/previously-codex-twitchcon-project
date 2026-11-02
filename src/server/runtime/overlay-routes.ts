@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { canDispatch } from '../../core/recap.js';
+import { playbackEndMs } from '../../core/reducer.js';
 import type { DomainEvent, DomainState } from '../../core/types.js';
 import { IdSchema, IsoTimeSchema, RecapPlanSchema, type Clock, type PlaybackRef, type Scope, type SourceStatus } from '../../shared/contracts/index.js';
 import { ApiError } from './errors.js';
@@ -99,9 +100,10 @@ function safePlayback(state: DomainState, playback: PlaybackRef, now: number): P
     const start = Date.parse(playback.startAt);
     if (!Number.isFinite(start)) return null;
     if (playback.status === 'preparing' && now - start > 3000) return null;
-    if (playback.status === 'playing' && now >= start + parsed.data.durationMs) return null;
+    if (playback.status === 'playing' && now >= playbackEndMs({...playback, plan: parsed.data})) return null;
   } else if (playback.status === 'playing') return null;
-  return {id: IdSchema.parse(playback.id), status: playback.status, plan: parsed.data, startAt: playback.startAt};
+  const skipAt = playback.skipAt && Number.isFinite(Date.parse(playback.skipAt)) ? IsoTimeSchema.parse(playback.skipAt) : null;
+  return {id: IdSchema.parse(playback.id), status: playback.status, plan: parsed.data, startAt: playback.startAt, ...(skipAt ? {skipAt} : {})};
 }
 function snapshot(state: DomainState | null, clock: Clock): OverlayState {
   const output: OverlayState = {sessionId: state?.session.id ?? null, privacyEpoch: state?.session.privacyEpoch ?? 0, revision: state?.revision ?? 0, serverNow: clock.iso(), active: null, queued: [], ...(state ? {channel: state.published?.channel.displayName, title: state.published?.session.title, soundEnabled: state.settings.broadcastSoundEnabled, volume: state.settings.volume} : {})};

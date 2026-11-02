@@ -3,7 +3,7 @@ import type { RecapPlan } from '../../shared/contracts/index.js';
 import { messagesFor } from '../../i18n/index.js';
 import { resolveSceneLayout, type MeasureText } from './geometry.js';
 import { renderAt, sceneSoundEvents, sceneTextFits, type SceneObject } from './scene.js';
-import { prepareMedia, syncMedia, type PreparedMedia, type MediaResolver } from './media.js';
+import { allowPlayRetry, prepareMedia, syncMedia, type PreparedMedia, type MediaResolver } from './media.js';
 import { SceneSound } from './sound.js';
 import './overlay.css';
 
@@ -14,6 +14,12 @@ export type ScenePlayerProps = {
   className?:string;cropToLayout?:boolean;onEnded?:()=>void;onStatus?:(status:SceneStatus)=>void;
   /** Capture mode: media elements are seeked to the exact scene time and never free-run. */
   frameExact?:boolean;
+  /** Clip sound during the montage (muted automatically if the browser refuses autoplay with sound). */
+  clipAudio?:boolean;
+  /** Scene time at which the scene was skipped to its outro. */
+  skipAtMs?:number;
+  /** A viewer watching in their own browser gets a real Skip button that jumps to the outro. */
+  viewerSkip?:boolean;
   /** Called with the media bundle once it is prepared (capture tooling waits on it). */
   onMediaReady?:(media:PreparedMedia)=>void;
 };
@@ -23,7 +29,8 @@ function useReducedMotion(explicit:boolean|undefined):boolean {
   return explicit??value;
 }
 
-function MediaHost({bundle,plan,media,playing,frameExact,onBlocked}:{bundle:PreparedMedia|null;plan:RecapPlan;media:NonNullable<SceneObject['media']>;playing:boolean;frameExact:boolean;onBlocked:()=>void}) {
+function MediaHost({bundle,plan,media,playing,frameExact,onBlocked,audio=false,volume=.45}:{bundle:PreparedMedia|null;plan:RecapPlan;media:NonNullable<SceneObject['media']>;playing:boolean;frameExact:boolean;onBlocked:()=>void;audio?:boolean;volume?:number}) {
+  const soundRefused=useRef(false);
   const host=useRef<HTMLDivElement>(null),element=bundle?.visuals.get(media.id)??null;
   useLayoutEffect(()=>{if(!element||!host.current)return;element.className='pv-media-element';host.current.replaceChildren(element);return()=>{if(element instanceof HTMLVideoElement)element.pause();element.remove();};},[element]);
   const spec=plan.media.find(m=>m.id===media.id);
@@ -32,8 +39,11 @@ function MediaHost({bundle,plan,media,playing,frameExact,onBlocked}:{bundle:Prep
     if(!(element instanceof HTMLVideoElement))return;
     element.muted=true;
     if(frameExact){if(!element.paused)element.pause();const max=Number.isFinite(element.duration)?Math.max(0,element.duration-.02):target;const want=Math.min(target,max);if(Math.abs(element.currentTime-want)>.001)element.currentTime=want;}
-    else syncMedia(element,target,playing&&media.playing,onBlocked);
-  },[element,target,playing,media.playing,frameExact,onBlocked]);
+    else {
+      element.muted=frameExact||!audio||soundRefused.current;element.volume=Math.max(0,Math.min(1,volume));
+      syncMedia(element,target,playing&&media.playing,()=>{if(!element.muted){soundRefused.current=true;element.muted=true;allowPlayRetry(element);}else onBlocked();});
+    }
+  },[element,target,playing,media.playing,frameExact,onBlocked,audio,volume]);
   return <div ref={host} className="pv-media" style={{left:media.x,top:media.y,width:media.w,height:media.h,borderRadius:media.radius,opacity:media.opacity}}/>;
 }
 
@@ -85,16 +95,19 @@ export function ScenePlayer(props:ScenePlayerProps) {
   },[plan?.id,soundEnabled,volume,reduced,playing]);
   const t=timeMs??localTime;
   const availableMedia=useMemo(()=>media?(id:string)=>media.visuals.has(id):()=>false,[media]);
-  const options={reducedMotion:reduced,measure,availableMedia,channel,title};
+  const [viewerSkipAt,setViewerSkipAt]=useState<number|undefined>();
+  useEffect(()=>setViewerSkipAt(undefined),[plan?.id]);
+  const skipAtMs=props.skipAtMs??viewerSkipAt;
+  const options={reducedMotion:reduced,measure,availableMedia,channel,title,skipAtMs};
   const fits=!!plan&&!!layout&&sceneTextFits(plan,layout,options);
   useEffect(()=>{if(plan&&layout&&!fits)callbacks.current.onStatus?.('text_too_long');},[plan,layout,fits]);
   const frame=plan&&layout&&fits?renderAt(t,plan,layout,options):null;
-  const events=useMemo(()=>plan&&layout?sceneSoundEvents(plan,layout,{measure,availableMedia,channel,title}):[],[plan,layout,measure,availableMedia,channel,title]);
+  const events=useMemo(()=>plan&&layout?sceneSoundEvents(plan,layout,{measure,availableMedia,channel,title,skipAtMs}):[],[plan,layout,measure,availableMedia,channel,title,skipAtMs]);
   useEffect(()=>{
     if(!plan)return;
     if(playing&&frame?.visible)sound.current?.tick(t,events);
     if(media?.narrator&&plan.audio){const active=playing&&t>=plan.audio.startMs&&t<plan.audio.startMs+plan.audio.durationMs&&!!frame?.visible;media.narrator.volume=Math.max(0,Math.min(.7,volume));syncMedia(media.narrator,Math.max(0,t-plan.audio.startMs)/1000,active,()=>callbacks.current.onStatus?.('audio_blocked'));}
-    if(t>=plan.durationMs&&!ended.current){ended.current=true;sound.current?.stop();media?.narrator?.pause();callbacks.current.onEnded?.();}
+    if(t>=(frame?.endMs??plan.durationMs)&&!ended.current){ended.current=true;sound.current?.stop();media?.narrator?.pause();callbacks.current.onEnded?.();}
     if(!playing)sound.current?.stop();
   },[t,plan,playing,soundEnabled,frame?.visible,media,volume,events]);
   useEffect(()=>()=>{media?.narrator?.pause();for(const visual of media?.visuals.values()??[])if(visual instanceof HTMLVideoElement)visual.pause();},[media]);
@@ -114,7 +127,7 @@ export function ScenePlayer(props:ScenePlayerProps) {
               background:o.fill,filter:(o.blurX||o.blurY)?`url(#mb${uid}${o.key.replace(/[^a-zA-Z0-9]/g,'')})`:undefined,'--lift':o.lift??0,...(o.side?{'--side':o.side}:{})};
             return <div key={o.key} className={`pv-o pv-${o.kind} pv-tone-${o.tone}${o.mask?' pv-mask':''}`} style={style} data-key={o.key}>
               {o.wipe!==undefined&&o.wipe>0&&<span className="pv-wipe" style={{transform:`scaleX(${o.wipe})`}}/>}
-              {o.media&&<MediaHost bundle={media} plan={plan} media={o.media} playing={playing} frameExact={frameExact} onBlocked={blocked}/>}
+              {o.media&&<MediaHost bundle={media} plan={plan} media={o.media} playing={playing} frameExact={frameExact} onBlocked={blocked} audio={!!props.clipAudio} volume={volume}/>}
               {o.kind==='mark'&&<Mark o={o}/>}
               {o.runs.map(r=><Word key={r.key} r={r}/>)}
               {o.notch&&o.notch.h>1&&<span className="pv-notch" style={{left:o.notch.x,width:o.notch.w,height:o.notch.h,opacity:o.notch.opacity}}>{o.notch.runs.map(r=><Word key={r.key} r={r}/>)}</span>}
@@ -124,6 +137,7 @@ export function ScenePlayer(props:ScenePlayerProps) {
         </div>
       </div>
     </div>}
+    {props.viewerSkip&&plan&&frame?.visible&&frame.phase!=='return'&&frame.phase!=='clear'&&skipAtMs===undefined&&<button type="button" className="pv-skip" onClick={()=>setViewerSkipAt(t)}>{plan.language==='ru'?'Пропустить':'Skip'}</button>}
   </div>;
 }
 
@@ -134,4 +148,5 @@ export function SceneSummary({plan,className=''}:{plan:RecapPlan|null;className?
   const labels=messagesFor(plan.language).scene;
   return <section className={`scene-summary ${className}`} aria-label={labels.summaryLabel}>{plan.beats.map(beat=><p key={beat.id} className={beat.id===focalId?'scene-summary-current':undefined}><span>{labels.beat[beat.kind]}</span>{beat.text}</p>)}</section>;
 }
-export function ScenePreview(props:ScenePlayerProps){return <ScenePlayer {...props} cropToLayout={props.cropToLayout??true}/>;}
+/** The montage fills the frame, so previews show the whole 16:9 picture. */
+export function ScenePreview(props:ScenePlayerProps){return <ScenePlayer {...props} cropToLayout={props.cropToLayout??false}/>;}

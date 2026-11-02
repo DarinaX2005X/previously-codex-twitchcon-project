@@ -1,6 +1,6 @@
 import { PublicSnapshotSchema, filterSnapshotAt, type PublicSnapshot } from '../shared/contracts/index.js';
 import { type BlobStore, CasConflict } from './blob-store.js';
-import { UploadSchema, OperationSchema, ManifestSchema, LIMITS, PublicationError, type ChannelHead, type PublicationAck } from './contracts.js';
+import { UploadSchema, OperationSchema, ManifestSchema, LIMITS, PublicationError, type ChannelHead, type PublicationAck, type PublicationOperation } from './contracts.js';
 import { sha256 } from './signing.js';
 
 const encode=(v:unknown)=>new TextEncoder().encode(JSON.stringify(v));
@@ -9,6 +9,7 @@ const headPath=(id:string)=>`channels/${id}/head.json`;
 const assetPath=(id:string,seq:number,exportId:string,revision:number,assetId:string,hash:string)=>`channels/${id}/objects/${seq}/exports/${exportId}/${revision}/${assetId}-${hash}`;
 function bounded(bytes:Uint8Array,limit:number){if(bytes.byteLength>limit)throw new PublicationError(413,'payload_too_large');return bytes;}
 function unique(ids:string[]){return new Set(ids).size===ids.length;}
+const REVOKED_EXPORTS=50;
 
 /** The caller supplies only reviewed published state. Strict schema rejects private extra fields. */
 export function validatePublicSnapshot(input:unknown):PublicSnapshot{
@@ -92,12 +93,40 @@ export class PublicationService {
         await this.immutable(path,bytes);
         head.exports=head.exports.filter(p=>p.id!==m.id);head.exports.push({id:m.id,revision:m.revision,manifestPath:path,manifestHash:hash,publishSeq:op.publishSeq,status:'active'});
       }
-      if(head.episodePointers.length>LIMITS.episodes||head.exports.length>LIMITS.exports)throw new PublicationError(409,'retention_capacity');
+      this.retain(head,op);
+      if(head.episodePointers.length>LIMITS.episodes||head.exports.filter(p=>p.status==='active').length>LIMITS.exports)throw new PublicationError(409,'retention_capacity');
       head.publishSeq=op.publishSeq;head.bodyHash=bodyHash;head.privacyRevision=op.privacyRevision;head.lastSyncedAt=iso;
-      try{const saved=await this.options.store.put(headPath(op.channelId),bounded(encode(head),LIMITS.head),{ifMatch:previous?.etag,contentType:'application/json'});return this.ack(head,saved.etag);}
-      catch(error){if(!(error instanceof CasConflict))throw error;}
+      let saved:{etag:string};
+      try{saved=await this.options.store.put(headPath(op.channelId),bounded(encode(head),LIMITS.head),{ifMatch:previous?.etag,contentType:'application/json'});}
+      catch(error){if(!(error instanceof CasConflict))throw error;continue;}
+      // The committed head no longer references these objects, and no later sequence can: remove them now.
+      if(old)await this.removeUnreferenced(op.channelId,old,head);
+      return this.ack(head,saved.etag);
     }
     throw new PublicationError(503,'cas_retry_exhausted');
+  }
+  /** Retention keeps the newest finalized episodes and active exports; the live episode and this operation's own items stay. */
+  private retain(head:ChannelHead,op:PublicationOperation){
+    const keep=new Set([...op.operation==='export_manifest'?[]:op.snapshots.map(s=>s.session.id),...op.operation==='snapshot'&&op.activeSessionId?[op.activeSessionId]:[],...head.activeSessionId?[head.activeSessionId]:[]]);
+    const evictable=head.episodePointers.filter(p=>!keep.has(p.sessionId)).sort((a,b)=>(a.startedAt??a.updatedAt).localeCompare(b.startedAt??b.updatedAt));
+    const evicted=new Set(evictable.slice(0,Math.max(0,head.episodePointers.length-LIMITS.episodes)).map(p=>p.sessionId));
+    head.episodePointers=head.episodePointers.filter(p=>!evicted.has(p.sessionId));
+    const current=op.operation==='export_manifest'?op.manifest.id:null,active=head.exports.filter(p=>p.status==='active'&&p.id!==current).sort((a,b)=>a.publishSeq-b.publishSeq);
+    for(const p of active.slice(0,Math.max(0,head.exports.filter(x=>x.status==='active').length-LIMITS.exports)))p.status='revoked';
+    // A short tombstone list still fences replays of withdrawn export revisions without counting against capacity.
+    const revoked=head.exports.filter(p=>p.status==='revoked').sort((a,b)=>b.publishSeq-a.publishSeq).slice(0,REVOKED_EXPORTS);
+    head.exports=head.exports.filter(p=>p.status==='active'||revoked.includes(p));
+  }
+  /** Best effort: a failed delete leaves an unreferenced object that the signed maintenance endpoint can remove later. */
+  private async removeUnreferenced(channelId:string,old:ChannelHead,head:ChannelHead){
+    const kept=new Set(head.exports.filter(p=>p.status==='active').map(p=>p.manifestPath)),after=new Set([...head.episodePointers.map(p=>p.snapshotPath),...kept]);
+    const before=new Set(old.episodePointers.map(p=>p.snapshotPath));
+    for(const p of old.exports){
+      if(p.status!=='active'||kept.has(p.manifestPath))continue;
+      before.add(p.manifestPath);
+      try{const blob=await this.options.store.get(p.manifestPath);if(blob&&sha256(blob.bytes)===p.manifestHash)for(const a of ManifestSchema.parse(decode(blob.bytes)).assets)before.add(assetPath(channelId,p.publishSeq,p.id,p.revision,a.id,a.hash));}catch{/* Its assets stay for maintenance. */}
+    }
+    for(const path of before)if(!after.has(path)){try{await this.options.store.delete(path);}catch{/* Retried by maintenance. */}}
   }
   async uploadAsset(input:unknown,bytes:Uint8Array){
     const meta=UploadSchema.parse(input);this.checkChannel(meta.channelId,meta.channelLogin);bounded(bytes,LIMITS.asset);
@@ -113,7 +142,10 @@ export class PublicationService {
     const {head}=current,id=sessionId??head.activeSessionId??head.episodePointers.toSorted((a,b)=>(b.startedAt??b.updatedAt).localeCompare(a.startedAt??a.updatedAt))[0]?.sessionId;
     const pointer=head.episodePointers.find(p=>p.sessionId===id);if(!pointer)throw new PublicationError(410,'snapshot_revoked');
     if(pointer.status!=='finalized'&&(head.activeSessionId!==id||!head.liveLeaseUntil||Date.parse(head.liveLeaseUntil)<=this.now()))throw new PublicationError(503,'live_recap_unavailable');
-    const blob=await this.options.store.get(pointer.snapshotPath);if(!blob||sha256(blob.bytes)!==pointer.hash)throw new PublicationError(503,'snapshot_unavailable');
+    const blob=await this.options.store.get(pointer.snapshotPath);
+    // An object removed after a newer commit replaced its pointer reads like any other replaced pointer.
+    if(!blob&&(await this.getHead(channelId))?.head.episodePointers.find(p=>p.sessionId===id)?.snapshotPath!==pointer.snapshotPath)throw new PublicationError(409,'revalidate');
+    if(!blob||sha256(blob.bytes)!==pointer.hash)throw new PublicationError(503,'snapshot_unavailable');
     let snapshot=validatePublicSnapshot(decode(blob.bytes));
     // A retraction arriving while the immutable object was loading must gate that read too.
     const latest=await this.getHead(channelId);if(latest?.head.episodePointers.find(p=>p.sessionId===id)?.snapshotPath!==pointer.snapshotPath)throw new PublicationError(409,'revalidate');
@@ -125,7 +157,9 @@ export class PublicationService {
   async readManifest(channelId:string,exportId:string,revision:number){
     const head=await this.getHead(channelId),pointer=head?.head.exports.find(p=>p.id===exportId);
     if(!pointer||pointer.status!=='active'||pointer.revision!==revision)throw new PublicationError(410,'export_revoked');
-    const blob=await this.options.store.get(pointer.manifestPath);if(!blob||sha256(blob.bytes)!==pointer.manifestHash)throw new PublicationError(503,'manifest_unavailable');
+    const blob=await this.options.store.get(pointer.manifestPath);
+    if(!blob&&(await this.getHead(channelId))?.head.exports.find(p=>p.id===exportId&&p.status==='active')?.manifestPath!==pointer.manifestPath)throw new PublicationError(410,'export_revoked');
+    if(!blob||sha256(blob.bytes)!==pointer.manifestHash)throw new PublicationError(503,'manifest_unavailable');
     const manifest=ManifestSchema.parse(decode(blob.bytes));
     const latest=await this.getHead(channelId),p=latest?.head.exports.find(p=>p.id===exportId);
     if(!p||p.status!=='active'||p.manifestPath!==pointer.manifestPath)throw new PublicationError(410,'export_revoked');
@@ -134,6 +168,7 @@ export class PublicationService {
   async readAsset(channelId:string,exportId:string,revision:number,assetId:string){
     const {manifest,publishSeq}=await this.readManifest(channelId,exportId,revision),asset=manifest.assets.find(a=>a.id===assetId);if(!asset)throw new PublicationError(404,'asset_not_found');
     const blob=await this.options.store.get(assetPath(channelId,publishSeq,exportId,revision,asset.id,asset.hash));
+    if(!blob)await this.readManifest(channelId,exportId,revision);
     if(!blob||blob.bytes.length!==asset.bytes||sha256(blob.bytes)!==asset.hash)throw new PublicationError(503,'asset_unavailable');
     await this.readManifest(channelId,exportId,revision);
     return {bytes:blob.bytes,mime:asset.mime};

@@ -7,9 +7,13 @@ import type {RecapPlan} from '../shared/contracts/index.js';
 import {browserCapture, ownerPorts, setupPorts} from './owner-adapters.js';
 import {QuietButton} from '../ui/index.js';
 
+// Stable across renders: ScenePlayer reloads its media whenever the resolver identity changes,
+// and the live dock re-renders every second.
+const localMediaUrl = (id: string) => `/api/media/${encodeURIComponent(id)}`;
+const localMedia = (id: string) => ({src: localMediaUrl(id)});
 function LocalPreview({plan}: {plan: RecapPlan}) {
   const [status, setStatus] = useState('ready');
-  return <div className="app-preview"><ScenePreview plan={plan} playing resolveMedia={id => `/api/media/${encodeURIComponent(id)}`} soundEnabled={false} onStatus={setStatus}/>
+  return <div className="app-preview"><ScenePreview plan={plan} playing resolveMedia={localMediaUrl} soundEnabled={false} onStatus={setStatus}/>
     {status === 'text_too_long' && <p>Shorten the published wording to fit two readable lines in the scene.</p>}
     {status === 'layout_required' && <p>Leave more free space in scene settings, then preview again.</p>}
     {status === 'media_unavailable' && <p>The source video could not load. This preview uses the published text.</p>}
@@ -41,7 +45,7 @@ function OwnerExperience({page}: {page: 'setup'|'dock'}) {
     return () => {closed = true; unsubscribe(); window.removeEventListener('pagehide', leaving); void capture.dispose();};
   }, [client, capture]);
   const renderPreview = (plan: RecapPlan, _close: () => void) => <LocalPreview plan={plan}/>;
-  return page === 'setup' ? <SetupPage client={client} setup={setup} capture={capture} renderPreview={renderPreview}/> : <DockPage client={client} owner={owner} capture={capture} recordingPort={client} renderPreview={renderPreview} resolveMedia={id => ({src: `/api/media/${encodeURIComponent(id)}`})}/>;
+  return page === 'setup' ? <SetupPage client={client} setup={setup} capture={capture} renderPreview={renderPreview}/> : <DockPage client={client} owner={owner} capture={capture} recordingPort={client} renderPreview={renderPreview} resolveMedia={localMedia}/>;
 }
 function BroadcastSource() {
   const client = useMemo(() => new OverlayHttpClient(), []);

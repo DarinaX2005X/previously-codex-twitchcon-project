@@ -39,14 +39,18 @@ describe('owner snapshot integration issues', () => {
     const h = harness();
     let status = 401;
     const fetcher = vi.fn(async () => status === 200 ? Response.json({text: 'ok', languages: []}) : Response.json({error: {code: 'invalid_api_key', message: 'Incorrect API key provided: sk-abc***xyz'}}, {status}));
-    const transport = new ProviderTransport({apiKey: 'sk-abc-secret', runId: 'live', externalCallsEnabled: true, budget: {status: () => ({enabled: true}), reserve: () => true, settle: () => {}}, fetch: fetcher as unknown as typeof fetch, log: () => {}, onIssue: (component, issue) => h.board.setProvider(component, issue)});
+    const options = (apiKey: string) => ({apiKey, runId: 'live', externalCallsEnabled: true, budget: {status: () => ({enabled: true}), reserve: () => true, settle: () => {}}, fetch: fetcher as unknown as typeof fetch, log: () => {}, onIssue: (component: Parameters<typeof h.board.setProvider>[0], issue: Parameters<typeof h.board.setProvider>[1]) => h.board.setProvider(component, issue)});
+    let transport = new ProviderTransport(options('sk-abc-secret'));
     const form = () => {const data = new FormData(); data.set('model', 'gpt-transcribe'); return data;};
     await expect(transport.post('audio/transcriptions', form(), 10000)).rejects.toMatchObject({httpStatus: 401});
     const snapshot = h.service.bootstrap(h.principal);
     expect(snapshot.issues).toEqual([{source: 'openai', component: 'transcription', code: 'openai_key_rejected', reason: 'OpenAI rejected the API key.', recovery: 'Check OPENAI_API_KEY in .env (no quotes or spaces) and restart.', since: '2026-11-02T00:00:00.000Z'}]);
     expect(snapshot.status.transcription).toMatchObject({state: 'error', message: 'OpenAI rejected the API key.'});
     expect(JSON.stringify(snapshot)).not.toContain('sk-abc');expect(JSON.stringify(snapshot)).not.toContain('Incorrect');
+    // A rejected key is not retried until the configuration changes (restart with a corrected key).
     status = 200; h.advance(1000);
+    await expect(transport.post('audio/transcriptions', form(), 10000)).rejects.toMatchObject({httpStatus: 401}); expect(fetcher).toHaveBeenCalledOnce();
+    transport = new ProviderTransport(options('sk-corrected'));
     await transport.post('audio/transcriptions', form(), 10000);
     const recovered = h.service.bootstrap(h.principal);
     expect(recovered.issues).toEqual([]); expect(recovered.status.transcription).toMatchObject({state: 'ready', message: null});

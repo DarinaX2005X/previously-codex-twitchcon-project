@@ -15,6 +15,7 @@ import { LAB_MEDIA, labPlan } from './plans.js';
 const params = new URLSearchParams(location.search);
 const capture = params.get('capture') === '1';
 const variant = params.get('plan') ?? 'full';
+const skipParam = params.get('skip');
 const bgMode = params.get('bg') ?? 'video';
 const guides = params.get('guides') === '1';
 const reduced = params.get('reduced') === '1';
@@ -101,7 +102,7 @@ function Lab() {
   const stage = <div style={{ position: 'relative', width: 1920, height: 1080, overflow: 'hidden', background: '#000' }}>
     <Background t={t}/>
     <div style={{ position: 'absolute', inset: 0 }}>
-      <ScenePlayer plan={data.plan} timeMs={t} playing={playing} frameExact={capture || !playing} resolveMedia={resolveMedia} reducedMotion={reduced} soundEnabled={playing && params.get('sound') === '1'} onMediaReady={onMediaReady}/>
+      <ScenePlayer plan={data.plan} timeMs={t} skipAtMs={skipParam ? Number(skipParam) : undefined} clipAudio={!capture} playing={playing} frameExact={capture || !playing} resolveMedia={resolveMedia} reducedMotion={reduced} soundEnabled={playing && params.get('sound') === '1'} onMediaReady={onMediaReady}/>
     </div>
     {guides && layout && <>
       <div style={{ position: 'absolute', left: layout.bounds.x, top: layout.bounds.y, width: layout.bounds.width, height: layout.bounds.height, outline: '2px dashed #C8F560', pointerEvents: 'none' }}/>
@@ -116,7 +117,7 @@ function Lab() {
       <input type="range" min={0} max={data.plan.durationMs} step={1000 / 60} value={t} onChange={e => { setPlaying(false); setT(Number(e.target.value)); }} style={{ flex: 1 }}/>
       <span style={{ fontVariantNumeric: 'tabular-nums', width: 80 }}>{(t / 1000).toFixed(2)} s</span>
       <select value={variant} onChange={e => { params.set('plan', e.target.value); location.search = params.toString(); }}>
-        {['full', '10', '15', 'welcome', 'queue', 'nochat', 'nomedia', 'manual', 'nowonly', 'compact', 'ru', 'foxlight', 'foxlight-10'].map(v => <option key={v}>{v}</option>)}
+        {['full', '30', '120', '10', 'welcome', 'queue', 'nochat', 'nomedia', 'manual', 'nowonly', 'compact', 'ru', 'foxlight', 'foxlight-10'].map(v => <option key={v}>{v}</option>)}
       </select>
     </div>
   </div>;
