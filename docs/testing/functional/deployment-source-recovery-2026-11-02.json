@@ -1,0 +1,31 @@
+{
+  "checkedAt": "2026-11-02T00:12:32.430Z",
+  "origin": "https://previously-seven.vercel.app",
+  "revision": "8748221",
+  "scope": "Read-only deployment HTTP checks after source retention/boundary repair. Bundle matches current public build. Existing browser visual observations remain scoped to their recorded revision; no new visual, live Twitch, provider, microphone or OBS claim.",
+  "homeStatus": 200,
+  "replayStatus": 200,
+  "buildAssets": [
+    {
+      "path": "/assets/index-RxbInBpZ.js",
+      "bytes": 331323,
+      "hashMatches": true
+    }
+  ],
+  "manifest": {
+    "id": "authored-notes",
+    "revision": 1,
+    "origin": "authored",
+    "visibilityLeaseMs": 6000,
+    "cacheControl": "private, no-store"
+  },
+  "assets": [
+    {
+      "id": "bundle",
+      "kind": "bundle",
+      "bytes": 8481,
+      "hashMatches": true,
+      "cacheControl": "private, no-store"
+    }
+  ]
+}

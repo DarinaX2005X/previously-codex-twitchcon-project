@@ -1,0 +1,148 @@
+{
+  "status": "stopped_for_known_freshness_failure",
+  "completed": false,
+  "target": {
+    "durationSeconds": 28800,
+    "chatMessages": 577200
+  },
+  "startedAt": "2026-11-01T22:46:16.523Z",
+  "stoppedAt": "2026-11-02T00:25:49.3746738Z",
+  "elapsedWallSecondsToStop": 5972.851,
+  "reason": "The known sparse-speech freshness failure was reproduced and documented. The coordinator authorized stopping this pre-repair baseline to redirect shared host capacity to the repaired calibration/full verification. No unique remaining baseline durability condition justified completing both versions.",
+  "process": {
+    "pid": 170564,
+    "verifiedExecutable": "C:\\Program Files\\nodejs\\node.exe",
+    "verifiedCommandLine": "\"C:\\Program Files\\nodejs\\node.exe\" --expose-gc --import tsx scripts/stress/engine-full-profile.mts 28800 docs/testing/reliability/engine-full-profile.json",
+    "termination": "Windows Stop-Process after exact command identity verification; abrupt termination, not a graceful harness completion.",
+    "sessionExitCode": 1,
+    "monitorCell178Completed": true
+  },
+  "profileHeader": {
+    "scope": "Actual StoryEngine.ingestBatch/ingest/executeStory with file-backed SQLite durable receipts, transitions and checkpoints. Accelerated virtual timestamps at 20 chat/s baseline, 200/s for virtual seconds 7200..7259, final 60 seconds of every hour quiet. Already-queued batches of up to 20; no socket arrival, queue latency, real capture, paid provider, OBS or cloud measurement. Chat remains pending safety; supplied speech is synthetic pre-reviewed text. Deterministic local metadata-safety/story stubs; delayed job execution and failures use virtual time. Publication outbox is consumed by a bounded local sink without external publication.",
+    "startedAt": "2026-11-01T22:46:16.523Z",
+    "pid": 170564,
+    "databasePath": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-engine-full-u01AbH\\state.sqlite",
+    "durationSeconds": 28800,
+    "baselineRate": 20,
+    "burstRate": 200,
+    "burstSeconds": 60,
+    "batchSize": 20,
+    "priority": "BelowNormal",
+    "hardware": {
+      "platform": "win32",
+      "release": "10.0.19045",
+      "cpu": "12th Gen Intel(R) Core(TM) i7-1260P",
+      "logicalCpus": 16,
+      "totalMemory": 34071896064,
+      "node": "v22.13.0"
+    },
+    "sourceHashes": {
+      "src/server/runtime/engine.ts": "38044c7dda64fe0ee3d09433798a4da6fe114d16fafa884b6f20be08944fe6a3",
+      "src/server/runtime/input.ts": "db7018085e06756bad291f8945bf057e4c43a45795f3451d8b48a58abf6d9f14",
+      "src/server/storage/repository.ts": "d89cce845eb636a412cb7879c2b5fddc559222277bec4cfd37280a5de317688a",
+      "src/server/storage/domain.ts": "6bb328655ae01f08438faf0fb60ef4cbeb0f8d26e935244c26a5a5925066f338",
+      "src/core/reducer.ts": "27cce1170875070dff96341b34f379c96ebad13fadd1dcadbcc3ef546d379beb",
+      "scripts/stress/engine-full-profile.mts": "3218fad58a0f86f1ac33129ed9988cf7d99df5cda19e8627bb22e83f96ce9f47"
+    }
+  },
+  "lastCompletedProgressSample": {
+    "virtualSecond": 9277,
+    "messages": 193960,
+    "elapsedSeconds": 5943.5341517,
+    "segmentEventsPerSecond": 8.555405359564743,
+    "heapUsed": 15531328,
+    "rss": 188710912,
+    "diskBytes": 483483648,
+    "retainedSources": 500,
+    "chapters": 9,
+    "nodes": 54,
+    "providerCalls": 146,
+    "providerFailures": 137,
+    "providerDone": 9,
+    "staleLeases": 8,
+    "sinkConsumed": 46,
+    "duplicates": 31,
+    "deletes": 15
+  },
+  "observedSampleMaxima": {
+    "heapUsed": 16046272,
+    "rss": 189218816,
+    "diskBytes": 483483648,
+    "retainedSources": 500,
+    "chapters": 9
+  },
+  "knownFreshnessFailure": {
+    "artifact": "engine-story-progress-probe.json",
+    "observedVirtualSecond": 7247.095,
+    "currentSourceTimeMs": 3000999,
+    "lagSeconds": 4246.0960000000005,
+    "chaptersAtProbe": 6,
+    "allChapterRevisionsAtProbe": 1,
+    "laterIntermittentRecoveryObserved": true,
+    "description": "The 500-chat hot tail evicted sparse speech after about 25 seconds, shorter than the intended 90-second horizon. Retry phase alignment caused a prolonged stale recap; later phase changes allowed some recovery. Numeric cap assertions do not negate this product failure."
+  },
+  "durability": {
+    "recoveryMethod": "Normal read/write DatabaseSync open followed by BEGIN IMMEDIATE/COMMIT, allowing SQLite rollback-journal recovery; no application migrations or new stress events were executed.",
+    "journalBefore": {
+      "exists": true,
+      "bytes": 460160
+    },
+    "integrity": [
+      {
+        "integrity_check": "ok"
+      }
+    ],
+    "foreignKeyViolationCount": 0,
+    "chatEvents": 194200,
+    "chatSources": 194200,
+    "pendingChatEvents": 0,
+    "deletedChatSources": 15,
+    "deletedChatTextRows": 0,
+    "sourceMessageNumberRange": {
+      "first": 0,
+      "last": 194199
+    },
+    "burstEvents": 12000,
+    "speechSources": 31,
+    "metadataSources": 31,
+    "batchMultipleOf20": true,
+    "contiguousChatSourceIds": true,
+    "latestCommittedVirtualSecond": 9289.95,
+    "checkpoint": {
+      "revision": 194435,
+      "sources": 500,
+      "chapters": 9,
+      "currentSourceTimeMs": 9000999,
+      "sourceRevision": 194262,
+      "processedSourceRevision": 188482
+    },
+    "checksPassed": true,
+    "journalAfter": {
+      "exists": true,
+      "bytes": 460160
+    }
+  },
+  "artifacts": {
+    "progress": "engine-full-profile.json.progress.jsonl",
+    "progressSha256": "dd7a80e50bf9200b043f80535aa3123a9b2df99b5c64766495617f637d7b0788",
+    "conditions": "engine-full-profile.conditions.json",
+    "databasePath": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-engine-full-u01AbH\\state.sqlite",
+    "databaseBytesAfterRecovery": 484171776,
+    "successArtifactCreated": false
+  },
+  "currentSourceHashes": {
+    "src/server/runtime/engine.ts": "0911db7c2b51c082c87b6dab17d2af818456c9d3bdef5572428fd443a17d4d93",
+    "src/server/runtime/input.ts": "db7018085e06756bad291f8945bf057e4c43a45795f3451d8b48a58abf6d9f14",
+    "src/server/storage/repository.ts": "d89cce845eb636a412cb7879c2b5fddc559222277bec4cfd37280a5de317688a",
+    "src/server/storage/domain.ts": "a02507b166fbe5830ba73a2fadad053d952c0a6b19185f657eb70c80b5b0dba2",
+    "src/core/reducer.ts": "f9ef084788a8410c317df1392eb762ec0a7a3895d17c911285f35d7665109a9e",
+    "scripts/stress/engine-full-profile.mts": "9a23d1dd10e161b3c2f62688c1c970cb0abb339c3874b6ebc80056517bc8378f"
+  },
+  "changedAfterLaunch": [
+    "src/server/runtime/engine.ts",
+    "src/server/storage/domain.ts",
+    "src/core/reducer.ts",
+    "scripts/stress/engine-full-profile.mts"
+  ],
+  "scope": "Partial pre-repair actual-engine synthetic durability/capacity evidence with known freshness failure. The requested eight virtual hours and 577,200 messages were NOT completed. Post-stop integrity checks cover the recovered committed prefix only; no full-run pagination completion, repaired-runtime throughput, live 200/s capacity, real-provider quality or complete reliability pass is claimed."
+}

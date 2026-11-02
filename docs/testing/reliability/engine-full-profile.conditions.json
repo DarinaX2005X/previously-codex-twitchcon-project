@@ -44,5 +44,20 @@
     "cpuPercent": 84,
     "freeMemoryApproxGb": "2.6–3.0",
     "limitation": "Other user processes were left untouched; host load may affect all probes and full-run timings."
+  },
+  "stoppedBaseline": {
+    "status": "stopped_for_known_freshness_failure",
+    "completed": false,
+    "stoppedAtUtc": "2026-11-02T00:25:49.3746738Z",
+    "processId": 170564,
+    "artifact": "engine-full-profile.stopped.json",
+    "artifactSha256": "3e27607585515a4c7a019fd31c2b8accb8736463e05d22408a02b5791efe32d1",
+    "reason": "Coordinator authorized stopping the known-failing pre-repair profile to redirect capacity to repaired verification.",
+    "durableChats": 194200,
+    "latestCommittedVirtualSecond": 9289.95,
+    "elapsedWallSecondsToStop": 5972.851,
+    "integrityAfterRecovery": "ok",
+    "foreignKeyViolations": 0,
+    "successArtifactCreated": false
   }
 }

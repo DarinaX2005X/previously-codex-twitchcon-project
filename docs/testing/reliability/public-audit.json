@@ -1,8 +1,8 @@
 {
   "scope": "Current filesystem public/, dist-public/, dist/ artifacts against configured secret values and narrow high-confidence patterns. Not tracked-file, deployed-host or semantic transcript review.",
-  "checkedAt": "2026-11-01T23:18:12.237Z",
+  "checkedAt": "2026-11-02T00:11:04.530Z",
   "files": 85,
-  "totalBytes": 2390229,
+  "totalBytes": 2391803,
   "configuredSecretsCompared": 4,
   "roots": [
     "public",

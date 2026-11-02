@@ -1,0 +1,27 @@
+{
+  "scope": "Shared-host synthetic calibration. Source behavior and workload unchanged; wall times are not an isolated benchmark.",
+  "startedAt": "2026-11-02T00:06:46.549Z",
+  "initialPriority": "BelowNormal",
+  "events": [
+    {
+      "at": "2026-11-02T00:25:49.3746738Z",
+      "event": "The known-failing pre-repair process was stopped and its database/progress retained. Post-stop integrity checks subsequently used the same host."
+    },
+    {
+      "at": "2026-11-02T00:33:35.4019519Z",
+      "event": "Owned calibration changed to normal priority, matching the local server default.",
+      "priorPriority": "BelowNormal",
+      "priority": "Normal",
+      "latestCompletedSample": {
+        "virtualSecond": 2400,
+        "messages": 48020,
+        "elapsedSeconds": 1604.3670066
+      }
+    }
+  ],
+  "notes": [
+    "The aggregate suite and two builds overlapped the start. Other unrelated user work also runs on this host.",
+    "After launch, only the harness optional priority argument changed; this process continues its originally loaded script and recorded source hashes.",
+    "Normal priority changes scheduling only; no rate, durability, virtual clock, provider schedule or assertion was changed."
+  ]
+}

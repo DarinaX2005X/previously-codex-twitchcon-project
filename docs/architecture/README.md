@@ -66,7 +66,7 @@ The limits below are implementation bounds, not measured live capacity claims.
 
 | Resource | Bound or behavior |
 | --- | --- |
-| Recent raw evidence in a checkpoint | 500 sources, with necessary older provenance retained separately |
+| Recent raw evidence in a checkpoint | 500 sources; up to 64 slots preserve non-chat evidence within the 90-second horizon, with necessary older provenance retained separately |
 | Owner source page | At most 100 records per request |
 | Session page | At most 50 records per request |
 | Transcription | Two active jobs and three queued chunks |

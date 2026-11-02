@@ -15,7 +15,10 @@ import type {EventEnvelope,Source,StoryPatch,PublicSnapshot} from '../../src/sha
 const durationSeconds=Number(process.argv[2]??28800),output=resolve(process.argv[3]??'docs/testing/reliability/engine-full-profile.json');
 if(!Number.isInteger(durationSeconds)||durationSeconds<1||durationSeconds>28800)throw Error('Duration must be 1..28800 virtual seconds.');
 if(existsSync(output)||existsSync(output+'.progress.jsonl'))throw Error('Choose a new output path; existing evidence is never overwritten.');
-setPriority(0,constants.priority.PRIORITY_BELOW_NORMAL);
+const priorityArgument=process.argv[4]??'below-normal';
+if(!['normal','below-normal'].includes(priorityArgument))throw Error('Priority must be normal or below-normal.');
+const priority=priorityArgument==='normal'?'Normal':'BelowNormal';
+setPriority(0,priority==='Normal'?constants.priority.PRIORITY_NORMAL:constants.priority.PRIORITY_BELOW_NORMAL);
 const dir=mkdtempSync(join(tmpdir(),'previously-engine-full-')),path=join(dir,'state.sqlite');
 const scope={channelId:'stress',runId:'live'},sessionId='session',start=Date.parse('2026-11-02T00:00:00Z');
 let at=start,second=0,messages=0,commands=0,speeches=0,metadata=0,deletes=0,duplicates=0,providerCalls=0,providerFailures=0,providerDone=0,staleLeases=0,sinkConsumed=0,dispatchCalls=0;
@@ -81,7 +84,7 @@ const engine=new StoryEngine({scope,channel:{id:scope.channelId,login:'synthetic
 });
 store.repository.updateSettings(scope,0,{listeningPaused:false});store.repository.createSession(scope,{id:sessionId,startedAt:new Date(start).toISOString()});observe(engine.state(sessionId));
 mkdirSync(dirname(output),{recursive:true});
-const header={scope:description,startedAt:new Date().toISOString(),pid:process.pid,databasePath:path,durationSeconds,baselineRate:20,burstRate:200,burstSeconds:60,batchSize:20,priority:'BelowNormal',freshnessContract,hardware:{platform:platform(),release:release(),cpu:cpus()[0]?.model,logicalCpus:cpus().length,totalMemory:totalmem(),node:process.version},sourceHashes:hashes};
+const header={scope:description,startedAt:new Date().toISOString(),pid:process.pid,databasePath:path,durationSeconds,baselineRate:20,burstRate:200,burstSeconds:60,batchSize:20,priority,freshnessContract,hardware:{platform:platform(),release:release(),cpu:cpus()[0]?.model,logicalCpus:cpus().length,totalMemory:totalmem(),node:process.version},sourceHashes:hashes};
 writeFileSync(output+'.progress.jsonl',JSON.stringify(header)+'\n');console.log(JSON.stringify(header));
 function envelope(id:string,kind:string,payload:unknown):EventEnvelope{return {...scope,schemaVersion:1,eventId:`event:${id}`,externalId:id,origin:'twitch',kind,occurredAt:clock.iso(),receivedAt:clock.iso(),sessionId,sessionOffsetMs:at-start,payload};}
 function disk(){return [path,`${path}-wal`,`${path}-shm`,`${path}-journal`].reduce((sum,file)=>sum+(existsSync(file)?statSync(file).size:0),0);}
