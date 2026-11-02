@@ -6,7 +6,6 @@
   "startedAt": "2026-11-02T00:50:30.103Z",
   "process": {
     "pid": 164168,
-    "unifiedSession": 38214,
     "verifiedCommandLine": "\"C:\\Program Files\\nodejs\\node.exe\" --expose-gc --import tsx scripts/stress/engine-full-profile.mts 28800 docs/testing/reliability/engine-repaired-full.json normal",
     "priority": "Normal",
     "normalFromStart": true,
@@ -99,19 +98,6 @@
     "scope": "Completed separately before this full run; its mixed BelowNormal/Normal timing is not this run timing."
   },
   "timingScope": "Accelerated virtual timestamps and already-queued batches of at most 20. Measured wall processing does not establish real-time socket arrival/queue latency, live 200/s capacity, microphone/OBS capture, paid-provider quality or cloud consistency. Chat remains pending safety and supplied speech is synthetic pre-reviewed text; provider and sink behavior is deterministic/local.",
-  "monitorOwnership": "runtime_foundation monitors progress/failure/result files and PID 164168. Root retains, drains and closes stdout session 38214 because that session is not accessible across agent tool ownership. No further cross-agent write_stdin attempt will be made.",
-  "stdoutHandoff": {
-    "requestedSession": 38214,
-    "result": "Unknown process id from monitoring agent; actual engine process remained alive.",
-    "resolvedBy": "Coordinator confirmed file/PID monitoring and retained stdout-session closure."
-  },
-  "monitorRecovery": {
-    "activeFunctionsCell": "209",
-    "nextMilestoneVirtualSecond": 7260,
-    "waitMaxMilliseconds": 55000,
-    "mode": "Progress/failure/result files and PID only; root retains stdout session 38214.",
-    "lastMilestoneVirtualSecond": 3600
-  },
   "boundedHostObservations": [
     {
       "observedAtUtc": "2026-11-02T01:16:26.5933160Z",
@@ -194,6 +180,58 @@
           }
         }
       }
+    },
+    {
+      "name": "complete_virtual_burst",
+      "recordedAt": "2026-11-02T02:34:04.336Z",
+      "sample": {
+        "virtualSecond": 7347,
+        "messages": 155360,
+        "elapsedSeconds": 6134.2820667,
+        "segmentEventsPerSecond": 36.16670857566265,
+        "heapUsed": 17931488,
+        "rss": 283054080,
+        "diskBytes": 387801088,
+        "retainedSources": 500,
+        "chapters": 23,
+        "nodes": 150,
+        "providerCalls": 126,
+        "providerFailures": 81,
+        "providerDone": 45,
+        "staleLeases": 1,
+        "sinkConsumed": 37,
+        "duplicates": 25,
+        "deletes": 12,
+        "freshness": {
+          "boundSeconds": 240,
+          "supplied": 25,
+          "eligible": 22,
+          "fulfilled": 22,
+          "pending": 0,
+          "due": 22,
+          "overdueIds": [],
+          "nextDeadlineVirtualSecond": null,
+          "maxObservedSourceToPublishedSeconds": 76.05,
+          "maxObservedSupplyToSinkSeconds": 80,
+          "lastProviderSpeechId": "speech-6900",
+          "lastProviderSpeechEndMs": 6900900,
+          "providerNoSpeechFailures": 76,
+          "lastPublishedAt": "2026-11-02T02:01:16.950Z",
+          "lastPublishedChapterSourceEndMs": 6900999,
+          "lastPublishedCurrentSourceTimeMs": 6900999,
+          "lastDomainCurrentSourceTimeMs": 6900999,
+          "lastSinkPublication": {
+            "revision": 38,
+            "publishedAt": "2026-11-02T02:01:16.950Z",
+            "chapterSourceEndMs": 6900999,
+            "currentSourceTimeMs": 6900999
+          }
+        }
+      },
+      "burstMessagesComputedFromCommittedProgress": 12000,
+      "preBurstChats": 141600,
+      "postBurstBaselineChatsAtSample": 1760,
+      "scope": "Progress counters are sampled after successful engine ingestion. Final SQLite exact-count verification remains pending."
     }
   ],
   "postLaunchSourceChanges": [
@@ -252,5 +290,68 @@
         "scope": "Trusted HTTPS, manifest/chapter/raid, no external fetch."
       }
     }
-  ]
+  ],
+  "coordinatorReportedObservations": [
+    {
+      "reportedAtUtc": "2026-11-02T01:57:09.582Z",
+      "observedAtUtc": null,
+      "source": "Coordinator read-only observation during sustained slow segments; exact observation clock not supplied.",
+      "counterClass": "Win32_PerfFormattedData_Counters_ProcessorInformation",
+      "instance": "_Total",
+      "counters": {
+        "ProcessorFrequency": 1800,
+        "PercentProcessorPerformance": 79,
+        "PercentProcessorTime": 69
+      },
+      "reportedMicroprobe": {
+        "checkpointApproxKB": 384,
+        "fullCloneApproxMilliseconds": 9,
+        "pureTransitionMedianMilliseconds": 8.34,
+        "sqlReadApproxMilliseconds": 1,
+        "sourceFencesApproxMilliseconds": 3.24,
+        "scope": "Reported isolated component measurements do not isolate the full observed 62–100 ms/chat path."
+      },
+      "scope": "Shared-host evidence only, not causal proof. No settings, process, priority or workload was changed; no additional diagnostics are planned."
+    }
+  ],
+  "inProcessInstrumentation": {
+    "processId": 164168,
+    "requestedAtUtc": "2026-11-02T02:22:01.524Z",
+    "attachedAtUtc": "2026-11-02T02:22:02.348Z",
+    "cpuWindowStartedAtUtc": "2026-11-02T02:22:07.320Z",
+    "cpuWindowEndedAtUtc": "2026-11-02T02:22:12.547Z",
+    "reportedProfileDurationSeconds": 5.19,
+    "profilerAndDebuggerDisabledAtUtc": "2026-11-02T02:22:12.558Z",
+    "inspectorCloseRequestedAfterDisable": true,
+    "listenerPort": 9229,
+    "listenerConfirmedGoneAtUtc": "2026-11-02T02:22:16.719Z",
+    "sameProcessConfirmedAlive": true,
+    "coordinatorReportedChanges": {
+      "deliberatePause": false,
+      "restart": false,
+      "heapOrApplicationStateMutation": false,
+      "sourceChange": false,
+      "priorityChange": false,
+      "workloadChange": false
+    },
+    "overheadAndDeoptimization": "Unquantified; no timing adjustment or isolated capacity conclusion is inferred.",
+    "reportedSampleHotspots": {
+      "fullClonesPercent": 40.56,
+      "candidatePersistenceInclusivePercent": 22.02,
+      "sqlitePrepareSelfPercent": 11.34,
+      "gcPercent": 4.02,
+      "scope": "Mixed self/inclusive sample figures are not treated as disjoint totals or whole-run causal attribution."
+    },
+    "source": "Coordinator report of the completed bounded inspector operation; no additional profiling was performed by this monitor.",
+    "staticStackClassification": {
+      "source": "Coordinator static analysis of the existing CPU profile; no new probe or process action.",
+      "weightedSamplePercent": {
+        "runDomainBatchChatStack": 95.8367,
+        "rootGcUnattributed": 4.0174,
+        "bookkeeping": 0.1459
+      },
+      "scope": "Measured clone, candidate-persistence and prepare hotspots were on chat-batch stacks. No standalone tick, dispatch or executeStory sample was observed; nested repository ingest belonged to runDomainBatch. This does not establish zero unsampled tick work. The profile itself does not identify baseline versus burst phase or processed message count and is not sustained throughput evidence."
+    },
+    "rawProfileRetention": "The raw CPU profile is retained locally; this file preserves the reported summary, operation times and scope."
+  }
 }
