@@ -15,7 +15,12 @@ const STREAM_LAND = 4.0;          // stream-full.mp4 time the rewind lands on (=
 const CATCH = 17.3;               // film time we catch the scene's P mark
 
 export const EVENTS = [];
-const ev = (id, t, kind, o = {}) => EVENTS.push({ id, t: +t.toFixed(4), kind, x: o.x ?? 0.5, gain: o.gain ?? 1, dur: o.dur ?? 0, note: o.note ?? null, pan2: o.pan2 ?? null });
+// The hook was authored on an old clock; HOOK maps film time to it so the first line reads slower (owner review 4).
+const HOOK = [[0, 0], [2.1, 1.55], [2.75, 2.0], [3.4, 2.72], [4.5, 3.98], [5.75, 5.75], [6, 6]];
+const pw = (pts, x, a, b) => { if (x <= pts[0][a]) return x - pts[0][a] + pts[0][b]; for (let i = 0; i < pts.length - 1; i++) if (x <= pts[i + 1][a]) { const p = (x - pts[i][a]) / (pts[i + 1][a] - pts[i][a]); return pts[i][b] + p * (pts[i + 1][b] - pts[i][b]); } return x; };
+const hookOld = t => t < 6 ? pw(HOOK, t, 0, 1) : t;
+const hookNew = t => t < 6 ? pw(HOOK, t, 1, 0) : t;
+const ev = (id, t, kind, o = {}) => EVENTS.push({ id, t: +hookNew(t).toFixed(4), kind, x: o.x ?? 0.5, gain: o.gain ?? 1, dur: o.dur ? +(hookNew(t + o.dur) - hookNew(t)).toFixed(4) : 0, note: o.note ?? null, pan2: o.pan2 ?? null });
 const waits = [];
 
 // ---------- shared assets ----------
@@ -214,13 +219,13 @@ function buildEvents() {
 }
 
 // ---------- camera for line 1 ----------
-function camTarget(i) { const w = line1[i]; return Math.max(0, w.x + w.w - 1760); }
+function camTarget(i) { const w = line1[i]; if (i === line1.length - 1) return w.x + w.w / 2 - 1040; return Math.max(0, w.x + w.w - 1700); }
 function camX1(t) {
   // overlapping smooth steps: the camera rides the line continuously instead of stopping on each word
   let c = 0;
   for (let i = 0; i < line1.length; i++) {
     const prev = i ? camTarget(i - 1) : 0;
-    c += (camTarget(i) - prev) * cubicInOut(seg(t, line1[i].t - 0.12, line1[i].t + 0.62));
+    c += (camTarget(i) - prev) * cubicInOut(seg(t, line1[i].t - 0.3, line1[i].t + 0.32));
   }
   // whip out to the left as the plate becomes the player
   c += 2600 * expoIn(seg(t, 2.02, 2.45));
@@ -230,7 +235,7 @@ function camX1(t) {
 function wordIn(w, t, dur = 0.34) {
   const p = seg(t, w.t - 0.06, w.t + dur);
   const e = expoOut(p);
-  return { p, e, op: clamp(seg(t, w.t - 0.06, w.t + 0.1)), blur: 18 * (1 - e), sc: 1.13 - 0.13 * e, dx: 70 * (1 - e) };
+  return { p, e, op: clamp(seg(t, w.t - 0.08, w.t + 0.12)), blur: 9 * (1 - e) * (1 - e), sc: 1.06 - 0.06 * e, dx: 36 * (1 - e) };
 }
 
 // stream time shown in the player before the scene takes over
@@ -290,7 +295,7 @@ async function renderPassage1(t) {
       let dy = 0;
       if (w.style === 'drop') dy = -150 * (1 - springAt(t - w.t + 0.06, 0.45, 15)); // "drops" falls into the line
       s.transform = `translate(${w.x + a.dx * (w.style === 'drop' ? 0 : 1)}px,${L1.top + dy}px) scale(${a.sc})`;
-      const mb = Math.min(22, Math.abs(camVel) / 240);
+      const mb = Math.min(10, Math.abs(camVel) / 400);
       s.filter = (a.blur + mb) > 0.4 ? `blur(${a.blur.toFixed(2)}px)` + (mb > 0.4 ? ` url(#${dirBlur(w.el, mb, 0)})` : '') : 'none';
       if (w.style === 'outline') {
         const f = seg(t, w.t + 0.22, w.t + 0.42);
@@ -612,7 +617,7 @@ window.__ready = ready = (async () => {
   window.SCENE_SFX = async () => w.__renderSfx ? await w.__renderSfx() : null;
   window.SCENE_EVENTS = () => w.__events;
 })();
-window.renderAt = async t => { await ready; const pend = []; film2.render(t, pend); await Promise.all([renderPassage1(t), ...pend]); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return t; };
+window.renderAt = async t => { await ready; const pend = []; film2.render(t, pend); await Promise.all([renderPassage1(hookOld(t)), ...pend]); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return t; };
 
 if (!CAPTURE) {
   document.body.classList.add('preview');

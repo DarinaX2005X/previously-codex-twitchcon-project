@@ -3,6 +3,7 @@
 // Needs the capture server: npx vite --config docs/video/tools/vite.film.config.mjs (127.0.0.1:4330, no HMR).
 const PW = process.env.PW_PATH || 'C:/Users/user/Desktop/previouslu/review/pw/node_modules/playwright';
 const { chromium } = require(PW);
+const { allowEmbedding, setupUi, ensureUi } = require('./ui-live.cjs');
 const fs = require('fs'), path = require('path'), { spawn } = require('child_process');
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : d; };
@@ -10,19 +11,24 @@ const BASE = opt('base', process.env.FILM_BASE || 'http://127.0.0.1:4330');
 (async () => {
   const out = opt('out', '.'); fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required', '--disable-gpu-vsync', '--force-color-profile=srgb'] });
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1, ignoreHTTPSErrors: true });
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1, ignoreHTTPSErrors: true });
+  await allowEmbedding(context);
+  const page = await context.newPage();
   page.on('console', m => { if (['error', 'warning'].includes(m.type())) console.log('[page]', m.type(), m.text().slice(0, 300)); });
   page.on('pageerror', e => console.log('[pageerror]', e.message));
   await page.goto(`${BASE}/docs/video/film/index.html?capture=1`);
   await page.waitForFunction(() => window.__ready, null, { timeout: 60000 });
   await page.evaluate(() => window.__ready);
+  const ui = await setupUi(page); if (args.includes('--print-ui')) console.log(JSON.stringify(ui));
+  const uiState = {};
   const stage = await page.$('#stage');
   if (opt('events')) { fs.writeFileSync(opt('events'), JSON.stringify(await page.evaluate(() => window.EVENTS), null, 1)); console.log('events', opt('events')); }
   if (opt('scene-sfx')) {
     const b64 = await page.evaluate(() => window.SCENE_SFX());
     if (b64) { fs.writeFileSync(opt('scene-sfx'), Buffer.from(b64, 'base64')); fs.writeFileSync(opt('scene-sfx').replace(/\.wav$/, '.events.json'), JSON.stringify(await page.evaluate(() => window.SCENE_EVENTS()), null, 1)); console.log('scene sfx', opt('scene-sfx')); }
   }
-  const shot = async t => { await page.evaluate(t => window.renderAt(t), t); return stage.screenshot({ type: 'jpeg', quality: 93 }); };
+  const SETTLE = Number(opt('settle', 60)); const lastScroll = {};
+  const shot = async t => { await ensureUi(page, t, uiState); await page.evaluate(t => window.renderAt(t), t); const want = await page.evaluate(() => window.__scroll || {}); for (const [n, y] of Object.entries(want)) { const f = page.frame({ name: n }); if (f) { const moved = await f.evaluate(y => { if (Math.abs(window.scrollY - y) > 0.5) { window.scrollTo({ top: y, behavior: 'instant' }); return true; } return false; }, y); if (moved) lastScroll[n] = -1; } } if (await page.evaluate(() => window.__liveVisible)) { await page.waitForTimeout(SETTLE); await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))); } return stage.screenshot({ type: 'jpeg', quality: 93 }); };
   if (opt('stills')) {
     for (const t of opt('stills').split(',').map(Number)) fs.writeFileSync(path.join(out, `t${t.toFixed(3).padStart(8, '0')}.jpg`), await shot(t));
     console.log('stills done');

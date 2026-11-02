@@ -1,19 +1,22 @@
 // Passages 4-10 of the Previously film (24 s to the end). Pure functions of film time t.
-// Draft 2 staging: the product object owns the frame, type performs at display scale, every passage has its own colour world.
+// Rework after studying every reference sheet (review/video/REFERENCE-NOTES.md):
+// one focal object per moment, calm centred captions that hold, light fields with soft colour light,
+// a camera that keeps moving through real UI, morph chains that are the product's own states, no piles.
 import { clamp, seg, lerp, expoOut, expoIn, expoInOut, cubicInOut, springAt, el, svgEl, fmtTime, bezier2 } from './lib.js';
 import { makeMark, placeMark } from './mark.js';
-import { Slot, card, slip, cursor, button, pressScale, wordIn, hblur } from './kit.js';
-import { FACTS, CODEX } from './content.js';
+import { Slot, card, cursor, button, pressScale, wordIn, hblur } from './kit.js';
+import { FACTS, CODEX, CHAT } from './content.js';
 
 export const END = 138.0;
 const A = '/docs/video/film/assets/ui/';
 
-/** An image seen through a window with its own camera: (cx, cy) in image CSS px is put at the window centre, scaled by s. */
-function view(parent, src, cssW, { radius = 26, shadow = true } = {}) {
+/** An image seen through a window with its own camera: (cx, cy) in image CSS px lands on the window centre, scaled by s. */
+function view(parent, src, cssW, { radius = 26, shadow = 'soft' } = {}) {
   const box = el('div', 'abs', parent);
   Object.assign(box.style, { overflow: 'hidden', borderRadius: radius + 'px' });
-  if (shadow) box.style.boxShadow = '0 50px 110px -40px rgb(0 0 0 / .75)';
-  const img = el('img', '', box); img.src = src; Object.assign(img.style, { position: 'absolute', left: '0px', top: '0px', width: cssW + 'px', transformOrigin: '0 0' });
+  if (shadow === 'soft') box.style.boxShadow = '0 2px 4px rgb(60 40 20 / .10), 0 50px 100px -40px rgb(60 35 15 / .45)';
+  if (shadow === 'dark') box.style.boxShadow = '0 60px 120px -40px rgb(0 0 0 / .8)';
+  const img = el('img', '', box); img.src = src; Object.assign(img.style, { position: 'absolute', left: '0px', top: '0px', width: cssW + 'px', transformOrigin: '0 0', maxWidth: 'none' });
   return {
     box, img,
     set(r, cam, extra = '') {
@@ -22,230 +25,292 @@ function view(parent, src, cssW, { radius = 26, shadow = true } = {}) {
     },
   };
 }
-const keyed = (t, keys) => { // keyframes [[t, {..}], ...] with expo in-out between them
+const keyed = (t, keys) => {
   let D = { ...keys[0][1] };
   for (let i = 0; i < keys.length - 1; i++) { const [t0, a] = keys[i], [t1, b] = keys[i + 1]; if (t >= t0) { const e = expoInOut(seg(t, t0, t1)); D = {}; for (const k of Object.keys(a)) D[k] = lerp(a[k], b[k] ?? a[k], e); } }
   return D;
 };
+const land = (t, t0, z = 0.62, w = 11) => (t <= t0 ? 0 : springAt(t - t0, z, w));   // 0 -> 1, small overshoot, settles
+const breathe = (t, k = 1) => ({ rx: 1.2 * k * Math.sin(t * 0.7), ry: 1.6 * k * Math.sin(t * 0.53 + 1), dx: 6 * k * Math.sin(t * 0.41) });
+const lerpR = (a, b, p) => ({ x: lerp(a.x, b.x, p), y: lerp(a.y, b.y, p), w: lerp(a.w, b.w, p), h: lerp(a.h, b.h, p), r: lerp(a.r ?? 0, b.r ?? 0, p) });
 
 export function createFilm2(stage, { ev, seekVideo, FPS }) {
   const root = el('div', 'layer', stage);
-  const L = name => { const d = el('div', 'layer', root); d.dataset.name = name; return d; };
+  const L = (name, parent = root) => { const d = el('div', 'layer', parent); d.dataset.name = name; return d; };
   let RECTS = null;
   const slots = [];
   const S = (parent, o, ph) => { const s = new Slot(parent, o, ph); slots.push(s); return s; };
+  const CAP = { x: 100, y: 62, size: 84, width: 1720, align: 'center', color: 'var(--ink)', stagger: 0.08 };
 
-  // ================= world fields (colour per passage) =================
-  const fields = L('fields');
-  const fieldA = el('div', 'layer', fields), fieldB = el('div', 'abs', fields);
+  // ================= fields =================
+  const airy = L('airy');
+  airy.style.background = '#F3EEE6';
+  const glow1 = el('div', 'layer', airy), glow2 = el('div', 'layer', airy), glow3 = el('div', 'layer', airy);
+  const dark = L('dark');
+  dark.style.background = '#111418';
+  const dglow = el('div', 'layer', dark);
+  const verm = el('div', 'abs', root); verm.style.background = 'var(--verm)';
+  function renderFields(t, tint) {
+    const a = 0.5 + 0.5 * Math.sin(t * 0.31), b = 0.5 + 0.5 * Math.cos(t * 0.23);
+    glow1.style.background = `radial-gradient(900px 650px at ${12 + 8 * a}% ${88 - 6 * b}%, rgb(255 140 100 / ${0.30 * tint.warm}), transparent 70%)`;
+    glow2.style.background = `radial-gradient(1000px 700px at ${86 - 6 * b}% ${10 + 8 * a}%, rgb(110 175 180 / ${0.30 * tint.cool}), transparent 72%)`;
+    glow3.style.background = `radial-gradient(800px 520px at ${55 + 10 * b}% ${55 + 10 * a}%, rgb(200 245 96 / ${0.28 * tint.lime}), transparent 70%)`;
+    dglow.style.background = `radial-gradient(1200px 800px at ${30 + 10 * a}% ${100 - 5 * b}%, rgb(255 90 54 / .26), transparent 70%), radial-gradient(1000px 700px at ${85 - 8 * b}% 0%, rgb(70 122 128 / .25), transparent 72%)`;
+  }
 
-  // ================= full-frame footage world (P5, P6) =================
-  const foot = L('footage');
+  // ================= P4: honest frame on vermilion (24-30.3) =================
+  const p4 = L('p4');
+  S(p4, { ...CAP, y: 300, size: 100, stagger: 0.11 }, [{ t0: 24.2, t1: 29.15, text: ['What', 'you', 'see', 'next', 'is', 'the', { text: 'real app', emph: 'plate-ink' }] }]);
+  S(p4, { ...CAP, y: 430, size: 100, stagger: 0.11 }, [{ t0: 25.5, t1: 29.2, text: ['replaying', 'an', { text: 'example recording', emph: 'under' }] }]);
+  const note = el('div', 'abs', p4);
+  Object.assign(note.style, { width: '1300px', padding: '30px 44px 34px', borderRadius: '24px', background: 'var(--paper)', boxShadow: '0 6px 0 var(--paper-side), 0 40px 70px -30px rgb(80 20 0 / .5)', color: 'var(--ink)', fontSize: '46px', fontWeight: 650, letterSpacing: '-.015em', lineHeight: 1.2, textAlign: 'center' });
+  const noteWords = 'We made the game for this example. The speech, chat and raid in it are written as an example too.'.split(' ').map(w => el('span', '', note, w + ' '));
+
+  // ================= the player (P5, P6) =================
+  const pl = L('player');
+  const frame = el('div', 'abs', pl);
+  Object.assign(frame.style, { borderRadius: '30px', background: 'var(--ink-deep)', overflow: 'hidden', boxShadow: '0 2px 4px rgb(60 40 20 / .12), 0 60px 120px -40px rgb(60 35 15 / .5)', transformOrigin: '0 0' });
+  const fview = el('div', 'abs', frame); fview.style.overflow = 'hidden';
   const vids = {};
   for (const k of ['stream', 'run', 'moon', 'fixed', 'lanterns']) {
-    const v = el('video', '', foot); Object.assign(v, { src: k === 'stream' ? '/demo/foxlight/stream-full.mp4' : `/demo/foxlight/clip-${k}.mp4`, muted: true, preload: 'auto' });
-    Object.assign(v.style, { position: 'absolute', left: '0px', top: '0px', width: '1920px', height: '1080px', objectFit: 'cover', display: 'none', transformOrigin: '50% 50%' });
+    const v = el('video', '', fview); Object.assign(v, { src: k === 'stream' ? '/demo/foxlight/stream-full.mp4' : `/demo/foxlight/clip-${k}.mp4`, muted: true, preload: 'auto' });
+    Object.assign(v.style, { position: 'absolute', left: '0px', top: '0px', width: '100%', height: '100%', objectFit: 'cover', display: 'none', transformOrigin: '50% 50%' });
     vids[k] = v;
   }
-  const shade = el('div', 'layer', foot); shade.style.background = 'linear-gradient(180deg, rgb(12 14 17 / .55) 0%, rgb(12 14 17 / .05) 30%, rgb(12 14 17 / .1) 62%, rgb(12 14 17 / .75) 100%)';
-  const bar = el('div', 'abs', foot);
-  Object.assign(bar.style, { height: '60px', width: '1920px', background: 'var(--paper)', display: 'flex', alignItems: 'center', gap: '18px', padding: '0 40px', color: 'var(--ink)', fontSize: '26px', whiteSpace: 'nowrap' });
-  const live = el('i', '', bar); Object.assign(live.style, { width: '14px', height: '14px', borderRadius: '7px', background: '#3c9a2e' });
+  const bar = el('div', 'abs', frame);
+  Object.assign(bar.style, { height: '64px', background: 'var(--paper)', display: 'flex', alignItems: 'center', gap: '16px', padding: '0 26px', color: 'var(--ink)', fontSize: '26px', whiteSpace: 'nowrap' });
+  const liveDot = el('i', '', bar); Object.assign(liveDot.style, { width: '13px', height: '13px', borderRadius: '7px', background: '#3c9a2e' });
   el('b', '', bar, 'Foxlight Dev').style.fontWeight = 750;
   el('span', '', bar, 'Building a tiny cave platformer').style.color = 'var(--muted-paper)';
   const exTag = el('span', '', bar, 'Example recording');
   Object.assign(exTag.style, { marginLeft: 'auto', background: 'var(--verm)', color: 'var(--ink)', fontWeight: 750, fontSize: '22px', padding: '6px 14px', borderRadius: '9px', transformOrigin: '50% 50%' });
-  const clock = el('span', 'tab', bar, '0:05'); Object.assign(clock.style, { fontWeight: 800, fontSize: '30px', minWidth: '78px', textAlign: 'right' });
+  const clock = el('span', 'tab', bar, '0:05'); Object.assign(clock.style, { fontWeight: 800, fontSize: '28px', minWidth: '74px', textAlign: 'right' });
+  const sub = el('div', 'abs', pl);   // the transcript, as a subtitle pill on the footage
+  Object.assign(sub.style, { padding: '14px 26px 18px', borderRadius: '18px', background: 'rgb(244 239 230 / .96)', color: 'var(--ink)', fontSize: '40px', fontWeight: 650, letterSpacing: '-.015em', whiteSpace: 'nowrap', boxShadow: '0 20px 40px -18px rgb(0 0 0 / .5)', transformOrigin: '50% 50%' });
+  const subTab = el('span', 'tab', sub, '0:05'); Object.assign(subTab.style, { display: 'inline-block', background: 'var(--ink)', color: 'var(--paper)', borderRadius: '8px', padding: '0 10px', fontSize: '28px', marginRight: '16px', fontWeight: 800, verticalAlign: '5px' });
+  const subText = el('span', '', sub);
+  const SPEECH = [
+    { t0: 30.7, t1: 32.0, tab: '0:05', text: 'Today I am building a tiny cave platformer.' },
+    { t0: 32.25, t1: 33.7, tab: '0:05', text: 'The goal tonight is to make the lanterns light up the cave.' },
+    { t0: 46.0, t1: 46.9, tab: '1:40', text: 'Okay, let me try the spring.' },
+  ];
 
-  // ================= P4: honest frame on the vermilion field (24-30) =================
-  const p4 = L('p4');
-  const p4a = S(p4, { x: 100, y: 200, size: 128, color: 'var(--ink)', width: 1720, align: 'center', stagger: 0.12 }, [
-    { t0: 24.15, t1: 28.85, text: ['What', 'you', 'see', 'next', 'is', 'the', { text: 'real app', emph: 'plate-ink' }], times: [24.15, 24.27, 24.37, 24.47, 24.62, 24.72, 24.86] },
-  ]);
-  const p4b = S(p4, { x: 100, y: 380, size: 128, color: 'var(--ink)', width: 1720, align: 'center', stagger: 0.12 }, [
-    { t0: 25.35, t1: 28.9, text: ['replaying', 'an', { text: 'example recording', emph: 'under' }], times: [25.35, 25.6, 25.75] },
-  ]);
-  const p4note = el('div', 'abs', p4);
-  Object.assign(p4note.style, { width: '1500px', padding: '34px 48px', borderRadius: '26px', background: 'var(--paper)', boxShadow: '0 7px 0 var(--paper-side), 0 40px 70px -30px rgb(60 10 0 / .6)', color: 'var(--ink)', fontSize: '60px', fontWeight: 700, letterSpacing: '-.02em', lineHeight: 1.16, overflow: 'hidden' });
-  const NOTE = 'We made the game for this example. The speech, chat and raid in it are written as an example too.';
-  const noteWords = NOTE.split(' ').map(w => el('span', '', p4note, w + ' '));
+  // ================= chat column (the product's own chat panel, rebuilt with the real messages) =================
+  const chat = el('div', 'abs', pl);
+  Object.assign(chat.style, { width: '560px', height: '760px', borderRadius: '28px', background: 'var(--ink)', overflow: 'hidden', boxShadow: '0 60px 120px -40px rgb(40 25 10 / .6)', transformOrigin: '0 0' });
+  const chatHead = el('div', 'abs', chat); Object.assign(chatHead.style, { width: '560px', height: '74px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 28px', color: 'var(--paper)', fontSize: '28px', fontWeight: 750, background: 'var(--ink-raised)', zIndex: 2 });
+  el('span', '', chatHead, 'Stream chat');
+  el('span', '', chatHead, 'Foxlight Dev').style.color = 'var(--muted-ink)';
+  const chatList = el('div', 'abs', chat); chatList.style.width = '560px';
+  const ROW = 64;
+  const chatMsgs = [
+    ...CHAT.early.map((m, i) => ({ text: m, t: 34.25 + i * 0.62 })),
+    ...FACTS.moment.burst.map((m, i) => ({ text: m, t: 48.9 + 3.0 * Math.pow(i / (FACTS.moment.burst.length - 1), 1.6), burst: true })),
+  ];
+  for (const m of chatMsgs) {
+    m.el = el('div', 'abs', chatList, m.text);
+    Object.assign(m.el.style, { left: '20px', height: (ROW - 10) + 'px', lineHeight: (ROW - 10) + 'px', padding: '0 18px', borderRadius: '14px', fontSize: '32px', fontWeight: 650, whiteSpace: 'nowrap', color: 'var(--paper)' });
+  }
+  const moonIdx = chatMsgs.length - 1;   // the last burst message is "MOON JUMP"
+  const counter = el('div', 'abs', pl);
+  Object.assign(counter.style, { background: 'var(--lime)', color: 'var(--ink)', borderRadius: '20px', padding: '10px 26px 14px', boxShadow: '0 6px 0 var(--lime-side), 0 30px 50px -20px rgb(40 60 0 / .5)', fontWeight: 800, whiteSpace: 'nowrap', transformOrigin: '50% 50%' });
+  const cNum = el('span', 'tab', counter); Object.assign(cNum.style, { fontSize: '72px', letterSpacing: '-.03em', marginRight: '16px' });
+  el('span', '', counter, 'messages in 10 seconds').style.fontSize = '34px';
 
-  // ================= P5 / P6: the story engine over full-frame footage =================
-  const p5 = L('p5');
-  const big5 = S(p5, { x: 100, y: 150, size: 190, width: 1720, stagger: 0.1 }, [
-    { t0: 30.35, t1: 32.45, text: ['It', { text: 'listens', emph: 'verm' }] },
-    { t0: 32.7, t1: 34.95, text: ['and', 'reads', 'the', { text: 'chat', emph: 'plate-lime' }] },
+  // ================= P5/P6 objects: the chapter card, the hold bar, the lore plate, the four chapters, the strip =================
+  const p56 = L('p56');
+  const capP5 = S(p56, CAP, [
+    { t0: 30.5, t1: 33.75, text: ['It', { text: 'listens', emph: 'verm' }, 'to', 'the', 'streamer'] },
+    { t0: 34.0, t1: 36.95, text: ['and', 'reads', 'the', { text: 'chat', emph: 'plate-lime' }] },
+    { t0: 37.2, t1: 40.0, text: ['then', 'writes', 'a', 'short', { text: 'chapter', emph: 'under' }] },
+    { t0: 40.25, t1: 44.25, text: ['and', 'waits', { text: '75 seconds', emph: 'plate-ink' }, 'before', 'showing', 'it'] },
+    { t0: 45.6, t1: 48.6, text: ['Then', 'the', 'fox', 'tries', 'the', { text: 'spring', emph: 'verm' }] },
+    { t0: 48.85, t1: 51.85, text: ['and', 'chat', { text: 'reacts', emph: 'plate-lime' }] },
+    { t0: 52.1, t1: 55.5, text: ['Chat', 'named', 'it', 'the', { text: 'moon jump', emph: 'verm' }] },
+    { t0: 55.75, t1: 59.6, text: ['Every', 'chapter', 'keeps', 'its', { text: 'sources', emph: 'under' }] },
   ]);
-  const flank = S(p5, { x: 90, y: 330, size: 150, width: 880, stagger: 0.1 }, [
-    { t0: 35.25, t1: 37.45, text: ['It', 'writes', 'a'] },
-  ]);
-  const flank2 = S(p5, { x: 90, y: 520, size: 150, width: 880, stagger: 0.1 }, [
-    { t0: 35.5, t1: 37.45, text: [{ text: 'chapter', emph: 'outline' }] },
-  ]);
-  const holdLine = S(p5, { x: 90, y: 690, size: 76, width: 900, stagger: 0.08 }, [
-    { t0: 37.95, t1: 40.6, text: ['seconds', 'before', 'anyone', 'sees', 'it'] },
-  ]);
-  const quoteLine = S(p5, { x: 100, y: 770, size: 96, width: 1720, align: 'center', stagger: 0.09 }, [
-    { t0: 42.85, t1: 45.2, text: ['“Okay,', 'let', 'me', 'try', 'the', { text: 'spring.”', emph: 'verm' }] },
-  ]);
-  const transcript = el('div', 'abs', p5);
-  Object.assign(transcript.style, { width: '1720px', padding: '22px 34px 26px', borderRadius: '22px', background: 'rgb(20 23 27 / .88)', color: 'var(--paper)', fontSize: '54px', fontWeight: 650, lineHeight: 1.2, letterSpacing: '-.015em', boxShadow: '0 30px 60px -20px rgb(0 0 0 / .7)', transformOrigin: '0 0' });
-  const trTab = el('span', 'tab', transcript, '0:05'); Object.assign(trTab.style, { display: 'inline-block', background: 'var(--paper)', color: 'var(--ink)', borderRadius: '9px', padding: '0 12px', fontSize: '36px', marginRight: '18px', fontWeight: 800, verticalAlign: '6px' });
-  const trText = el('span', '', transcript);
-  const trCaret = el('span', '', transcript, '|'); Object.assign(trCaret.style, { color: 'var(--verm)', fontWeight: 400 });
-  const SPEECH1 = { t0: 30.5, t1: 33.3, text: 'Today I am building a tiny cave platformer. The fox can run and jump, and the goal tonight is to make the lanterns light up the cave.' };
-  const early = ['hello, the fox is cute', 'what engine is this', 'love the lantern idea', 'a spring pad, nice'].map((m, i) => { const s = slip(p5, m); s.style.fontSize = '50px'; s.style.padding = '14px 26px'; return { el: s, t: 32.95 + i * 0.3, y: 330 + i * 120, x: 1060 + (i % 2) * 90 }; });
-  const card5 = card(p5, { tc: '0:05', title: 'Fox learns to jump', img: '/demo/foxlight/clip-run.jpg' });
-  const C5 = { x: 1010, y: 260, s: 1.62 };   // 520x392 card at 1.62 = 842x635
-  const holdN = el('div', 'abs tab', p5); Object.assign(holdN.style, { color: 'var(--verm)', fontWeight: 800, fontSize: '330px', letterSpacing: '-.05em', lineHeight: 1 });
-  const holdNote = el('div', 'abs', p5, 'counted faster here'); Object.assign(holdNote.style, { color: 'var(--muted-ink)', fontSize: '30px', fontWeight: 650 });
-  const ring = svgEl('svg', p5, { width: 1000, height: 800, style: 'position:absolute;left:0;top:0;overflow:visible' });
-  const ringR = svgEl('rect', ring, { x: 0, y: 0, width: 880, height: 672, rx: 44, fill: 'none', stroke: '#FF5A36', 'stroke-width': 12, 'stroke-linecap': 'round', pathLength: 1000 });
-  const stamp = el('div', 'abs', p5, 'Published'); Object.assign(stamp.style, { border: '10px solid var(--verm)', color: 'var(--verm)', fontWeight: 800, fontSize: '130px', padding: '0 40px', borderRadius: '26px', background: 'rgb(244 239 230 / .94)', transformOrigin: '50% 50%' });
-  // the timeline strip along the bottom: the anchor of the middle of the film
-  const strip = el('div', 'abs', p5);
-  Object.assign(strip.style, { width: '1760px', height: '92px', borderRadius: '24px', background: 'rgb(20 23 27 / .92)', boxShadow: '0 0 0 2px var(--ink-edge), 0 30px 60px -20px rgb(0 0 0 / .8)' });
-  const TABS = [
-    { tc: '0:05', title: 'Fox learns to jump', x: 16, t: 41.0 }, { tc: '1:40', title: 'The moon jump', x: 470, t: 51.7 },
-    { tc: '2:05', title: 'moon jump', x: 830, t: 52.0, lore: true }, { tc: '3:30', title: 'Spring gets a speed limit', x: 1080, t: 53.25 },
-    { tc: '5:20', title: 'Lanterns', x: 1520, t: 54.5 },
-  ].map(d => { const e = el('div', 'abs', strip); Object.assign(e.style, { top: '14px', height: '64px', lineHeight: '64px', padding: '0 20px', borderRadius: '14px', background: d.lore ? 'var(--verm)' : 'var(--paper)', color: 'var(--ink)', fontWeight: 750, fontSize: '30px', whiteSpace: 'nowrap', transformOrigin: '0 50%' }); e.innerHTML = `<span class="tab" style="font-weight:800;margin-right:12px">${d.tc}</span>${d.title}`; return { ...d, el: e }; });
-  const tileS = makeMark(p5);
-  const tileRip = el('div', 'ripple', p5);
-  const bigClock = el('div', 'abs tab', p5); Object.assign(bigClock.style, { color: 'var(--paper)', fontWeight: 800, fontSize: '300px', letterSpacing: '-.05em', lineHeight: 1, textShadow: '0 20px 60px rgb(0 0 0 / .5)' });
+  const ch = card(p56, { tc: '0:05', title: 'Fox learns to jump', img: '/demo/foxlight/clip-run.jpg' });
+  const holdBar = el('div', 'abs', p56); Object.assign(holdBar.style, { height: '26px', borderRadius: '13px', background: 'rgb(20 23 27 / .12)', overflow: 'hidden' });
+  const holdFill = el('div', 'abs', holdBar); Object.assign(holdFill.style, { height: '26px', borderRadius: '13px', background: 'linear-gradient(90deg, #FF8A5C, var(--verm))' });
+  const holdN = el('div', 'abs tab', p56); Object.assign(holdN.style, { color: 'var(--ink)', fontWeight: 800, fontSize: '96px', letterSpacing: '-.04em', lineHeight: 1 });
+  const holdNote = el('div', 'abs', p56, 'counted faster here'); Object.assign(holdNote.style, { color: 'var(--muted-paper)', fontSize: '28px', fontWeight: 650 });
+  const dot = el('div', 'abs', p56); dot.style.background = 'var(--verm)';
+  const check = svgEl('svg', p56, { width: 200, height: 200, viewBox: '0 0 200 200', style: 'position:absolute;left:0;top:0;overflow:visible' });
+  const checkPath = svgEl('path', check, { d: 'M58 104 L88 132 L144 72', fill: 'none', stroke: '#14171B', 'stroke-width': 16, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', pathLength: 100 });
+  const pubWord = el('div', 'abs', p56, 'Published'); Object.assign(pubWord.style, { color: 'var(--ink)', fontWeight: 800, fontSize: '84px', letterSpacing: '-.035em' });
+  const lore = el('div', 'abs', p56); Object.assign(lore.style, { overflow: 'hidden', background: 'var(--lime)', transformOrigin: '0 0' });
+  const loreIn = el('div', 'abs', lore); Object.assign(loreIn.style, { width: '1180px', padding: '46px 60px', color: 'var(--ink)' });
+  const loreT = el('div', '', loreIn, FACTS.lore.term); Object.assign(loreT.style, { fontSize: '150px', fontWeight: 800, letterSpacing: '-.045em', lineHeight: 0.95 });
+  const loreE = el('div', '', loreIn, 'When the spring had no speed limit, it launched the fox through the ceiling.'); Object.assign(loreE.style, { fontSize: '46px', fontWeight: 650, lineHeight: 1.2, marginTop: '22px', letterSpacing: '-.015em', maxWidth: '1000px' });
+  const loreTab = el('div', 'abs tab', lore, 'since 2:05'); Object.assign(loreTab.style, { left: 'auto', right: '40px', top: '36px', background: 'var(--ink)', color: 'var(--paper)', fontWeight: 800, fontSize: '40px', padding: '4px 18px', borderRadius: '12px' });
+  const loreLabel = el('div', '', loreIn, 'moon jump'); loreLabel.style.display = 'none';
+  const FOUR = [
+    { tc: '0:05', title: 'Fox learns to jump', img: '/demo/foxlight/clip-run.jpg' },
+    { tc: '1:40', title: 'The moon jump', img: '/demo/foxlight/clip-moon.jpg' },
+    { tc: '3:30', title: 'Spring gets a speed limit', img: '/demo/foxlight/clip-fixed.jpg' },
+    { tc: '5:20', title: 'Lanterns light the cave', img: '/demo/foxlight/clip-lanterns.jpg' },
+  ].map(c => ({ ...c, ...card(p56, c) }));
+  const strip = el('div', 'abs', p56);
+  Object.assign(strip.style, { width: '1680px', height: '84px', borderRadius: '22px', background: 'rgb(255 255 255 / .7)', boxShadow: '0 1px 0 rgb(255 255 255 / .9) inset, 0 30px 60px -30px rgb(60 35 15 / .35)' });
+  const TABS = [{ tc: '0:05', title: 'Fox learns to jump', x: 14 }, { tc: '1:40', title: 'The moon jump', x: 420 }, { tc: '2:05', title: 'moon jump', x: 770, lore: true }, { tc: '3:30', title: 'Spring gets a speed limit', x: 1000 }, { tc: '5:20', title: 'Lanterns', x: 1440 }]
+    .map(d => { const e = el('div', 'abs', strip); Object.assign(e.style, { top: '12px', height: '60px', lineHeight: '60px', padding: '0 18px', borderRadius: '14px', background: d.lore ? 'var(--lime)' : 'var(--ink)', color: d.lore ? 'var(--ink)' : 'var(--paper)', fontWeight: 750, fontSize: '28px', whiteSpace: 'nowrap', transformOrigin: '0 50%' }); e.innerHTML = `<span class="tab" style="font-weight:800;margin-right:10px">${d.tc}</span>${d.title}`; return { ...d, el: e }; });
 
-  // P6: the chat burst on the lime field, the lore plate, later chapters
-  const p6 = L('p6');
-  const big6 = S(p6, { x: 100, y: 110, size: 170, width: 1720, color: 'var(--ink)', stagger: 0.1 }, [
-    { t0: 45.75, t1: 49.3, text: ['Chat', 'calls', 'it'] },
-  ]);
-  const burst = FACTS.moment.messages.map((m, i) => { const s = slip(p6, m); s.style.fontSize = (i % 3 === 0 ? 62 : 48) + 'px'; s.style.padding = '14px 26px'; s.style.background = 'var(--ink)'; s.style.boxShadow = '0 6px 0 #07080a, 0 30px 50px -20px rgb(40 60 0 / .5)'; return { el: s, i }; });
-  const counter = el('div', 'abs', p6); Object.assign(counter.style, { color: 'var(--ink)', fontWeight: 800, lineHeight: 0.9, textAlign: 'left' });
-  const cNum = el('div', 'tab', counter); Object.assign(cNum.style, { fontSize: '420px', letterSpacing: '-.06em' });
-  const cLab = el('div', '', counter, 'messages in 10 seconds'); Object.assign(cLab.style, { fontSize: '64px', letterSpacing: '-.02em', marginTop: '6px' });
-  const lore = el('div', 'abs', p6); Object.assign(lore.style, { background: 'var(--verm)', color: 'var(--ink)', borderRadius: '40px', padding: '40px 64px 54px', boxShadow: '0 12px 0 var(--verm-side), 0 60px 120px -40px rgb(0 0 0 / .9)', width: '1400px', transformOrigin: '50% 50%' });
-  const loreT = el('div', '', lore, FACTS.lore.term); Object.assign(loreT.style, { whiteSpace: 'nowrap', fontSize: '230px', fontWeight: 800, letterSpacing: '-.05em', lineHeight: 0.95 });
-  const loreE = el('div', '', lore, 'When the spring had no speed limit, it launched the fox through the ceiling.'); Object.assign(loreE.style, { fontSize: '54px', fontWeight: 700, lineHeight: 1.18, marginTop: '22px', letterSpacing: '-.015em' });
-  const loreTab = el('div', 'abs tab', lore, 'since 2:05'); Object.assign(loreTab.style, { left: 'auto', right: '48px', top: '-40px', background: 'var(--ink)', color: 'var(--paper)', fontWeight: 800, fontSize: '50px', padding: '6px 22px', borderRadius: '16px', transformOrigin: '50% 50%' });
-  const big6b = S(p6, { x: 100, y: 800, size: 150, width: 1720, align: 'center', stagger: 0.09 }, [
-    { from: 'side', t0: 52.1, t1: 55.35, text: ['Every', 'chapter', 'keeps', 'its', { text: 'sources', emph: 'under' }] },
-  ]);
-  const lateCards = [
-    { tc: '3:30', title: 'Spring gets a speed limit', img: '/demo/foxlight/clip-fixed.jpg', vid: 'fixed', t0: 52.2 },
-    { tc: '5:20', title: 'Lanterns light the cave', img: '/demo/foxlight/clip-lanterns.jpg', vid: 'lanterns', t0: 53.45 },
-  ].map(c => ({ ...c, ...card(p6, c) }));
+  // ================= live product pages (rendered by the real app, full composition) =================
+  const APPURL = 'https://localhost:4317';
+  function live(parent, name, path, w, h) {
+    const box = el('div', 'abs', parent);
+    Object.assign(box.style, { overflow: 'hidden', background: '#14171B', boxShadow: '0 2px 4px rgb(60 40 20 / .10), 0 60px 120px -40px rgb(40 25 10 / .55)' });
+    const f = el('iframe', ''); f.name = name; f.width = w; f.height = h; f.src = APPURL + path; box.appendChild(f);
+    Object.assign(f.style, { position: 'absolute', left: '0px', top: '0px', width: w + 'px', height: h + 'px', border: '0', transformOrigin: '0 0', pointerEvents: 'none' });
+    return {
+      box, f, w, h,
+      // R: on-screen rectangle; cam: page point (cx, cy) placed at the rectangle's centre at scale s
+      // scrolling pages (rep) keep a short viewport and scroll inside; render.cjs applies window.__scroll before the shot
+      scrolls: false, freeze: null,
+      set(R, cam, extra = '') {
+        let sy = 0;
+        if (this.scrolls) { sy = this.freeze ?? Math.max(0, Math.round(cam.cy - h / 2)); (window.__scroll = window.__scroll || {})[name] = sy; }
+        Object.assign(box.style, { width: R.w + 'px', height: R.h + 'px', borderRadius: (R.r ?? 0) + 'px', transform: `translate(${R.x}px,${R.y}px) ${extra}` });
+        f.style.transform = `translate(${R.w / 2 - cam.cx * cam.s}px,${R.h / 2 - (cam.cy - sy) * cam.s}px) scale(${cam.s})`;
+        this.R = R; this.cam = cam; this.sy = sy;
+      },
+      // page point -> screen point (without the extra 3D transform)
+      map(px, py) { const R = this.R, c = this.cam; return { x: R.x + R.w / 2 + (px - c.cx) * c.s, y: R.y + R.h / 2 + (py - c.cy) * c.s }; },
+    };
+  }
+  const U = k => (window.__ui && window.__ui[k]) || FALLBACK[k];
+  const FALLBACK = {
+    pubNow: { x: 654, y: 166, w: 666, h: 354 }, pubStoryClip: { x: 1100, y: 690, w: 200, h: 160 }, pubMoon: { x: 260, y: 640, w: 1124, h: 300 }, pubStory: { x: 260, y: 420, w: 1124, h: 300 },
+    landScroll: 10400, landSection: { x: 0, y: 10300, w: 1440, h: 1000 }, landChat: { x: 756, y: 10644, w: 612, h: 677 },
+    repChange: { x: 56, y: 2462, w: 1328, h: 384 }, repApply: { x: 952, y: 2755, w: 230, h: 60 }, repRecap: { x: 56, y: 1000, w: 1328, h: 1389 }, repPlayer: { x: 56, y: 216, w: 968, h: 712 },
+    repCheat: { x: 760, y: 1110, w: 340, h: 340 }, repApplied: { x: 56, y: 2462, w: 1328, h: 384 },
+    repDock: { x: 460, y: 2988, w: 520, h: 2662 }, repPause: { x: 476, y: 3409, w: 240, h: 44 }, repForget: { x: 724, y: 3409, w: 240, h: 44 },
+    repDialogV: { x: 446, y: 370, w: 549, h: 360 }, repYesV: { x: 687, y: 640, w: 136, h: 64 }, repDock2: { x: 460, y: 2988, w: 520, h: 2662 },
+  };
+  const FULL = { x: 0, y: 0, w: 1920, h: 1080, r: 0 };
+  const PLANE = { x: 160, y: 190, w: 1600, h: 1000, r: 30 };
+  const topFade = el('div', 'abs', root); Object.assign(topFade.style, { width: '1920px', height: '260px', background: 'linear-gradient(rgb(243 238 230 / .97) 45%, rgb(243 238 230 / 0))' });
 
-  // ================= P7: three ways in (56-80) =================
+  // ================= P7: three ways in (60-82) =================
   const p7 = L('p7');
-  const nowV = view(p7, A + 'public-now.png', 663, { radius: 30 });
-  const line7a = S(p7, { x: 100, y: 96, size: 170, width: 1720, color: 'var(--ink)', align: 'center', stagger: 0.1 }, [
-    { t0: 56.3, t1: 58.55, text: ['A', 'viewer', 'arrives', 'at', { text: '7:10', emph: 'plate-verm' }] },
+  const pub = live(p7, 'pub', '/example', 1440, 3200);
+  const chatObj = view(p7, A + 'chat-answer.png', 592, { radius: 30 });
+  const capP7 = S(p7, CAP, [
+    { t0: 60.25, t1: 63.0, text: ['A', 'viewer', 'arrives', 'at', { text: '7:10', emph: 'plate-ink' }] },
+    { t0: 63.25, t1: 68.0, text: ['and', 'types', { text: '!previously', emph: 'verm' }, 'in', 'chat'] },
+    { t0: 68.25, t1: 74.0, text: ['or', 'opens', 'the', { text: 'recap page', emph: 'under' }] },
+    { t0: 74.25, t1: 78.9, text: ['A', 'raid', 'gets', 'it', 'on', { text: 'stream', emph: 'plate-ink' }] },
+    { t0: 79.15, t1: 81.8, text: ['One', 'story', 'feeds', 'all', { text: 'three', emph: 'verm' }] },
   ]);
-  const cmd = el('div', 'abs', p7); Object.assign(cmd.style, { background: 'var(--verm)', color: 'var(--ink)', fontWeight: 800, fontSize: '150px', letterSpacing: '-.04em', padding: '10px 44px 22px', borderRadius: '32px', boxShadow: '0 10px 0 var(--verm-side)', whiteSpace: 'nowrap' });
-  const cmdText = el('span', '', cmd); const cmdCaret = el('span', '', cmd, '|'); cmdCaret.style.fontWeight = 300;
-  const line7b = S(p7, { x: 90, y: 560, size: 120, width: 900, color: 'var(--ink)', stagger: 0.09 }, [
-    { t0: 59.95, t1: 64.2, text: ['answers', 'in', 'chat'] },
-  ]);
-  const chatV = view(p7, A + 'chat-answer.png', 592, { radius: 30 });
-  const ring7 = svgEl('svg', p7, { width: 1920, height: 1080, style: 'position:absolute;left:0;top:0;overflow:visible' });
-  const ring7p = svgEl('rect', ring7, { fill: 'none', stroke: '#FF5A36', 'stroke-width': 9, rx: 30, pathLength: 1000, 'stroke-linecap': 'round' });
-  const pageV = view(p7, A + 'public-page.png', 1920, { radius: 0, shadow: false });
-  const line7c = S(p7, { x: 100, y: 820, size: 128, width: 1720, color: 'var(--ink)', stagger: 0.09 }, [
-    { t0: 64.75, t1: 68.3, text: [{ text: 'a', emph: 'plate-paper' }, { text: 'page', emph: 'plate-paper' }, { text: 'anyone', emph: 'plate-paper' }, { text: 'can', emph: 'plate-paper' }, { text: 'open', emph: 'plate-paper' }] },
-  ]);
-  const moonV = view(p7, A + 'public-moon.png', 894, { radius: 30 });
-  const moonVid = el('video', '', moonV.box); Object.assign(moonVid, { src: '/demo/foxlight/clip-moon.mp4', muted: true, preload: 'auto' }); Object.assign(moonVid.style, { position: 'absolute', objectFit: 'cover', borderRadius: '16px' });
-  const sceneWrap = el('div', 'abs', p7); Object.assign(sceneWrap.style, { width: '1920px', height: '1080px', overflow: 'hidden', transformOrigin: '0 0' });
-  const scene2 = el('iframe', '', sceneWrap); scene2.width = 1920; scene2.height = 1080; Object.assign(scene2.style, { border: '0', width: '1920px', height: '1080px' });
-  const cap7 = el('div', 'abs', p7); Object.assign(cap7.style, { background: 'var(--paper)', color: 'var(--ink)', fontWeight: 800, fontSize: '76px', letterSpacing: '-.03em', padding: '10px 34px 18px', borderRadius: '22px', boxShadow: '0 7px 0 var(--paper-side)', whiteSpace: 'nowrap', transformOrigin: '100% 50%' });
-  cap7.innerHTML = 'and on stream when a <span style="color:var(--verm)">raid</span> arrives';
-  const line7d = S(p7, { x: 100, y: 70, size: 132, width: 1720, color: 'var(--ink)', align: 'center', stagger: 0.09 }, [
-    { t0: 77.45, t1: 79.55, text: ['One', 'story', 'feeds', 'all', { text: 'three', emph: 'plate-paper' }] },
-  ]);
-  // ================= P8: the streamer stays in charge (80-102), on paper =================
+  const cap = el('div', 'abs', p7); Object.assign(cap.style, { background: 'var(--paper)', color: 'var(--ink)', fontWeight: 800, fontSize: '120px', letterSpacing: '-.04em', padding: '8px 50px 24px', borderRadius: '999px', whiteSpace: 'nowrap', overflow: 'hidden', boxShadow: '0 2px 4px rgb(60 40 20 / .1), 0 40px 80px -30px rgb(60 35 15 / .4)', transformOrigin: '0 50%' });
+  const capText = el('span', '', cap); const capCaret = el('span', '', cap, '|'); Object.assign(capCaret.style, { fontWeight: 300, color: 'var(--verm)' });
+  const ring = svgEl('svg', p7, { width: 1920, height: 1080, style: 'position:absolute;left:0;top:0;overflow:visible' });
+  const ringR = svgEl('rect', ring, { fill: 'none', stroke: '#FF5A36', 'stroke-width': 8, rx: 26, pathLength: 1000, 'stroke-linecap': 'round' });
+  const moonV = view(p7, A + 'public-moon.png', 894, { radius: 22 });
+  const moonVid = el('video', '', moonV.box); Object.assign(moonVid, { src: '/demo/foxlight/clip-moon.mp4', muted: true, preload: 'auto' }); Object.assign(moonVid.style, { position: 'absolute', objectFit: 'cover', borderRadius: '12px' });
+  const sceneWin = el('div', 'abs', p7); Object.assign(sceneWin.style, { overflow: 'hidden', background: '#000', boxShadow: '0 60px 120px -40px rgb(0 0 0 / .7)' });
+  const scene2 = el('iframe', '', sceneWin); scene2.width = 1920; scene2.height = 1080; Object.assign(scene2.style, { border: '0', width: '1920px', height: '1080px', position: 'absolute', left: '0px', top: '0px', transformOrigin: '0 0' });
+  const thread = svgEl('svg', p7, { width: 1920, height: 1080, style: 'position:absolute;left:0;top:0;overflow:visible' });
+  const threadP = svgEl('path', thread, { fill: 'none', stroke: '#FF5A36', 'stroke-width': 8, 'stroke-linecap': 'round', pathLength: 100 });
+  const threadDots = [0, 1, 2].map(() => svgEl('circle', thread, { r: 0, fill: '#FF5A36' }));
+  const triLabels = ['In chat', 'On the recap page', 'On stream'].map(s => { const e = el('div', 'abs', p7, s); Object.assign(e.style, { color: 'var(--ink)', fontWeight: 750, fontSize: '44px', letterSpacing: '-.02em', whiteSpace: 'nowrap', textAlign: 'center', width: '600px' }); return e; });
+  const cur7 = cursor(p7); cur7.style.transformOrigin = '0 0';
+  const fade7 = el('div', 'abs', p7); Object.assign(fade7.style, { width: '1920px', height: '300px', background: 'linear-gradient(rgb(243 238 230 / .97) 50%, rgb(243 238 230 / 0))' });
+  p7.appendChild(capP7.root);
+
+  // ================= P8: the streamer stays in charge (82-102), the real replay page and dock =================
   const p8 = L('p8');
-  const line8 = S(p8, { x: 90, y: 70, size: 140, width: 1740, color: 'var(--ink)', stagger: 0.09 }, [
-    { t0: 80.35, t1: 83.15, text: ['The', 'streamer', 'stays', 'in', { text: 'charge', emph: 'plate-verm' }] },
-    { t0: 83.4, t1: 86.65, text: ['Correct', 'a', 'chapter', { text: 'once', emph: 'under' }] },
-    { t0: 86.9, t1: 90.3, text: ['and', 'every', 'place', 'uses', { text: 'it', emph: 'verm' }] },
-    { t0: 90.55, t1: 93.95, text: [{ text: 'Pause', emph: 'outline-ink' }, 'any', 'time'] },
-    { t0: 94.25, t1: 98.4, text: ['Or', 'forget', 'the', 'last', { text: 'two minutes', emph: 'plate-verm' }] },
-    { t0: 98.65, t1: 101.6, text: ['and', 'what', 'came', 'from', 'them', { text: 'goes', emph: 'under' }] },
+  const repl = live(p8, 'rep', '/replay', 1440, 1100); repl.scrolls = true;
+  const capP8 = S(p8, CAP, [
+    { t0: 82.25, t1: 85.0, text: ['The', 'streamer', 'stays', 'in', { text: 'charge', emph: 'verm' }] },
+    { t0: 85.25, t1: 89.75, text: ['Correct', 'a', 'chapter', { text: 'once', emph: 'plate-ink' }] },
+    { t0: 90.0, t1: 93.3, text: ['and', 'every', 'place', 'uses', 'the', 'new', { text: 'wording', emph: 'under' }] },
+    { t0: 93.55, t1: 96.4, text: [{ text: 'Pause', emph: 'verm' }, 'listening', 'at', 'any', 'time'] },
+    { t0: 96.65, t1: 99.4, text: ['or', 'forget', 'the', 'last', { text: 'two minutes', emph: 'plate-ink' }] },
+    { t0: 99.65, t1: 101.5, text: ['and', 'what', 'was', 'made', 'from', 'them'] },
   ]);
-  const dockB = view(p8, A + 'dock-before.png', 520, { radius: 30 });
-  const dockC = view(p8, A + 'dock-after-correction.png', 520, { radius: 30 });
-  const dockF = view(p8, A + 'dock-after-forget.png', 520, { radius: 30 });
-  const chB = view(p8, A + 'change-before.png', 1448, { radius: 30 });
-  const chA = view(p8, A + 'change-after.png', 1448, { radius: 30 });
-  const sweep = el('div', 'abs', p8); sweep.style.background = 'linear-gradient(90deg, transparent, rgb(255 90 54 / .9) 40%, rgb(255 90 54 / .9) 60%, transparent)';
   const cur = cursor(p8); cur.style.transformOrigin = '0 0';
-  const pauseBtn = button(p8, 'Pause listening', { tone: 'ink', size: 96 });
-  const forgetBtn = button(p8, 'Forget last 2 min', { tone: 'ink', size: 96 }); forgetBtn.style.color = 'var(--verm)';
-  const gap = el('div', 'abs', p8); Object.assign(gap.style, { height: '12px', borderRadius: '6px', backgroundImage: 'repeating-linear-gradient(90deg, var(--ink) 0 34px, transparent 34px 60px)' });
-  const dlgV = view(p8, A + 'forget-dialog.png', 560, { radius: 34 });
+  const chip = el('div', 'abs', p8); Object.assign(chip.style, { background: 'var(--paper)', color: 'var(--ink)', borderRadius: '20px', padding: '16px 30px 20px', fontWeight: 800, fontSize: '50px', letterSpacing: '-.03em', whiteSpace: 'nowrap', boxShadow: '0 2px 4px rgb(60 40 20 / .12), 0 40px 70px -24px rgb(40 25 10 / .55)', transformOrigin: '50% 50%' });
+  chip.innerHTML = '<span class="tab" style="display:inline-block;background:#14171B;color:#F4EFE6;border-radius:10px;padding:2px 12px;font-size:34px;margin-right:16px;vertical-align:6px">3:30</span>Moon jump becomes a cheat code';
+  const landRing = el('div', 'abs', p8); Object.assign(landRing.style, { border: '6px solid var(--verm)' });
+  const ripple = el('div', 'abs', p8); Object.assign(ripple.style, { border: '6px solid var(--verm)', borderRadius: '50%' });
+  const zoomDark = el('div', 'abs', root); zoomDark.style.background = '#111418';
+  p8.appendChild(topFade); p8.appendChild(capP8.root);
 
-  // ================= P9: built in one Codex session (102-126), ink + vermilion =================
+  // ================= P9: Codex (102-126), dark with a soft glow =================
   const p9 = L('p9');
-  // the passage's field: a cave-dark gradient with the real worker names drifting as a faint typographic texture
-  const p9bg = el('div', 'layer', p9); p9bg.style.background = 'radial-gradient(1200px 800px at 15% 95%, rgb(255 90 54 / .22), transparent 70%), radial-gradient(1100px 700px at 90% 5%, rgb(70 122 128 / .3), transparent 72%), linear-gradient(160deg, #10161b, #14171B 55%, #1a1416)';
-  const rows9 = [0, 1, 2, 3, 4].map(r => { const e = el('div', 'abs', p9bg, (CODEX.workerNames.slice(r * 5).concat(CODEX.workerNames.slice(0, r * 5))).join('   ')); Object.assign(e.style, { top: 40 + r * 210 + 'px', whiteSpace: 'nowrap', fontSize: '150px', fontWeight: 800, letterSpacing: '-.04em', color: 'rgb(244 239 230 / .045)' }); return e; });
-  const nine1 = S(p9, { x: 100, y: 190, size: 200, width: 1720, align: 'center', stagger: 0.1 }, [
-    { t0: 102.2, t1: 103.9, text: ['Built', 'in', 'one'] },
-  ]);
-  const nine2 = S(p9, { x: 100, y: 400, size: 210, width: 1720, color: 'var(--ink)', align: 'center', stagger: 0.1 }, [
-    { t0: 102.55, t1: 105.75, text: [{ text: 'Codex session', emph: 'plate-paper' }] },
-  ]);
-  const nine3 = S(p9, { x: 100, y: 430, size: 200, width: 1720, align: 'center', stagger: 0.1 }, [
-    { t0: 106.0, t1: 107.7, text: [{ text: `${CODEX.workers}`, emph: 'verm' }, 'parallel', 'workers'] },
-  ]);
-  const clk = el('div', 'abs', p9); Object.assign(clk.style, { display: 'flex', alignItems: 'baseline', gap: '40px', color: 'var(--paper)', fontWeight: 800, letterSpacing: '-.05em', lineHeight: 1 });
-  const cFrom = el('div', 'tab', clk, '18:57'); const cTo = el('div', 'tab', clk, '18:57'); const cUtc = el('div', '', clk, 'UTC');
-  cFrom.style.fontSize = '200px'; cFrom.style.color = '#6E7783'; cTo.style.fontSize = '250px'; cUtc.style.fontSize = '64px'; cUtc.style.color = 'var(--muted-ink)';
-  const durPlate = el('div', 'abs tab', p9, CODEX.duration); Object.assign(durPlate.style, { background: 'var(--verm)', color: 'var(--ink)', fontWeight: 800, fontSize: '150px', padding: '10px 48px 22px', borderRadius: '32px', boxShadow: '0 12px 0 var(--verm-side)', transformOrigin: '50% 50%', whiteSpace: 'nowrap' });
-  const workerTags = CODEX.workerNames.map((n, i) => { const e = el('div', 'abs', p9, n); Object.assign(e.style, { background: i % 4 === 0 ? 'var(--paper)' : 'var(--ink-high)', color: i % 4 === 0 ? 'var(--ink)' : 'var(--paper)', fontWeight: 700, fontSize: '42px', padding: '10px 24px', borderRadius: '16px', boxShadow: '0 6px 0 #07080a', whiteSpace: 'nowrap', transformOrigin: '50% 50%' }); return e; });
-  const tools = el('div', 'abs', p9); Object.assign(tools.style, { color: 'var(--paper)', fontWeight: 800, letterSpacing: '-.05em', textAlign: 'center', lineHeight: 0.92, width: '1920px' });
-  const toolsN = el('div', 'tab', tools); toolsN.style.fontSize = '380px';
-  const toolsL = el('div', '', tools, 'tool calls'); toolsL.style.fontSize = '90px'; toolsL.style.color = 'var(--verm)';
-  const bugs = CODEX.bugs.map((b, i) => {
-    const c = el('div', 'abs', p9); Object.assign(c.style, { width: '1800px', background: 'var(--paper)', color: 'var(--ink)', borderRadius: '40px', padding: '56px 72px 70px', boxShadow: '0 10px 0 var(--paper-side), 0 60px 120px -40px rgb(0 0 0 / .9)', transformOrigin: '50% 50%' });
-    const lab = el('div', '', c, b.label); Object.assign(lab.style, { fontSize: '58px', fontWeight: 800, color: 'var(--verm-side)', marginBottom: '18px', letterSpacing: '-.02em' });
-    const tx = el('div', '', c, b.text); Object.assign(tx.style, { fontSize: '108px', fontWeight: 800, lineHeight: 1.02, letterSpacing: '-.04em' });
-    const st = el('div', 'abs', c, b.stamp); Object.assign(st.style, { left: 'auto', right: '60px', top: '-90px', border: '14px solid var(--verm)', color: 'var(--verm)', background: 'var(--paper)', fontWeight: 800, fontSize: '180px', padding: '0 46px 10px', borderRadius: '34px', transformOrigin: '50% 50%', lineHeight: 1.05 });
-    return { c, st, t0: b.t0 };
+  const c1 = S(p9, { ...CAP, y: 200, size: 104, color: 'var(--paper)' }, [{ t0: 102.05, t1: 107.85, text: ['Built', 'in', 'one', { text: 'Codex session', emph: 'plate-paper' }] }]);
+  const c2 = S(p9, { ...CAP, y: 120, size: 104, color: 'var(--paper)' }, [{ t0: 107.95, t1: 110.5, text: [{ text: `${CODEX.workers}`, emph: 'verm' }, 'parallel', 'workers'] }]);
+  const space = el('div', 'layer', p9); space.style.perspective = '900px'; space.style.perspectiveOrigin = '50% 52%';
+  const space3 = el('div', 'layer', space); space3.style.transformStyle = 'preserve-3d';
+  const swarm = Array.from({ length: CODEX.workerNames.length * 2 }, (_, i) => {
+    const n = CODEX.workerNames[i % CODEX.workerNames.length];
+    const e = el('div', 'abs', space3, n);
+    const hot = i % 6 === 0;
+    Object.assign(e.style, { background: hot ? 'var(--verm)' : i % 3 === 0 ? 'var(--paper)' : 'var(--ink-high)', color: hot || i % 3 === 0 ? 'var(--ink)' : 'var(--paper)', fontWeight: 750, fontSize: '40px', padding: '10px 24px 14px', borderRadius: '16px', whiteSpace: 'nowrap', boxShadow: '0 6px 0 rgb(0 0 0 / .35), 0 30px 60px -20px rgb(0 0 0 / .6)', transformOrigin: '50% 50%', backfaceVisibility: 'hidden' });
+    const r = (k) => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+    return { e, ang: r(1) * Math.PI * 2, rad: 380 + r(2) * 900, z0: r(3), y0: (r(4) - 0.5) * 900, spin: (r(5) - 0.5) * 0.4 };
   });
-  const quote = el('div', 'abs', p9); Object.assign(quote.style, { width: '1800px', color: 'var(--paper)', transformOrigin: '0 50%' });
-  const qLab = el('div', '', quote, CODEX.question.label); Object.assign(qLab.style, { fontSize: '54px', fontWeight: 750, color: 'var(--lime)', marginBottom: '20px' });
-  const qTx = el('div', '', quote, `“${CODEX.question.text}”`); Object.assign(qTx.style, { fontSize: '170px', fontWeight: 800, letterSpacing: '-.05em', lineHeight: 0.98 });
-  const answer = el('div', 'abs', p9, CODEX.question.answer); Object.assign(answer.style, { width: '1800px', background: 'var(--lime)', color: 'var(--ink)', fontWeight: 800, fontSize: '72px', lineHeight: 1.12, letterSpacing: '-.02em', padding: '26px 44px 32px', borderRadius: '28px', boxShadow: '0 9px 0 var(--lime-side)', transformOrigin: '0 50%' });
-  const stats = CODEX.stats.map((s, i) => { const e = el('div', 'abs', p9); Object.assign(e.style, { width: '1720px', color: 'var(--paper)', fontWeight: 800, letterSpacing: '-.05em', lineHeight: 0.9, transformOrigin: '0 50%' }); const n = el('div', 'tab', e, s.n); n.style.fontSize = '400px'; if (i === 1) n.style.color = 'var(--verm)'; if (i === 2) n.style.color = 'var(--lime)'; const d = el('div', '', e, s.label); Object.assign(d.style, { fontSize: '80px', letterSpacing: '-.03em', marginTop: '22px', lineHeight: 1.05, color: 'var(--paper)', maxWidth: '1700px' }); return e; });
+  const odo = (parent, size, color) => { // rolling digits: one vertical strip per digit
+    const box = el('div', 'abs', parent); box.style.width = '1920px';
+    const row = el('div', '', box); Object.assign(row.style, { display: 'flex', alignItems: 'flex-start', justifyContent: 'center', width: '1920px', color, fontWeight: 800, letterSpacing: '-.04em', lineHeight: 1 });
+    return { box, size, cells: [], set(str, frac = {}) {
+      while (this.cells.length < str.length) { const c = el('div', '', row); Object.assign(c.style, { position: 'relative', overflow: 'hidden', height: size * 1.02 + 'px', fontSize: size + 'px' }); const strip = el('div', 'tab', c); strip.style.position = 'relative'; c.strip = strip; this.cells.push(c); }
+      this.cells.forEach((c, i) => {
+        const ch = str[i] ?? '';
+        c.style.display = i < str.length ? '' : 'none';
+        if (/\d/.test(ch)) {
+          if (c.dataset.k !== 'd') { c.strip.innerHTML = ''; for (let d = 0; d <= 10; d++) { const s = el('div', '', c.strip, String(d % 10)); s.style.height = size * 1.02 + 'px'; } c.dataset.k = 'd'; }
+          const v = (frac[i] ?? +ch);
+          c.strip.style.transform = `translateY(${-v * size * 1.02}px)`;
+          const sp = Math.abs((frac[i] ?? +ch) - Math.round(frac[i] ?? +ch));
+          c.strip.style.filter = sp > 0.02 ? `blur(${Math.min(5, sp * 14)}px)` : 'none';
+          c.style.width = size * 0.62 + 'px';
+        } else { const small = /[a-z]/.test(ch); c.dataset.k = 't'; c.strip.textContent = ch === ' ' ? ' ' : ch; c.strip.style.transform = 'none'; c.strip.style.filter = 'none'; c.style.width = 'auto'; c.style.fontSize = (small ? size * 0.4 : size) + 'px'; c.style.height = (small ? size * 0.4 * 1.1 : size * 1.02) + 'px'; c.style.overflow = 'visible'; c.style.alignSelf = small ? 'flex-end' : 'flex-start'; c.style.margin = small ? `0 ${size * 0.08}px ${size * 0.14}px ${size * 0.03}px` : '0'; c.strip.style.lineHeight = small ? '1.1' : (size * 1.02) + 'px'; c.strip.style.paddingTop = '0px'; }
+      });
+    } };
+  };
+  // value with rolling: each digit place shows its own fractional position
+  const odoVal = (v, place, last) => { const d = Math.floor(v / place) % 10; if (last) return d + (v - Math.floor(v)); const carry = clamp((v % place) - (place - 1)); return d + cubicInOut(carry); };
+  const rollDigits = (v, len) => { const out = {}; let s = String(Math.floor(v)).padStart(len, '0'); for (let i = 0; i < len; i++) { const place = Math.pow(10, len - 1 - i); const d = (v / place) % 10; const below = (v % place) / place; out[i] = Math.floor(d) + (below > 0.9 ? (below - 0.9) * 10 : 0); } return { s, out }; };
+  const durO = odo(p9, 230, 'var(--paper)');
+  const durL = el('div', 'abs', p9, `${CODEX.from} to ${CODEX.to} UTC`); Object.assign(durL.style, { width: '1920px', textAlign: 'center', fontSize: '50px', letterSpacing: '-.02em', color: 'var(--muted-ink)', fontWeight: 700 });
+  const toolO = odo(p9, 260, 'var(--paper)');
+  const toolL = el('div', 'abs', p9, 'tool calls by Codex and its workers'); Object.assign(toolL.style, { width: '1920px', textAlign: 'center', fontSize: '52px', letterSpacing: '-.02em', color: 'var(--verm)', fontWeight: 750 });
+  const bugCards = CODEX.bugs.map(b => {
+    const c = el('div', 'abs', p9); Object.assign(c.style, { width: '1720px', background: 'var(--paper)', color: 'var(--ink)', borderRadius: '44px', padding: '64px 80px 76px', boxShadow: '0 10px 0 var(--paper-side), 0 60px 120px -40px rgb(0 0 0 / .8)', transformOrigin: '50% 50%' });
+    const lab = el('div', '', c, b.label); Object.assign(lab.style, { fontSize: '54px', fontWeight: 800, color: 'var(--verm-side)', marginBottom: '20px', letterSpacing: '-.025em' });
+    const tx = el('div', '', c, b.text); Object.assign(tx.style, { fontSize: '102px', fontWeight: 800, lineHeight: 1.02, letterSpacing: '-.04em' });
+    const st = el('div', 'abs', c, 'fixed'); Object.assign(st.style, { left: 'auto', right: '60px', top: '-96px', border: '14px solid var(--verm)', color: 'var(--verm)', background: 'var(--paper)', fontWeight: 800, fontSize: '160px', padding: '0 40px 6px', borderRadius: '30px', transformOrigin: '50% 50%', lineHeight: 1.05 });
+    return { c, st };
+  });
+  const q = el('div', 'abs', p9); Object.assign(q.style, { width: '1760px', color: 'var(--paper)', textAlign: 'center' });
+  const qLab = el('div', '', q, CODEX.question.label); Object.assign(qLab.style, { fontSize: '52px', fontWeight: 750, color: 'var(--lime)', marginBottom: '22px' });
+  const qTx = el('div', '', q, `“${CODEX.question.text}”`); Object.assign(qTx.style, { fontSize: '160px', fontWeight: 800, letterSpacing: '-.05em', lineHeight: 0.98 });
+  const ans = el('div', 'abs', p9, CODEX.question.answer); Object.assign(ans.style, { width: '1640px', textAlign: 'center', background: 'var(--lime)', color: 'var(--ink)', fontWeight: 800, fontSize: '66px', lineHeight: 1.15, letterSpacing: '-.02em', padding: '26px 44px 32px', borderRadius: '28px', boxShadow: '0 9px 0 var(--lime-side)', transformOrigin: '50% 50%' });
+  const testO = odo(p9, 280, 'var(--verm)');
+  const testL = el('div', 'abs', p9); Object.assign(testL.style, { width: '1920px', textAlign: 'center', fontSize: '56px', letterSpacing: '-.02em', fontWeight: 750, color: 'var(--paper)' });
+  const paperCircle = el('div', 'abs', root); paperCircle.style.background = '#F3EEE6'; paperCircle.style.borderRadius = '50%';
 
-  // ================= P10: try it (vermilion), then the mark =================
+  // ================= P10: try it, then the mark (126-138), light =================
   const p10 = L('p10');
-  const line10 = S(p10, { x: 60, y: 300, size: 190, width: 1800, color: 'var(--ink)', align: 'center', stagger: 0.1 }, [
-    { t0: 125.75, t1: 128.65, text: ['Run', 'it', 'on', 'your', { text: 'channel', emph: 'plate-ink' }] },
-    { t0: 128.9, t1: 131.55, text: ['with', 'your', 'Twitch', 'app'] },
-    { t0: 131.8, t1: 133.25, text: ['or', 'try', 'the', { text: 'example', emph: 'under' }] },
+  const setupL = live(p10, 'setup', '/setup', 1440, 900);
+  const rep0 = live(p10, 'rep0', '/replay', 1440, 900);
+  const cap10 = S(p10, { ...CAP, y: 62, size: 92, stagger: 0.1 }, [
+    { t0: 126.3, t1: 128.85, text: ['Run', 'it', 'on', 'your', 'own', { text: 'channel', emph: 'verm' }] },
+    { t0: 129.1, t1: 131.6, text: ['with', 'your', 'Twitch', 'app', 'and', { text: 'OpenAI key', emph: 'plate-ink' }] },
+    { t0: 131.85, t1: 133.55, text: ['or', 'try', 'the', 'example', { text: 'replay', emph: 'under' }] },
   ]);
-  const line10b = S(p10, { x: 60, y: 560, size: 190, width: 1800, color: 'var(--ink)', align: 'center', stagger: 0.1 }, [
-    { t0: 129.35, t1: 131.55, text: ['and', 'OpenAI', { text: 'key', emph: 'plate-paper' }] },
-  ]);
-  const url = el('div', 'abs', p10, 'previously-seven.vercel.app/replay'); Object.assign(url.style, { background: 'var(--paper)', color: 'var(--ink)', fontWeight: 800, fontSize: '84px', letterSpacing: '-.03em', padding: '18px 48px 26px', borderRadius: '26px', boxShadow: '0 9px 0 var(--paper-side)', transformOrigin: '50% 50%', whiteSpace: 'nowrap' });
+  const url = el('div', 'abs', p10, 'previously-seven.vercel.app/replay'); Object.assign(url.style, { background: 'var(--ink)', color: 'var(--paper)', fontWeight: 800, fontSize: '64px', letterSpacing: '-.03em', padding: '14px 44px 22px', borderRadius: '22px', transformOrigin: '50% 50%', whiteSpace: 'nowrap' });
+  const endTabs = ['0:05', '1:40', '3:30', '5:20'].map(tc => { const e = el('div', 'abs tab', p10, tc); Object.assign(e.style, { background: 'var(--ink)', color: 'var(--paper)', fontWeight: 800, fontSize: '50px', padding: '6px 20px 10px', borderRadius: '16px', transformOrigin: '50% 50%' }); return e; });
   const endMark = makeMark(p10);
-  const endWord = el('img', 'abs', p10); endWord.src = '/brand/wordmark-text.svg'; endWord.style.filter = 'brightness(0) invert(94%) sepia(6%) saturate(320%) hue-rotate(340deg)';
-  const endTag = el('div', 'abs', p10, 'Catch up with the stream while it keeps going'); Object.assign(endTag.style, { color: 'var(--paper)', fontWeight: 800, fontSize: '80px', letterSpacing: '-.035em', whiteSpace: 'nowrap', width: '1920px', textAlign: 'center' });
-  const endUrl = el('div', 'abs', p10, 'previously-seven.vercel.app'); Object.assign(endUrl.style, { background: 'var(--paper)', color: 'var(--ink)', fontWeight: 800, fontSize: '64px', letterSpacing: '-.03em', padding: '12px 40px 20px', borderRadius: '22px', boxShadow: '0 8px 0 var(--paper-side)', whiteSpace: 'nowrap', transformOrigin: '50% 50%' });
-  const endBg = el('video', '', p10); Object.assign(endBg, { src: '/demo/foxlight/stream-full.mp4', muted: true, preload: 'auto' });
-  Object.assign(endBg.style, { position: 'absolute', left: '-60px', top: '-34px', width: '2040px', height: '1148px', objectFit: 'cover', filter: 'blur(28px) saturate(.8)', opacity: 0 });
-  p10.insertBefore(endBg, p10.firstChild);
-  const endTabs = ['0:05', '1:40', '3:30', '5:20'].map(tc => { const e = el('div', 'abs tab', p10, tc); Object.assign(e.style, { background: 'var(--paper)', color: 'var(--ink)', fontWeight: 800, fontSize: '54px', padding: '6px 20px 10px', borderRadius: '16px', boxShadow: '0 6px 0 var(--paper-side)', transformOrigin: '50% 50%' }); return e; });
-
-  // headline layers sit above their passage's objects
-  for (const [p, ss] of [[p7, [line7a, line7b, line7c, line7d]], [p8, [line8]], [p5, [big5, flank, flank2, holdLine, quoteLine]], [p6, [big6, big6b]], [p9, [nine1, nine2, nine3]]]) for (const s of ss) p.appendChild(s.root);
-  p6.appendChild(counter);
+  const endWord = el('img', 'abs', p10); endWord.src = '/brand/wordmark-text.svg';
+  const endTag = el('div', 'abs', p10, 'Catch up with the stream while it keeps going'); Object.assign(endTag.style, { color: 'var(--ink)', fontWeight: 750, fontSize: '64px', letterSpacing: '-.03em', whiteSpace: 'nowrap', width: '1920px', textAlign: 'center' });
+  const endUrl = el('div', 'abs', p10, 'previously-seven.vercel.app'); Object.assign(endUrl.style, { background: 'var(--ink)', color: 'var(--paper)', fontWeight: 800, fontSize: '50px', letterSpacing: '-.025em', padding: '10px 34px 16px', borderRadius: '999px', whiteSpace: 'nowrap', transformOrigin: '50% 50%' });
+  const fade10 = el('div', 'abs', p10); Object.assign(fade10.style, { width: '1920px', height: '260px', background: 'linear-gradient(rgb(243 238 230 / .97) 45%, rgb(243 238 230 / 0))' });
+  p10.appendChild(fade10); p10.appendChild(cap10.root); p10.appendChild(url);
 
   async function setup() {
-    // ink-coloured outline variant for the paper world
-    for (const s of slots) for (const ph of s.phrases) for (const w of ph.words) if (w.emph === 'outline-ink') { w.emph = 'outline'; w.inkOutline = true; }
     for (const s of slots) s.layout();
     RECTS = await (await fetch(A + 'rects.json')).json();
     scene2.src = '/src/features/overlay/lab/index.html?capture=1&plan=foxlight&bg=video&bgAt=4000';
@@ -254,73 +319,79 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
     for (let i = 0; i < 400 && !(w.__seek && w.__ready); i++) await new Promise(r => setTimeout(r, 50));
     await Promise.race([w.__ready, new Promise(r => setTimeout(r, 15000))]);
     // ---- sound events placed from the picture ----
-    ev('p4-field', 24.0, 'drop', { gain: 0.5 });
     for (const s of slots) for (const ph of s.phrases) ph.words.forEach((wd, i) => {
-      if (i === 0 || wd.emph || s.size >= 150) ev(`w-${ph.t0}-${i}`, wd.t, wd.emph && wd.emph.startsWith('plate') ? 'pop' : 'thump', { x: clamp((s.x + wd.x + wd.w / 2) / 1920), gain: wd.emph ? 0.75 : 0.5, note: (i * 2) % 7 });
-      if (wd.under) ev(`u-${ph.t0}-${i}`, wd.t + 0.3, 'draw', { dur: 0.4, x: 0.5, gain: 0.7 });
+      if (i === 0) ev(`ph-${ph.t0}`, wd.t - 0.02, 'tick', { x: 0.5, gain: 0.45 });
+      if (wd.emph) ev(`w-${ph.t0}-${i}`, wd.t, wd.emph.startsWith('plate') ? 'pop' : 'thump', { x: clamp((s.x + wd.x + wd.w / 2) / 1920), gain: 0.7, note: (i * 2) % 7 });
+      if (wd.under) ev(`u-${ph.t0}-${i}`, wd.t + 0.3, 'draw', { dur: 0.4, x: 0.5, gain: 0.6 });
     });
-    ev('p4-note', 26.45, 'flick', { x: 0.5 });
-    ev('p4-shrink', 28.95, 'morph', { dur: 0.75, x: 0.6, pan2: 0.9 });
-    for (let i = 0; i < 28; i += 2) ev(`key-${i}`, SPEECH1.t0 + i * 0.1, 'key', { x: 0.4, gain: 0.7 });
-    early.forEach((s, i) => ev(`early-${i}`, s.t, 'pop', { x: 0.8, gain: 0.55, note: 4 + i }));
-    ev('gather5', 35.05, 'whoosh', { dur: 0.55, x: 0.3, pan2: 0.7 });
-    ev('card5', 35.5, 'plate', { x: 0.7 });
-    for (let i = 0; i < 14; i++) ev(`hold-${i}`, 38.0 + 2.3 * Math.pow(i / 14, 0.8), 'tick', { x: 0.25, gain: 0.45 + i * 0.03 });
-    ev('published', 40.5, 'stamp', { x: 0.65, gain: 1.1 });
-    ev('to-strip', 40.75, 'whoosh', { dur: 0.4, x: 0.65, pan2: 0.3, gain: 0.6 });
-    ev('tile-in', 41.3, 'pop', { x: 0.5 });
-    ev('press-fwd', 42.0, 'click', { x: 0.5, gain: 1.1 });
-    ev('tape-fwd', 42.02, 'rewind', { dur: 0.6, x: 0.5, gain: 0.7 });
-    ev('flip-lime', 45.55, 'impact', { x: 0.5, gain: 0.55 });
-    ev('chat-burst', 45.7, 'chatter', { dur: 3.4, x: 0.6 });
-    ev('collapse', 49.35, 'whoosh', { dur: 0.5, x: 0.7, pan2: 0.5 });
-    ev('lore-plate', 49.9, 'ceramic', { x: 0.5 });
-    ev('lore-tab', 50.3, 'ceramic', { x: 0.75, gain: 0.7 });
-    ev('lore-to-strip', 51.55, 'whoosh', { dur: 0.45, x: 0.5, pan2: 0.45, gain: 0.6 });
-    lateCards.forEach((c, i) => { ev(`late-${i}`, c.t0, 'flick', { x: 0.9 }); ev(`late-sh-${i}`, c.t0 + 0.4, 'shutter', { x: 0.6 }); });
-    TABS.forEach((d, i) => ev(`tab-${i}`, d.t, 'tick', { x: 0.1 + d.x / 1900, gain: 0.6 }));
-    ev('gather7', 55.4, 'riser', { dur: 0.6, gain: 0.6 });
-    ev('flip-paper', 56.0, 'plate', { x: 0.5 });
-    for (let i = 0; i < 11; i++) ev(`cmd-${i}`, 58.75 + i * 0.075, 'key', { x: 0.3, gain: 0.8 });
-    ev('cmd-enter', 59.7, 'click', { x: 0.3, gain: 0.7 });
-    ev('chat-in', 59.75, 'whoosh', { dur: 0.6, x: 1.0, pan2: 0.6 });
-    ev('ring-chat', 61.7, 'draw', { dur: 0.6, x: 0.65 });
-    ev('page-in', 64.35, 'air', { dur: 1.2, x: 0.5 });
-    ev('moon-extract', 68.55, 'pop', { x: 0.6 });
-    ev('moon-play', 69.0, 'shutter', { x: 0.6 });
-    ev('scene-in', 71.8, 'whoosh', { dur: 0.5, x: 0.5, gain: 0.8 });
-    ev('cap7', 72.6, 'plate', { x: 0.85, gain: 0.5 });
-    ev('flip-verm', 77.2, 'drop', { gain: 0.5 });
-    ev('planes', 77.25, 'morph', { dur: 0.7, x: 0.5 });
-    ev('to-quiet', 79.75, 'tapeland', { x: 0.5, gain: 0.7 });
-    ev('dock-in', 80.1, 'air', { dur: 0.9, x: 0.5 });
-    ev('change-in', 83.35, 'flick', { x: 0.7 });
-    ev('apply', 85.0, 'click', { x: 0.6, gain: 1.0 });
-    ev('apply-ok', 85.25, 'chime', { x: 0.6 });
-    ev('dock-swap', 87.6, 'sweep', { dur: 0.6, x: 0.5 });
-    ev('pause-lift', 90.6, 'pop', { x: 0.5 });
-    ev('pause', 91.6, 'click', { x: 0.5 });
-    ev('forget-lift', 94.4, 'pop', { x: 0.5 });
-    ev('hush', 95.5, 'hush', { dur: 0.5 });
-    ev('forget', 96.0, 'click', { x: 0.5, gain: 1.2 });
-    ev('dialog', 96.2, 'plate', { x: 0.5 });
-    ev('forget-yes', 98.0, 'click', { x: 0.5, gain: 1.0 });
-    ev('forget-sweep', 98.75, 'sweep', { dur: 0.7, x: 0.5 });
-    ev('codex-in', 102.0, 'drop', { gain: 0.6 });
-    for (let i = 0; i < 18; i++) ev(`clk-${i}`, 102.9 + i * 0.07, 'tick', { x: 0.5, gain: 0.35 });
-    ev('dur', 104.35, 'stamp', { x: 0.7 });
-    ev('swarm', 106.0, 'chatter', { dur: 2.0, x: 0.5, gain: 0.6 });
-    for (let i = 0; i < 20; i++) ev(`tc-${i}`, 108.0 + i * 0.08, 'tick', { x: 0.5, gain: 0.3 });
-    bugs.forEach((b, i) => { ev(`bug-${i}`, b.t0, 'flick', { x: 0.5 }); ev(`bugst-${i}`, b.t0 + 1.55, 'stamp', { x: 0.8, gain: 1.1 }); });
-    ev('quote', 117.8, 'flick', { x: 0.5 });
-    ev('answer', 119.25, 'stamp', { x: 0.4 });
-    CODEX.stats.forEach((s, i) => ev(`stat-${i}`, 121.5 + i * 1.3, 'thumpBig', { x: 0.3, gain: 0.8 }));
-    ev('to-end', 125.3, 'tapestop', { x: 0.5 });
-    ev('flip-end', 125.7, 'drop', { gain: 0.5 });
-    ev('url', 132.25, 'pop', { x: 0.5 });
-    ev('field-to-tile', 133.1, 'riser', { dur: 0.9, gain: 0.8 });
+    ev('note', 26.5, 'flick', { x: 0.5 });
+    ev('field-to-tag', 29.25, 'morph', { dur: 0.9, x: 0.5, pan2: 0.9 });
+    ev('tag-pop', 30.1, 'pop', { x: 0.85, gain: 0.6 });
+    for (const sp of SPEECH) for (let i = 0; i < 10; i++) ev(`key-${sp.t0}-${i}`, sp.t0 + (sp.t1 - sp.t0) * i / 10, 'key', { x: 0.45, gain: 0.55 });
+    ev('chat-in', 34.0, 'whoosh', { dur: 0.6, x: 1.0, pan2: 0.75 });
+    chatMsgs.filter(m => !m.burst).forEach((m, i) => ev(`cm-${i}`, m.t, 'pop', { x: 0.78, gain: 0.45, note: 3 + i }));
+    ev('extract', 37.2, 'air', { dur: 0.8, x: 0.5 });
+    ev('card-form', 37.95, 'plate', { x: 0.5 });
+    for (let i = 0; i < 16; i++) ev(`hold-${i}`, 40.6 + 2.6 * (i / 16), 'tick', { x: 0.5, gain: 0.35 + i * 0.03 });
+    ev('to-dot', 43.3, 'morph', { dur: 0.4, x: 0.5, gain: 0.7 });
+    ev('check', 43.75, 'chime', { x: 0.5 });
+    ev('published', 43.95, 'stamp', { x: 0.55, gain: 0.8 });
+    ev('to-strip', 44.6, 'whoosh', { dur: 0.5, x: 0.5, pan2: 0.2, gain: 0.6 });
+    ev('strip-tab', 45.1, 'tick', { x: 0.1, gain: 0.6 });
+    ev('fox-launch', 48.2, 'whoosh', { dur: 0.5, x: 0.4, gain: 0.6 });
+    ev('chat-in2', 48.7, 'whoosh', { dur: 0.5, x: 1.0, pan2: 0.75 });
+    ev('chat-burst', 48.9, 'chatter', { dur: 3.0, x: 0.75 });
+    ev('counter', 48.95, 'pop', { x: 0.75, gain: 0.6 });
+    ev('extract-row', 52.2, 'air', { dur: 0.7, x: 0.6 });
+    ev('lore-plate', 52.85, 'ceramic', { x: 0.5 });
+    ev('lore-tab', 53.25, 'ceramic', { x: 0.75, gain: 0.7 });
+    ev('edge-on', 56.25, 'flick', { x: 0.5 });
+    ev('four', 56.55, 'whoosh', { dur: 0.5, x: 0.5, gain: 0.6 });
+    FOUR.forEach((c, i) => ev(`four-${i}`, 56.6 + i * 0.06, 'flick', { x: 0.2 + i * 0.2, gain: 0.5 }));
+    ev('four-file', 59.3, 'whoosh', { dur: 0.5, x: 0.5, pan2: 0.5, gain: 0.5 });
+    ev('now-in', 60.2, 'air', { dur: 0.8, x: 0.5 });
+    for (let i = 0; i < 11; i++) ev(`cap-${i}`, 63.6 + i * 0.075, 'key', { x: 0.5, gain: 0.8 });
+    ev('cap-enter', 64.6, 'click', { x: 0.5, gain: 0.7 });
+    ev('answer-in', 64.85, 'whoosh', { dur: 0.5, x: 0.5, pan2: 0.6 });
+    ev('ring', 66.2, 'draw', { dur: 0.6, x: 0.6 });
+    ev('page-in', 68.2, 'air', { dur: 1.2, x: 0.5 });
+    ev('moon-extract', 71.6, 'pop', { x: 0.5 });
+    ev('moon-shutter', 72.05, 'shutter', { x: 0.5 });
+    ev('window', 74.0, 'morph', { dur: 0.8, x: 0.5 });
+    ev('planes', 79.0, 'morph', { dur: 0.7, x: 0.5 });
+
+    ev('to-quiet', 81.9, 'tapeland', { x: 0.5, gain: 0.6 });
+    ev('dock-in', 81.8, 'air', { dur: 1.0, x: 0.5 });
+    ev('change-in', 85.2, 'flick', { x: 0.6 });
+    ev('apply', 87.2, 'click', { x: 0.6, gain: 1.0 });
+    ev('apply-ok', 87.4, 'chime', { x: 0.6 });
+    ev('chip-lift', 89.2, 'pop', { x: 0.5 }); ev('to-recap', 89.9, 'air', { dur: 0.7, x: 0.5 }); ev('chip-land', 90.8, 'plate', { x: 0.5 }); ev('to-dock', 93.2, 'air', { dur: 0.7, x: 0.5 });
+    
+    ev('pause', 94.9, 'click', { x: 0.5 });
+    
+    ev('hush', 97.35, 'hush', { dur: 0.45 });
+    ev('forget', 97.8, 'click', { x: 0.5, gain: 1.2 });
+    ev('dialog', 97.95, 'plate', { x: 0.5 });
+    ev('forget-yes', 99.2, 'click', { x: 0.5, gain: 1.0 });
+    
+    ev('zoom-dark', 101.6, 'riser', { dur: 0.6, gain: 0.6 });
+    ev('codex-in', 102.2, 'drop', { gain: 0.6 });
+    ev('dur', 104.0, 'impact', { x: 0.5, gain: 0.5 });
+    for (let i = 0; i < 14; i++) ev(`clk-${i}`, 104.1 + i * 0.1, 'tick', { x: 0.5, gain: 0.3 });
+    ev('swarm-air', 107.9, 'air', { dur: 2.6, x: 0.5 }); for (let i = 0; i < 10; i++) ev(`wh-${i}`, 108.1 + i * 0.22, 'whoosh', { dur: 0.35, x: (i * 0.37) % 1, pan2: 1 - (i * 0.37) % 1, gain: 0.3 });
+    ev('tools', 110.4, 'thumpBig', { x: 0.5, gain: 0.7 });
+    for (let i = 0; i < 16; i++) ev(`tc-${i}`, 110.5 + i * 0.09, 'tick', { x: 0.5, gain: 0.28 });
+    ev('bug-0', 113.3, 'flick', { x: 0.5 }); ev('fixed-0', 115.0, 'stamp', { x: 0.75, gain: 1.1 });
+    ev('bug-1', 116.4, 'flick', { x: 0.5 }); ev('fixed-1', 118.1, 'stamp', { x: 0.75, gain: 1.1 });
+    ev('q', 119.5, 'flick', { x: 0.5 }); ev('ans', 120.9, 'stamp', { x: 0.5 });
+    ev('tests', 122.8, 'thumpBig', { x: 0.5, gain: 0.7 });
+    for (let i = 0; i < 10; i++) ev(`tr-${i}`, 124.0 + i * 0.07, 'tick', { x: 0.5, gain: 0.35 });
+    ev('to-light', 125.3, 'riser', { dur: 0.75, gain: 0.7 });
+    ev('url', 132.3, 'pop', { x: 0.5 });
+    ev('gather-end', 133.15, 'riser', { dur: 0.85, gain: 0.8 });
     ev('logo-end', 134.0, 'impact', { x: 0.4, gain: 1.0 });
     ev('letters-end', 134.05, 'letters', { dur: 0.5, x: 0.5 });
+    ev('url-end', 135.2, 'pop', { x: 0.5, gain: 0.6 });
   }
 
   // =====================================================================================
@@ -329,372 +400,490 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
     root.style.display = t >= 23.9 ? '' : 'none';
     if (t < 23.9) return;
     for (const s of slots) s.render(t);
-    for (const s of slots) for (const ph of s.phrases) for (const w of ph.words) if (w.inkOutline) { const f = seg(t, w.t + 0.25, w.t + 0.45); w.el.style.webkitTextStrokeColor = 'var(--ink)'; w.el.style.color = `rgb(20 23 27 / ${f})`; }
+    window.__liveVisible = (t >= 59.9 && t < 64) || (t >= 68 && t < 82.3) || (t >= 81.7 && t < 102.3) || (t >= 126 && t < 133.5);
 
-    // ---------- colour fields: vermilion (P4), footage (P5), lime (P6 burst), paper (P7a/b, P8), vermilion (P7 end, P10), ink (P9, end) ----------
-    const C = { verm: 'var(--verm)', paper: '#EDE6DA', lime: 'var(--lime)', ink: 'var(--ink)', none: 'transparent' };
-    let fA = 'none';
-    if (t < 29.2) fA = 'verm'; else if (t >= 45.55 && t < 49.45) fA = 'lime'; else if (t >= 56.0 && t < 64.3) fA = 'paper'; else if (t >= 77.2 && t < 80.0) fA = 'verm';
-    else if (t >= 80.0 && t < 102.0) fA = 'paper'; else if (t >= 102.0 && t < 125.7) fA = 'ink'; else if (t >= 125.7 && t < 133.1) fA = 'verm'; else if (t >= 133.1) fA = 'ink';
-    fieldA.style.background = C[fA];
-    show(fields, true);
-    // P4 -> P5: the vermilion field shrinks into the "Example recording" tag of the full-frame player
-    const sh = expoInOut(seg(t, 28.95, 29.6));
-    const tagR = { x: 1920 - 40 - 78 - 18 - 220, y: 10, w: 220, h: 40 };
-    const p10shrink = expoIn(seg(t, 133.1, 133.95));
-    if (show(fieldB, (t >= 28.9 && t < 29.62) || (t >= 133.1 && t < 134.0))) {
-      if (t < 30) Object.assign(fieldB.style, { background: 'var(--verm)', width: lerp(1920, tagR.w, sh) + 'px', height: lerp(1080, tagR.h, sh) + 'px', borderRadius: lerp(0, 9, sh) + 'px', transform: `translate(${lerp(0, tagR.x, sh)}px,${lerp(0, tagR.y, sh)}px)` });
-      else { const T = 3.8 * 74, x0 = Math.round((1920 - 440 * 3.8) / 2) + 18 * 3.8, y0 = 250 + 16 * 3.8; Object.assign(fieldB.style, { background: 'var(--verm)', width: lerp(1920, T, p10shrink) + 'px', height: lerp(1080, T, p10shrink) + 'px', borderRadius: lerp(0, T * 21 / 74, p10shrink) + 'px', transform: `translate(${lerp(0, x0, p10shrink)}px,${lerp(0, y0, p10shrink)}px)` }); }
+    // ---------- fields ----------
+    const tint = { warm: 1, cool: 1, lime: (t > 48.6 && t < 52.4) ? 0.9 : 0 };
+    renderFields(t, tint);
+    const airyOn = (t >= 29.0 && t < 102.3) || t >= 125.95;
+    show(airy, airyOn);
+    show(dark, t >= 101.6 && t < 126.2);
+    // P4 vermilion field shrinks into the "Example recording" tag of the player (mask reveal of the light field)
+    const PL = { x: 370, y: 205, w: 1180 }; PL.vh = PL.w * 9 / 16; PL.h = 64 + PL.vh;
+    const tagR = { x: PL.x + PL.w - 26 - 74 - 16 - 226, y: PL.y + 11, w: 226, h: 42, r: 9 };
+    if (show(verm, t >= 23.9 && t < 29.95)) {
+      const p = expoInOut(seg(t, 29.2, 29.95));
+      const R = lerpR({ x: -20, y: -20, w: 1960, h: 1120, r: 0 }, tagR, p);
+      Object.assign(verm.style, { width: R.w + 'px', height: R.h + 'px', borderRadius: R.r + 'px', transform: `translate(${R.x}px,${R.y}px)` });
     }
-    if (t >= 133.1 && t < 134.0) fieldA.style.background = C.ink;
+    // P8 -> P9: zoom through the dark dock
+    // P9 -> P10: a light circle grows out of the last number
+    if (show(paperCircle, t >= 125.0 && t < 126.25)) {
+      const p = expoIn(seg(t, 125.0, 126.0)), r = lerp(0, 1300, p);
+      Object.assign(paperCircle.style, { width: 2 * r + 'px', height: 2 * r + 'px', transform: `translate(${960 - r}px,${520 - r}px)` });
+    }
 
     // ---------- P4 ----------
-    if (show(p4, t >= 23.9 && t < 29.4)) {
-      const lift = expoIn(seg(t, 28.85, 29.2));
-      for (const s of [p4a, p4b]) s.root.style.opacity = 1 - lift;
-      const g = clamp(springAt(t - 26.45, 0.7, 13), 0, 1.1);
-      noteWords.forEach((w, i) => { w.style.opacity = 0.2 + 0.8 * seg(t, 26.55 + i * 0.075, 26.75 + i * 0.075); });
-      Object.assign(p4note.style, { transformOrigin: '50% 0', transform: `translate(${210}px,${600 + 40 * (1 - g) - 300 * lift}px) scaleY(${g})`, opacity: (t >= 26.4 ? 1 : 0) * (1 - lift) });
+    if (show(p4, t >= 23.9 && t < 29.6)) {
+      const lift = expoIn(seg(t, 28.9, 29.35));
+      p4.style.transform = `translateY(${-120 * lift}px)`; p4.style.opacity = 1 - lift;
+      const g = clamp(springAt(t - 26.45, 0.7, 12), 0, 1.1);
+      noteWords.forEach((w, i) => { w.style.opacity = 0.22 + 0.78 * seg(t, 26.6 + i * 0.07, 26.8 + i * 0.07); });
+      Object.assign(note.style, { transformOrigin: '50% 0', transform: `translate(${310}px,${620 + 30 * (1 - g)}px) scale(${0.96 + 0.04 * clamp(g)})`, opacity: t >= 26.4 ? clamp(g * 3) : 0 });
     }
 
-    // ---------- footage world (P5 + P6 outside the lime burst) ----------
-    const footOn = t >= 28.9 && t < 56.3 && !(t >= 45.6 && t < 49.5);
-    if (show(foot, footOn)) {
-      let k = 'run', ct = 0.6 + (t - 29.0) * 0.8;
-      if (t >= 42.0 && t < 42.6) { k = 'run'; ct = 10.3 - (t - 42.0) * 0; }
-      if (t >= 42.6) { k = 'moon'; ct = 0.7 + (t - 42.6); }
-      if (t >= 49.4) { k = 'moon'; ct = Math.min(10.3, 6.5 + (t - 49.4) * 0.3); }
-      for (const c of lateCards) if (t >= c.t0 + 0.4 && t < c.t0 + 1.25) { k = c.vid; ct = 1.5 + (t - c.t0 - 0.4); }
+    // ---------- the player (P5, P6) ----------
+    const plOn = show(pl, t >= 29.2 && t < 60.4);
+    if (plOn) {
+      // camera on the player: centred, then aside for the chat, then back; a slow push throughout
+      const K = keyed(t, [
+        [29.2, { x: PL.x, y: PL.y, s: 1 }], [33.8, { x: PL.x, y: PL.y, s: 1 }], [34.4, { x: 90, y: 230, s: 0.92 }],
+        [37.0, { x: 90, y: 230, s: 0.92 }], [37.6, { x: 90, y: 230, s: 0.92 }],
+        [44.8, { x: 90, y: 230, s: 0.92 }], [45.5, { x: PL.x, y: PL.y, s: 1 }], [48.5, { x: PL.x, y: PL.y, s: 1 }], [49.1, { x: 90, y: 230, s: 0.92 }],
+        [55.4, { x: 90, y: 230, s: 0.92 }], [56.0, { x: 90, y: 1200, s: 0.92 }],
+      ]);
+      const push = 1 + 0.025 * Math.sin(t * 0.35);
+      Object.assign(frame.style, { width: PL.w + 'px', height: PL.h + 'px', transform: `translate(${K.x}px,${K.y}px) scale(${K.s * push})` });
+      Object.assign(fview.style, { width: PL.w + 'px', height: PL.vh + 'px', transform: 'translate(0px,64px)' });
+      bar.style.width = PL.w + 'px';
+      exTag.style.transform = `scale(${t < 29.9 ? 0.7 : 1 + 0.12 * (1 - springAt(t - 29.85, 0.45, 16))})`;
+      exTag.style.opacity = t >= 29.9 ? 1 : 0;
+      // dim the context while the chapter or the joke is the focus
+      const dim = Math.max(seg(t, 37.2, 37.7) * (1 - seg(t, 44.6, 45.2)), seg(t, 52.1, 52.6) * (1 - seg(t, 59.5, 60.0)));
+      frame.style.filter = dim > 0.01 ? `blur(${6 * dim}px) brightness(${1 - 0.25 * dim})` : 'none';
+      frame.style.opacity = 1 - 0.55 * dim;
+      // footage
+      let k = 'stream', ct = 4.3 + (t - 29.2);
+      if (t >= 30.0) { k = 'run'; ct = 0.5 + (t - 30.0) * 0.7; }
+      if (t >= 45.5) { k = 'moon'; ct = 0.4 + (t - 45.5); }
+      if (t >= 52.0) { k = 'moon'; ct = 6.9; }
       for (const [n, v] of Object.entries(vids)) v.style.display = n === k ? '' : 'none';
-      const pr = seekVideo(vids[k], ct); if (pr) pending.push(pr);
-      // camera: slow push, a whip on the forward press, push towards the spring before the jump
-      const push = 1.04 + 0.05 * seg(t, 29.0, 41.9) + 0.12 * cubicInOut(seg(t, 42.6, 45.5));
-      const fw = t >= 42.0 && t < 42.7 ? Math.sin(Math.PI * seg(t, 42.0, 42.7)) : 0;
-      vids[k].style.transform = `scale(${push}) translate(${-60 * cubicInOut(seg(t, 42.6, 45.5))}px,${40 * cubicInOut(seg(t, 42.6, 45.5))}px)`;
-      hblur(vids[k], fw * 40);
-      // dim the footage while cards/plates sit on it
-      const dim = Math.max(0.0, 0.55 * seg(t, 34.9, 35.4) * (1 - seg(t, 40.7, 41.2)), 0.6 * seg(t, 49.4, 49.8) * (1 - seg(t, 51.6, 52.0)));
-      shade.style.background = `linear-gradient(180deg, rgb(12 14 17 / ${0.55 + dim}) 0%, rgb(12 14 17 / ${0.08 + dim}) 30%, rgb(12 14 17 / ${0.12 + dim}) 62%, rgb(12 14 17 / ${0.75 + dim * 0.3}) 100%)`;
-      // title bar of the player stays at the top
-      bar.style.transform = `translateY(${-60 * (1 - expoOut(seg(t, 29.3, 29.7)))}px)`;
-      exTag.style.transform = `scale(${1 + 0.15 * (1 - springAt(t - 29.55, 0.45, 16))})`;
-      let ck = 5 + Math.floor(Math.max(0, t - 30.0) * 0.8);
-      if (t >= 42.0) ck = Math.round(lerp(14, 100, expoInOut(seg(t, 42.0, 42.6)))) + Math.max(0, Math.floor((t - 42.6) * 1));
-      if (t >= 49.4) ck = 106 + Math.floor((t - 49.4) * 0.3);
-      for (const c of lateCards) if (t >= c.t0 + 0.3) ck = c.tc === '3:30' ? 211 : 321;
-      clock.textContent = fmtTime(ck);
-    }
-
-    // ---------- P5 ----------
-    if (show(p5, t >= 29.9 && t < 56.3)) {
-      // the transcript types the real speech
-      const n = Math.floor(SPEECH1.text.length * clamp(seg(t, SPEECH1.t0, SPEECH1.t1)));
-      trText.textContent = SPEECH1.text.slice(0, n);
-      trCaret.style.opacity = t < SPEECH1.t1 || Math.floor(t * 3) % 2 === 0 ? 1 : 0;
-      if (show(transcript, t >= 30.35 && t < 35.6)) {
-        const a = expoOut(seg(t, 30.35, 30.7)), g = expoIn(seg(t, 35.0, 35.5));
-        transcript.style.transform = `translate(${lerp(100, C5.x + 200, g)}px,${lerp(820 + 60 * (1 - a), C5.y + 300, g)}px) scale(${lerp(1, 0.15, g)})`;
-        transcript.style.opacity = a * (1 - seg(t, 35.35, 35.5));
+      const pr = seekVideo(vids[k], Math.min(ct, 10.3)); if (pr) pending.push(pr);
+      let ck = 5 + Math.floor(Math.max(0, t - 30.0) * 0.7);
+      if (t >= 45.0) ck = Math.round(lerp(ck, 100, expoInOut(seg(t, 45.0, 45.6)))) + Math.max(0, Math.floor(t - 45.6));
+      clock.textContent = fmtTime(Math.min(ck, 112));
+      // transcript subtitle
+      const sp = SPEECH.find(s => t >= s.t0 - 0.25 && t < s.t1 + (s.t0 > 40 ? 1.6 : 0.3)) || null;
+      if (show(sub, !!sp && !(t > 33.95 && t < 34.0))) {
+        subTab.textContent = sp.tab;
+        subText.textContent = sp.text.slice(0, Math.floor(sp.text.length * clamp(seg(t, sp.t0, sp.t1))));
+        const a = expoOut(seg(t, sp.t0 - 0.25, sp.t0));
+        const by = K.y + (64 + PL.vh - 40) * K.s;
+        sub.style.transform = `translate(${K.x + 40 * K.s}px,${by - 80 + 24 * (1 - a)}px)`;
+        sub.style.opacity = a * (1 - seg(t, sp.t1 + (sp.t0 > 40 ? 1.4 : 0.15), sp.t1 + (sp.t0 > 40 ? 1.6 : 0.3)));
+        sub.style.filter = frame.style.filter;
       }
-      for (const [i, s] of early.entries()) {
-        if (!show(s.el, t >= s.t - 0.05 && t < 35.6)) continue;
-        const a = springAt(t - s.t, 0.6, 14), g = expoIn(seg(t, 35.02 + 0.04 * i, 35.45 + 0.04 * i));
-        s.el.style.transform = `translate(${lerp(lerp(1950, s.x, a), C5.x + 300, g)}px,${lerp(s.y, C5.y + 300, g)}px) scale(${lerp(1, 0.25, g)}) rotate(${(1 - a) * 8}deg)`;
-        s.el.style.opacity = 1 - seg(t, 35.35, 35.5);
+      // the chat column: a list with the newest row lit (no piles)
+      const chatOn = (t >= 33.9 && t < 37.9) || (t >= 48.6 && t < 55.9);
+      if (show(chat, chatOn)) {
+        const enter = t < 40 ? expoOut(seg(t, 33.9, 34.5)) : expoOut(seg(t, 48.6, 49.2));
+        const leave = t < 40 ? expoIn(seg(t, 37.3, 37.85)) : expoIn(seg(t, 55.4, 55.85));
+        chat.style.transform = `translate(${lerp(1960, 1270, enter) + 700 * leave}px,${230}px)`;
+        const visible = chatMsgs.filter(m => t >= m.t && (t < 40 ? !m.burst : true));
+        const n = visible.length;
+        // scroll position: follows the newest message, smoothed by its own arrival spring
+        let off = 0;
+        visible.forEach((m, i) => { off += clamp(springAt(t - m.t, 0.8, 18), 0, 1.05); });
+        const baseY = 760 - 20 - ROW;   // newest row sits at the bottom
+        chatMsgs.forEach((m, i) => {
+          const idx = visible.indexOf(m);
+          if (!show(m.el, idx >= 0)) return;
+          const y = baseY - (off - 1 - idx) * ROW;
+          const lit = idx === n - 1 || (t >= 52.0 && i === moonIdx);
+          m.el.style.transform = `translateY(${y}px)`;
+          m.el.style.background = lit ? 'var(--lime)' : 'transparent';
+          m.el.style.color = lit ? 'var(--ink)' : 'var(--paper)';
+          m.el.style.opacity = y < 70 ? 0 : clamp(0.35 + 0.65 * (y / baseY));
+        });
+        chat.style.filter = (t > 37.2 && t < 40) ? `blur(${6 * seg(t, 37.2, 37.6)}px)` : 'none';
       }
-      // a big title card forms from them, waits, gets published, drops into the strip
-      if (show(card5.el, t >= 35.4 && t < 41.25)) {
-        const g = clamp(springAt(t - 35.4, 0.6, 12), 0, 1.15), drop = expoInOut(seg(t, 40.72, 41.2));
-        card5.el.style.transformOrigin = '0 0';
-        card5.el.style.transform = `translate(${lerp(C5.x, 160 + 16, drop)}px,${lerp(C5.y, 960, drop)}px) scale(${lerp(C5.s * g, 0.12, drop)}) rotate(${lerp(-2, 0, g)}deg)`;
-        const full = 'Fox learns to jump'; card5.el.querySelector('.ttl').textContent = full.slice(0, Math.floor(full.length * seg(t, 35.85, 36.4)));
-        card5.el.style.filter = t > 37.9 && t < 40.5 ? 'saturate(.55) brightness(.88)' : 'none';
-      }
-      if (show(ring, t >= 37.8 && t < 40.7)) {
-        const p = seg(t, 38.0, 40.4);
-        ring.style.transform = `translate(${C5.x - 20}px,${C5.y - 20}px)`;
-        ringR.setAttribute('stroke-dasharray', `${1000 * (1 - p)} 1000`);
-      }
-      if (show(holdN, t >= 37.75 && t < 40.7)) {
-        const p = seg(t, 38.0, 40.4);
-        holdN.textContent = String(Math.ceil(75 * (1 - Math.pow(p, 1.2))));
-        const g = clamp(springAt(t - 37.75, 0.55, 14), 0, 1.15);
-        holdN.style.transform = `translate(90px,${360}px) scale(${g})`; holdN.style.transformOrigin = '0 100%';
-      }
-      if (show(holdNote, t >= 38.2 && t < 40.6)) holdNote.style.transform = 'translate(96px,820px)';
-      if (show(stamp, t >= 40.42 && t < 40.85)) { const s = 1.7 - 0.7 * expoOut(seg(t, 40.42, 40.52)); stamp.style.transform = `translate(${C5.x + 120}px,${C5.y + 230}px) rotate(-8deg) scale(${s})`; }
-      // strip
-      if (show(strip, t >= 40.6 && t < 56.2)) {
-        const g = expoOut(seg(t, 40.6, 41.0)), out = expoIn(seg(t, 55.4, 56.0));
-        strip.style.transform = `translate(${80}px,${lerp(1120, 960, g) - 420 * out}px) scale(${1 - 0.5 * out})`; strip.style.transformOrigin = '50% 50%';
-        strip.style.opacity = 1 - seg(t, 55.8, 56.0);
-        for (const d of TABS) if (show(d.el, t >= d.t)) d.el.style.transform = `translate(${d.x}px,0px) scaleX(${clamp(springAt(t - d.t, 0.55, 16), 0, 1.15)})`;
-      }
-      // the rewind tile, big, pressed as fast forward (mirrored)
-      if (show(tileS.box, t >= 41.25 && t < 42.75)) {
-        const g = clamp(springAt(t - 41.25, 0.55, 13), 0, 1.2), pr = pressScale(t, 42.0), out = expoIn(seg(t, 42.4, 42.75));
-        placeMark(tileS, 960 - 170, 330, 340, { sx: -pr * g * (1 + 3 * out), sy: pr * g * (1 + 3 * out), back: 1, glyph: 1, opacity: 1 - out, blur: out * 20 });
-      }
-      show(tileRip, false);
-      const rp = seg(t, 42.0, 42.45);
-      if (rp > 0 && rp < 1) { show(tileRip, true); const fs = 340 * 74 / 96; Object.assign(tileRip.style, { width: fs + 'px', height: fs + 'px', borderRadius: fs * 21 / 74 + 'px', borderWidth: '8px', transform: `translate(${960 - 170 + 18 * 340 / 96}px,${330 + 16 * 340 / 96}px) scale(${1 + 0.9 * expoOut(rp)})`, opacity: 1 - rp }); }
-      if (show(bigClock, t >= 42.0 && t < 43.2)) {
-        const ck = Math.round(lerp(14, 100, expoInOut(seg(t, 42.0, 42.6))));
-        bigClock.textContent = fmtTime(ck);
-        const out = expoIn(seg(t, 42.85, 43.2));
-        bigClock.style.transform = `translate(${560}px,${300 - 200 * out}px) scale(${1 - 0.3 * out})`; bigClock.style.opacity = clamp(seg(t, 42.0, 42.12)) * (1 - out);
-        hblur(bigClock, 0);
+      if (show(counter, t >= 48.95 && t < 52.4)) {
+        cNum.textContent = String(Math.round(FACTS.moment.count * clamp(seg(t, 48.95, 51.9)) ** 0.9));
+        const g = clamp(springAt(t - 48.95, 0.55, 14), 0, 1.15), out = expoIn(seg(t, 52.05, 52.4));
+        counter.style.transform = `translate(${1270 + 280 - 260}px,${150}px) scale(${g * (1 - out)})`;
       }
     }
 
-    // ---------- P6 ----------
-    if (show(p6, t >= 45.5 && t < 56.3)) {
-      // lime field: the 14 real messages burst across the frame, the counter rolls to 45
-      const bOn = t >= 45.6 && t < 49.6;
-      burst.forEach(b => {
-        if (!show(b.el, bOn)) return;
-        const t0 = 45.65 + b.i * 0.14, a = springAt(t - t0, 0.55, 11);
-        const ang = b.i * 2.39, rad = 640 + (b.i % 4) * 70;
-        const left = b.i % 2 === 0, row = Math.floor(b.i / 2); const hx = left ? 30 + (row * 67) % 190 : 1290 + (row * 83) % 230, hy = 300 + row * 108 + (left ? 0 : 40);
-        const g = expoIn(seg(t, 49.3 + b.i * 0.01, 49.65 + b.i * 0.01));
-        b.el.style.opacity = t >= t0 ? 1 : 0;
-        b.el.style.transform = `translate(${lerp(lerp(960, hx, a), 760, g)}px,${lerp(lerp(560, hy, a), 520, g)}px) rotate(${((b.i * 53) % 11 - 5) * (1 - g)}deg) scale(${lerp(1, 0.3, g)})`;
+    // ---------- P5/P6: chapter card, hold, lore, four chapters, strip ----------
+    if (show(p56, t >= 29.9 && t < 60.4)) {
+      // the chapter card forms from the transcript and the lit chat row, centred and large
+      const CC = { x: 960 - 520 * 1.38 / 2, y: 250, s: 1.38 };
+      if (show(ch.el, t >= 37.55 && t < 45.4)) {
+        const g = clamp(springAt(t - 37.55, 0.62, 12), 0, 1.12), drop = expoInOut(seg(t, 44.55, 45.25));
+        const ttl = ch.el.querySelector('.ttl'); const full = 'Fox learns to jump';
+        ttl.textContent = full.slice(0, Math.floor(full.length * seg(t, 38.0, 38.6)));
+        ch.el.style.transformOrigin = '0 0';
+        ch.el.style.transform = `translate(${lerp(CC.x, 120 + 14, drop)}px,${lerp(CC.y, 975, drop)}px) scale(${lerp(CC.s * (0.6 + 0.4 * g), 0.13, drop)})`;
+        ch.el.style.opacity = clamp(g * 2);
+        ch.el.style.filter = t > 40.3 && t < 43.7 ? 'saturate(.6)' : 'none';
+      }
+      // the hold: the card's lower edge pulls out into a bar that empties over 75 s (shown faster),
+      // then contracts into a dot, the dot into a check: Published
+      const barR = { x: CC.x, y: CC.y + 392 * 1.38 + 36, w: 520 * 1.38, h: 26 };
+      if (show(holdBar, t >= 40.3 && t < 43.75)) {
+        const grow = expoOut(seg(t, 40.3, 40.75)), shrink = expoInOut(seg(t, 43.25, 43.7));
+        const p = seg(t, 40.6, 43.15);
+        const w = barR.w * grow * (1 - shrink) + 26 * shrink;
+        Object.assign(holdBar.style, { width: w + 'px', transform: `translate(${960 - w / 2}px,${barR.y}px)` });
+        Object.assign(holdFill.style, { width: Math.max(26, w * (1 - p * (1 - shrink))) + 'px' });
+        holdBar.style.background = shrink > 0.1 ? 'var(--verm)' : 'rgb(20 23 27 / .12)';
+      }
+      if (show(holdN, t >= 40.4 && t < 43.3)) {
+        holdN.textContent = `${Math.ceil(75 * (1 - seg(t, 40.6, 43.15)))} s`;
+        const a = expoOut(seg(t, 40.4, 40.7));
+        holdN.style.transform = `translate(${CC.x + 718 + 50}px,${barR.y - 120 + 20 * (1 - a)}px)`; holdN.style.opacity = a * (1 - seg(t, 43.1, 43.3));
+      }
+      if (show(holdNote, t >= 40.6 && t < 43.2)) holdNote.style.transform = `translate(${CC.x + 718 + 56}px,${barR.y - 12}px)`;
+      if (show(dot, t >= 43.6 && t < 44.65)) {
+        const g = clamp(springAt(t - 43.6, 0.5, 14), 0, 1.2), d = 26 + 134 * g;
+        const out = expoIn(seg(t, 44.45, 44.65));
+        Object.assign(dot.style, { width: d + 'px', height: d + 'px', borderRadius: d / 2 + 'px', transform: `translate(${960 - 260 - d / 2}px,${barR.y + 13 - d / 2}px) scale(${1 - out})` });
+      }
+      if (show(check, t >= 43.75 && t < 44.65)) { check.style.transform = `translate(${960 - 260 - 100}px,${barR.y + 13 - 100}px) scale(${1 - expoIn(seg(t, 44.45, 44.65))})`; checkPath.setAttribute('stroke-dasharray', `${100 * expoOut(seg(t, 43.75, 44.05))} 100`); }
+      if (show(pubWord, t >= 43.9 && t < 44.65)) { const a = wordIn(t, 43.95, 0.3); pubWord.style.transform = `translate(${960 - 150 + a.dx}px,${barR.y - 42}px) scale(${a.sc})`; pubWord.style.opacity = a.op * (1 - seg(t, 44.45, 44.65)); }
+      // the timeline strip (bottom), tabs arrive as chapters publish
+      if (show(strip, t >= 44.5 && t < 60.3)) {
+        const g = expoOut(seg(t, 44.5, 44.95)), out = expoIn(seg(t, 58.8, 59.3));
+        strip.style.transform = `translate(120px,${lerp(1120, 975, g) + 200 * out}px)`;
+        const tTab = [45.1, 51.7, 54.1, 59.6, 59.7];
+        TABS.forEach((d, i) => { if (show(d.el, t >= tTab[i])) d.el.style.transform = `translate(${d.x}px,0px) scaleX(${clamp(springAt(t - tTab[i], 0.55, 16), 0, 1.1)})`; });
+      }
+      // the "MOON JUMP" row is lifted out of the chat, grows, and becomes the running joke
+      if (show(lore, t >= 52.2 && t < 55.75)) {
+        const rowR = { x: 1270 + 20, y: 230 + 760 - 20 - ROW, w: 260, h: ROW - 10, r: 14 };
+        const big = { x: 960 - 590, y: 330, w: 1180, h: 420, r: 40 };
+        const p = expoInOut(seg(t, 52.25, 52.95)), out = expoInOut(seg(t, 55.15, 55.7));
+        const tabR = { x: 120 + 770, y: 975 + 12, w: 170, h: 60, r: 14 };
+        const R = out > 0 ? lerpR(big, tabR, out) : lerpR(rowR, big, p);
+        Object.assign(lore.style, { width: R.w + 'px', height: R.h + 'px', borderRadius: R.r + 'px', transform: `translate(${R.x}px,${R.y}px)` });
+        lore.style.background = p < 0.5 ? 'var(--lime)' : 'var(--verm)';
+        loreIn.style.transform = `scale(${R.w / 1180})`; loreIn.style.transformOrigin = '0 0';
+        loreIn.style.opacity = clamp((p - 0.45) * 3) * (1 - clamp(out * 3));
+        loreTab.style.transform = `scale(${clamp(springAt(t - 53.2, 0.5, 16), 0, 1.2) * (1 - out)})`;
+        lore.style.boxShadow = '0 10px 0 var(--verm-side), 0 60px 120px -40px rgb(60 20 0 / .5)';
+      }
+      // one chapter card turns edge-on and becomes the four chapters
+      const fanOn = t >= 55.9 && t < 59.96;
+      const fan = [{ x: 250, y: 170, r: -3 }, { x: 1000, y: 160, r: 2.5 }, { x: 280, y: 545, r: 2 }, { x: 1030, y: 535, r: -2.5 }];
+      FOUR.forEach((c, i) => {
+        if (!show(c.el, fanOn && (i === 0 || t >= 56.45))) return;
+        c.el.style.transformOrigin = '0 0';
+        if (t < 56.45) { // the first card rises from the strip and turns edge-on
+          const up = expoOut(seg(t, 55.9, 56.25)), turn = expoIn(seg(t, 56.15, 56.45));
+          const s = lerp(0.13, 1.25, up);
+          c.el.style.transform = `perspective(1400px) translate(${lerp(134, 960 - 325, up)}px,${lerp(975, 300, up)}px) scale(${s}) rotateY(${88 * turn}deg)`;
+          return;
+        }
+        const a = clamp(springAt(t - 56.45 - i * 0.05, 0.6, 11), 0, 1.08);
+        const F = fan[i];
+        const x = lerp(960 - 325, F.x, a), y = lerp(300, F.y, a);
+        const bob = 6 * Math.sin((t - 56.5) * 2.1 + i * 1.7);       // secondary motion while held
+        c.el.style.zIndex = 4 - i;
+        if (i === 0) {   // match: this card lands on the same chapter in the live page
+          // match cut: the card's clip frame lands exactly on the clip thumbnail of the same chapter in the live page
+          const m = expoInOut(seg(t, 59.2, 59.85));
+          const st = U('pubStory'), cl = U('pubStoryClip'), sA = 1300 / st.w;
+          const thumb = { x: 960 + (cl.x - (st.x + st.w / 2)) * sA, y: 540 + (cl.y - (st.y + st.h / 2)) * sA, w: cl.w * sA };
+          const sc = thumb.w / 480;                       // the card image is 480 wide at 20,20 inside the card
+          const tgt = { x: thumb.x - 20 * sc, y: thumb.y - 20 * sc };
+          const s0 = 1.18 * (0.85 + 0.1 * a);
+          c.el.style.transform = `perspective(1400px) translate(${lerp(x, tgt.x, m)}px,${lerp(y + bob, tgt.y, m)}px) scale(${lerp(s0, sc, m)}) rotateY(${88 * (1 - clamp(a))}deg) rotate(${F.r * a * (1 - m)}deg)`;
+          c.el.style.opacity = 1 - seg(t, 59.8, 60.05);
+          return;
+        }
+        const go = expoIn(seg(t, 59.0 + i * 0.05, 59.45 + i * 0.05));   // the others leave in depth, outward
+        const ox = (F.x - 640) * 2.4 * go, oy = (F.y - 350) * 2.4 * go;
+        c.el.style.transform = `perspective(1400px) translate(${x + ox}px,${y + bob + oy}px) scale(${1.18 * (0.85 + 0.1 * a) * (1 + 0.8 * go)}) rotateY(${88 * (1 - clamp(a))}deg) rotate(${F.r * a}deg)`;
+        c.el.style.filter = go > 0.02 ? `blur(${12 * go}px)` : 'none';
+        c.el.style.opacity = 1 - seg(t, 59.3, 59.5 + i * 0.05);
       });
-      if (show(counter, t >= 45.7 && t < 49.6)) {
-        cNum.textContent = String(Math.round(FACTS.moment.count * cubicInOut(seg(t, 45.8, 48.4))));
-        const g = clamp(springAt(t - 45.7, 0.55, 13), 0, 1.15), out = expoIn(seg(t, 49.25, 49.6));
-        counter.style.transform = `translate(${560}px,${290}px) scale(${g * (1 - out)})`; counter.style.transformOrigin = '30% 50%';
-      }
-      // the swarm collapses into the running joke, on the dimmed footage
-      if (show(lore, t >= 49.55 && t < 52.1)) {
-        const g = clamp(springAt(t - 49.55, 0.5, 12), 0, 1.25), d = expoInOut(seg(t, 51.5, 52.05));
-        lore.style.transformOrigin = '0 0';
-        lore.style.transform = `translate(${lerp(260, 80 + 830, d)}px,${lerp(260, 975, d)}px) scale(${lerp(g, 0.05, d)}) rotate(${-2.5 * (1 - d)}deg)`;
-        loreTab.style.transform = `scale(${clamp(springAt(t - 50.3, 0.5, 16), 0, 1.25)}) rotate(4deg)`;
-      }
-      // later chapters: big cards whip in, open into their clip full frame, then file into the strip
-      for (const c of lateCards) {
-        if (!show(c.el, t >= c.t0 && t < c.t0 + 1.25)) continue;
-        const a = expoOut(seg(t, c.t0, c.t0 + 0.35)), open = expoIn(seg(t, c.t0 + 0.32, c.t0 + 0.42)), d = expoIn(seg(t, c.t0 + 0.95, c.t0 + 1.25));
-        c.el.style.transformOrigin = '50% 50%';
-        c.el.style.transform = `translate(${lerp(2100, 700, a)}px,${lerp(340, 340, a) + 500 * d}px) scale(${1.6 * (1 + 2.6 * open) * (1 - 0.9 * d)}) rotate(${4 * (1 - a)}deg)`;
-        c.el.style.opacity = 1 - seg(t, c.t0 + 0.4, c.t0 + 0.44);
-        hblur(c.el, (1 - a) * 50);
-      }
     }
 
-    // ---------- P7 ----------
-    if (show(p7, t >= 55.4 && t < 80.3)) {
-      // paper world: the real "Right now" card at reading size
-      const nIn = expoOut(seg(t, 55.9, 56.6)), nOut = expoIn(seg(t, 58.4, 58.9));
-      if (show(nowV.box, t >= 55.9 && t < 58.95)) nowV.set({ x: 230, y: lerp(1100, 340, nIn) - 900 * nOut, w: 1460, h: 680, r: 34 }, { cx: 331, cy: 178, s: 2.12 + 0.06 * seg(t, 56.6, 58.4) });
-      // typed command, then the real answer from the product's chat reply
+    // ---------- P7: three ways in (live pages) ----------
+    show(topFade, false);
+    if (show(p7, t >= 59.5 && t < 82.3)) {
+      show(fade7, false);
+      // A: the real public recap page rises from below, then the camera pushes into its "Right now" card
+      const nowR = U('pubNow');
+      if (show(pub.box, (t >= 59.55 && t < 64.95) || (t >= 67.75 && t < 74.85) || (t >= 78.95 && t < 82.3))) {
+        if (t < 65) {
+          // the page opens around the matched chapter, the camera pulls back to the whole page, then pushes into "Right now";
+          // when the viewer types, the page recedes in depth behind the command
+          const story = U('pubStory');
+          const camA = { cx: story.x + story.w / 2, cy: story.y + story.h / 2, s: 1300 / story.w };
+          const camB = { cx: 720, cy: 520, s: 1.3 };
+          const camC = { cx: nowR.x + nowR.w / 2, cy: nowR.y + nowR.h / 2 + 10, s: 1500 / nowR.w };
+          const pull = cubicInOut(seg(t, 60.0, 61.0)), z = expoInOut(seg(t, 61.35, 62.15));
+          const cam = { cx: lerp(lerp(camA.cx, camB.cx, pull), camC.cx, z), cy: lerp(lerp(camA.cy, camB.cy, pull), camC.cy, z), s: lerp(lerp(camA.s, camB.s, pull), camC.s, z) };
+          const rec = expoInOut(seg(t, 63.0, 63.6)), gone = seg(t, 64.6, 64.95);
+          const br = breathe(t, 0.6);
+          pub.set(FULL, cam, `perspective(1800px) translateZ(${-260 * rec}px) rotateX(${br.rx * z}deg) rotateY(${br.ry * z}deg)`);
+          pub.box.style.transformOrigin = '50% 50%';
+          // the page reveals outward from the matched chapter (mask), not by a fade
+          const open = expoOut(seg(t, 59.55, 60.15));
+          const L0 = 960 - 650, T0 = 540 - 218, R0 = 1920 - (960 + 650), B0 = 1080 - (540 + 218);
+          pub.box.style.clipPath = open < 1 ? `inset(${T0 * (1 - open)}px ${R0 * (1 - open)}px ${B0 * (1 - open)}px ${L0 * (1 - open)}px round ${28 * (1 - open)}px)` : 'none';
+          pub.box.style.filter = rec > 0.01 ? `blur(${7 * rec}px) brightness(${1 - 0.25 * rec})` : 'none';
+          pub.box.style.opacity = 1 - gone;
+          show(fade7, true); fade7.style.opacity = clamp(open * 1.5) * (1 - rec);
+        } else if (t < 75) {
+          pub.box.style.clipPath = 'none';
+          // C: the camera travels down the page, the moon jump chapter lifts out with its clip; then the page becomes the raid's stage
+          const a = 1, win = expoInOut(seg(t, 74.0, 74.75));
+          const H0 = 860, W0 = H0 * 592 / 679, k0 = W0 / 592, cr = { x: 960 - W0 / 2, y: 180 };
+          const lk = { x: cr.x + 28 * k0, y: cr.y + 442 * k0, w: 357 * k0, h: 22 * k0 };
+          const op = expoInOut(seg(t, 67.8, 68.45));
+          pub.box.style.clipPath = op < 1 ? `inset(${lk.y * (1 - op)}px ${(1920 - lk.x - lk.w) * (1 - op)}px ${(1080 - lk.y - lk.h) * (1 - op)}px ${lk.x * (1 - op)}px round ${10 + 20 * (1 - op)}px)` : 'none';
+          const story = U('pubStory'), moon = U('pubMoon');
+          const K = keyed(t, [[67.8, { cx: 720, cy: 700, s: 1.6 }], [68.6, { cx: 720, cy: 640, s: 1.2 }], [69.6, { cx: 720, cy: 600, s: 1.3 }], [70.9, { cx: 720, cy: story.y + story.h / 2 + 80, s: 1.333 }], [71.5, { cx: 720, cy: moon.y + moon.h / 2, s: 1.45 }], [73.9, { cx: 720, cy: moon.y + moon.h / 2, s: 1.45 }], [74.75, { cx: 720, cy: 450, s: 1400 / 1440 }]]);
+          const R = lerpR({ ...FULL, y: lerp(1080, 0, a) }, { x: 260, y: 200, w: 1400, h: 788, r: 40 }, win);
+          const br = breathe(t, 0.5);
+          pub.set(R, K, `perspective(2000px) rotateX(${br.rx}deg) rotateY(${br.ry}deg)`);
+          pub.box.style.transformOrigin = '50% 50%';
+          pub.box.style.transformOrigin = '50% 100%';
+          const dim = seg(t, 71.5, 71.9) * (1 - seg(t, 73.4, 73.8));
+          pub.box.style.filter = dim > 0.01 ? `blur(${6 * dim}px) brightness(${1 - 0.3 * dim})` : 'none';
+          pub.box.style.opacity = 1 - seg(t, 74.55, 74.85);
+          show(fade7, true); fade7.style.opacity = seg(t, 68.2, 68.6) * (1 - win);
+          // element extraction: the chapter clone starts exactly on the page's chapter, lifts and grows
+          if (show(moonV.box, t >= 71.5 && t < 73.9)) {
+            const p0 = pub.map(moon.x, moon.y), w0 = moon.w * K.s;
+            const g = expoInOut(seg(t, 71.5, 72.2)), back = expoInOut(seg(t, 73.3, 73.9));
+            const e = g * (1 - back);
+            const W = lerp(w0, 1560, e), H = W * 465 / 1341;
+            moonV.set({ x: lerp(p0.x, 960 - 780, e), y: lerp(p0.y, 330, e), w: W, h: H, r: 22 }, { cx: 447, cy: 155, s: W / 894 });
+            moonV.box.style.boxShadow = `0 ${40 * e}px ${100 * e}px -30px rgb(40 25 10 / ${0.6 * e})`;
+            Object.assign(moonVid.style, { left: W * 0.6 + 'px', top: H * 0.13 + 'px', width: W * 0.355 + 'px', height: H * 0.6 + 'px', display: t >= 72.0 && t < 73.4 ? '' : 'none' });
+            if (t >= 72.0) { const pr = seekVideo(moonVid, 2.6 + (t - 72.0)); if (pr) pending.push(pr); }
+          }
+        } else {
+          pub.box.style.filter = 'none'; pub.box.style.opacity = 1;
+        }
+      } else show(moonV.box, false);
+      // B: typed command in a capsule anchored at its left edge (no re-centring jitter)
       const typed = '!previously';
-      if (show(cmd, t >= 58.6 && t < 64.3)) {
-        cmdText.textContent = typed.slice(0, Math.floor(typed.length * seg(t, 58.75, 59.6)));
-        cmdCaret.style.opacity = t < 59.6 || Math.floor(t * 3) % 2 === 0 ? 1 : 0;
-        const mv = expoInOut(seg(t, 59.7, 60.2)), out = expoIn(seg(t, 63.9, 64.3));
-        cmd.style.transformOrigin = '0 0';
-        cmd.style.transform = `translate(${lerp(250, 90, mv) - 900 * out}px,${lerp(330, 300, mv)}px) scale(${lerp(1.7, 0.85, mv) * pressScale(t, 59.7)})`;
+      if (show(cap, t >= 63.2 && t < 65.15)) {
+        capText.textContent = typed.slice(0, Math.floor(typed.length * seg(t, 63.55, 64.4)));
+        capCaret.style.opacity = t < 64.4 || Math.floor(t * 3) % 2 === 0 ? 1 : 0;
+        const g = clamp(springAt(t - 63.2, 0.65, 14), 0, 1.08), pr = pressScale(t, 64.55), out = expoIn(seg(t, 64.8, 65.15));
+        cap.style.transform = `translate(${960 - 420}px,${440 - 260 * out}px) scale(${g * pr * (1 - 0.5 * out)})`;
+        cap.style.opacity = 1 - out;
       }
-      if (show(chatV.box, t >= 59.75 && t < 64.4)) {
-        const a = expoOut(seg(t, 59.75, 60.45)), out = expoIn(seg(t, 63.9, 64.35));
-        // the camera travels from the typed command row down to the answer and its link
-        const cy = lerp(250, 400, cubicInOut(seg(t, 60.3, 62.4))), s = lerp(1.55, 1.72, cubicInOut(seg(t, 60.3, 63.8)));
-        chatV.set({ x: lerp(1950, 960, a) + 1000 * out, y: 60, w: 900, h: 960, r: 32 }, { cx: 296, cy, s }, `perspective(1600px) rotateY(${-22 * (1 - a)}deg)`);
-        chatV.cam = { x: lerp(1950, 960, a) + 1000 * out, y: 60, w: 900, h: 960, cx: 296, cy, s };
+      // the real chat panel with the bot's answer, as a whole component: it rises, turns flat, the reply gets a drawn ring
+      const chOn = (t >= 65.0 && t < 68.5);
+      if (show(chatObj.box, chOn || (t >= 78.95 && t < 82.3))) {
+        if (chOn) {
+          const a = clamp(land(t, 65.0, 0.6, 10), 0, 1.06), out = expoIn(seg(t, 67.95, 68.45));
+          const H = 860, W = H * 592 / 679;
+          const R = { x: 960 - W / 2, y: lerp(1150, 180, a), w: W, h: H, r: 30 };
+          const br = breathe(t, 0.8);
+          chatObj.set(R, { cx: 296, cy: 339.5, s: W / 592 }, `perspective(1800px) rotateX(${20 * (1 - clamp(a)) + br.rx}deg) rotateY(${-10 * (1 - clamp(a)) + br.ry}deg) translateZ(${-300 * out}px)`);
+          chatObj.box.style.filter = out > 0.01 ? `blur(${8 * out}px)` : 'none';
+          chatObj.box.style.transformOrigin = '50% 100%';
+          if (show(ring, t >= 66.3 && t < 68.1)) {
+            const k = W / 592, p0 = { x: R.x + 3 * k, y: R.y + 274 * k }, p1 = { x: R.x + 589 * k, y: R.y + 486 * k };
+            ringR.setAttribute('x', p0.x - 12); ringR.setAttribute('y', p0.y - 12); ringR.setAttribute('width', p1.x - p0.x + 24); ringR.setAttribute('height', p1.y - p0.y + 24);
+            ringR.setAttribute('stroke-dasharray', `${1000 * expoOut(seg(t, 66.3, 66.95))} 1000`);
+            ring.style.opacity = 1 - seg(t, 67.8, 68.1);
+          }
+        }
       }
-      if (show(ring7, t >= 61.6 && t < 64.2) && chatV.cam) {
-        const c = chatV.cam, m = (lx, ly) => ({ x: c.x + c.w / 2 + (lx - c.cx) * c.s, y: c.y + c.h / 2 + (ly - c.cy) * c.s });
-        const p0 = m(3, 274), p1 = m(589, 486);
-        ring7p.setAttribute('x', p0.x - 8); ring7p.setAttribute('y', p0.y - 8); ring7p.setAttribute('width', p1.x - p0.x + 16); ring7p.setAttribute('height', p1.y - p0.y + 16);
-        ring7p.setAttribute('stroke-dasharray', `${1000 * expoOut(seg(t, 61.65, 62.3))} 1000`);
-        ring7.style.opacity = 1 - seg(t, 63.8, 64.2);
+      if (!(t >= 66.3 && t < 68.1)) show(ring, false);
+      if (show(cur7, t >= 66.9 && t < 68.0)) {
+        const H0 = 860, W0 = H0 * 592 / 679, k0 = W0 / 592, cr = { x: 960 - W0 / 2, y: 180 };
+        const tgt = { x: cr.x + 220 * k0, y: cr.y + 456 * k0 };
+        const p = expoOut(seg(t, 66.9, 67.5)), A0 = { x: 1500, y: 1120 };
+        const c = bezier2(A0, { x: 1400, y: 700 }, tgt, p);
+        const down = t >= 67.6 && t < 67.7;
+        cur7.style.transform = `translate(${c.x - 8}px,${c.y - 4}px) scale(${(down ? 0.88 : 1) * 1.5})`;
       }
-      // the public page full width: arrives tilted from below, the camera travels down through it
-      if (show(pageV.box, t >= 64.25 && t < 72.0)) {
-        const a = expoOut(seg(t, 64.25, 65.2)), sc = cubicInOut(seg(t, 65.4, 71.4)), out = expoIn(seg(t, 71.6, 72.0));
-        const cy = lerp(560, 1700, sc);
-        pageV.set({ x: 0, y: lerp(1080, 0, a) - 1080 * out, w: 1920, h: 1080, r: lerp(40, 0, a) }, { cx: 960, cy, s: lerp(1.0, 1.18, sc) }, `perspective(1800px) rotateX(${28 * (1 - a)}deg)`);
-        pageV.box.style.transformOrigin = '50% 100%';
-      }
-      // the moon jump chapter is lifted out of the page; its clip plays inside it
-      if (show(moonV.box, t >= 68.5 && t < 71.95)) {
-        const a = clamp(springAt(t - 68.5, 0.6, 11), 0, 1.1), out = expoIn(seg(t, 71.55, 71.95));
-        const W = 1500, H = W * 465 / 1341;
-        moonV.set({ x: 210, y: lerp(560, 300, a) - 900 * out, w: W, h: H, r: 34 }, { cx: 447, cy: 155, s: W / 894 });
-        moonV.box.style.transform += ` scale(${lerp(0.8, 1, clamp(a))})`;
-        Object.assign(moonVid.style, { left: W * 0.6 + 'px', top: H * 0.13 + 'px', width: W * 0.355 + 'px', height: H * 0.6 + 'px', display: t >= 69.0 ? '' : 'none' });
-        if (t >= 69.0) { const pr = seekVideo(moonVid, 2.6 + (t - 69.0)); if (pr) pending.push(pr); }
-      }
-      // the raid scene itself, full frame, with its own sound
-      if (show(sceneWrap, t >= 71.75 && t < 77.6)) {
-        const a = expoOut(seg(t, 71.75, 72.35)), out = expoIn(seg(t, 77.2, 77.6));
-        const s = lerp(0.6, 1, a) * (1 - 0.6 * out);
-        sceneWrap.style.borderRadius = lerp(40, 0, a) + 'px';
-        sceneWrap.style.transform = `translate(${960 - 960 * s}px,${540 - 540 * s + 1100 * out}px) scale(${s})`;
+      if (!(t >= 71.5 && t < 73.9)) show(moonV.box, false);
+      // D: the page window becomes the stage of the real raid scene
+      if (show(sceneWin, t >= 74.5 && t < 82.3)) {
+        const a = expoInOut(seg(t, 74.5, 75.2)), p3 = expoInOut(seg(t, 78.95, 79.7));
+        const R0 = { x: 260, y: 200, w: 1400, h: 788, r: 40 }, R1 = { x: 160, y: 176, w: 1600, h: 900, r: 30 };
+        let R = lerpR(R0, R1, a);
+        if (t < 79) {
+          Object.assign(sceneWin.style, { width: R.w + 'px', height: R.h + 'px', borderRadius: R.r + 'px', transform: `translate(${R.x}px,${R.y}px)`, transformOrigin: '50% 50%' });
+          const s = Math.max(R.w / 1920, R.h / 1080);
+          scene2.style.transform = `translate(${(R.w - 1920 * s) / 2}px,${(R.h - 1080 * s) / 2}px) scale(${s})`;
+        }
         const w = scene2.contentWindow;
-        if (w && w.__seek) pending.push(w.__seek(Math.min(11500, 1200 + (t - 71.75) * 1000)));
+        if (w && w.__seek) pending.push(w.__seek(Math.min(11500, 1200 + Math.max(0, t - 74.5) * 1000)));
       }
-      if (show(cap7, t >= 72.55 && t < 77.4)) {
-        const g = clamp(springAt(t - 72.55, 0.65, 13), 0, 1.1), out = expoIn(seg(t, 77.05, 77.4));
-        cap7.style.transform = `translate(${1856 - 1180 + 600 * out}px,${86}px) scaleX(${g})`;
-      }
-      // one story feeds all three: the three surfaces stand side by side on vermilion
-      const tOn = t >= 77.25 && t < 80.1;
-      const p3 = expoOut(seg(t, 77.25, 77.9)), o3 = expoIn(seg(t, 79.55, 80.05));
-      const views = [[chatV, { cx: 296, cy: 380, s: 0.98 }], [pageV, { cx: 960, cy: 520, s: 0.3 }]];
-      if (tOn) {
-        show(chatV.box, true); show(pageV.box, true); show(sceneWrap, true);
-        const W = 560, H = 640, y0 = 330;
-        chatV.set({ x: lerp(-700, 90, p3), y: y0 + 900 * o3, w: W, h: H, r: 30 }, views[0][1], `perspective(1600px) rotateY(${12 * p3}deg)`);
-        pageV.set({ x: 680, y: lerp(1200, y0, p3) + 900 * o3, w: W, h: H, r: 30 }, views[1][1]);
-        pageV.box.style.transformOrigin = '50% 50%';
-        sceneWrap.style.opacity = 1;
-        const s = W / 1920 * 1.95;
-        sceneWrap.style.borderRadius = 30 / s + 'px';
-        sceneWrap.style.transform = `perspective(1600px) translate(${lerp(2100, 1270, p3)}px,${y0 + 60 + 900 * o3}px) rotateY(${-12 * p3}deg) scale(${s})`;
-        sceneWrap.style.width = 1920 * 0.55 + 'px';
-        sceneWrap.style.height = 1080 * 0.97 + 'px';
-      } else { sceneWrap.style.width = '1920px'; sceneWrap.style.height = '1080px'; }
+      // E: one story feeds all three: three whole surfaces stand in depth, each at full composition
+      if (t >= 78.95) {
+        const p3 = expoOut(seg(t, 78.95, 79.8)), o3 = expoIn(seg(t, 81.75, 82.25));
+        const W = 620, H = 620 * 10 / 16;
+        const drift = 30 * Math.sin((t - 79) * 0.8);
+        const slot = i => ({ x: 22 + i * 640 + drift * (i - 1), y: lerp(1150, 360, clamp(p3 * 1.4 - i * 0.15)) + 900 * o3, w: W, h: H, r: 24 });
+        const tilt = i => `perspective(2000px) rotateY(${(1 - i) * 10}deg) translateZ(${i === 1 ? 40 : 0}px)`;
+        const c0 = slot(0), ch2 = c0.h + 160, cw = ch2 * 592 / 679;
+        chatObj.set({ x: c0.x + (W - cw) / 2, y: c0.y - 60, w: cw, h: ch2, r: 22 }, { cx: 296, cy: 339.5, s: cw / 592 }, tilt(0)); chatObj.box.style.transformOrigin = '50% 50%';
+        pub.set(slot(1), { cx: 720, cy: 450, s: W / 1440 }, tilt(1)); pub.box.style.transformOrigin = '50% 50%'; pub.box.style.filter = 'none'; pub.box.style.opacity = 1;
+        const R = slot(2);
+        Object.assign(sceneWin.style, { width: R.w + 'px', height: R.h + 'px', borderRadius: '24px', transform: `translate(${R.x}px,${R.y}px) ${tilt(2)}`, transformOrigin: '50% 50%' });
+        const s = Math.max(W / 1920, H / 1080); scene2.style.transform = `translate(${(W - 1920 * s) / 2}px,${(H - 1080 * s) / 2}px) scale(${s})`;
+        if (show(thread, true)) {
+          const ys = [0, 1, 2].map(i => slot(i).y + H + 14), xs = [0, 1, 2].map(i => slot(i).x + W / 2);
+          threadP.setAttribute('d', `M${xs[0] - 260} ${ys[0]} C ${xs[0]} ${ys[0] + 60}, ${xs[1] - 200} ${ys[1] + 60}, ${xs[1]} ${ys[1]} S ${xs[2] - 200} ${ys[2] - 40}, ${xs[2] + 300} ${ys[2]}`);
+          threadP.setAttribute('stroke-dasharray', `${100 * expoOut(seg(t, 79.55, 80.5))} 100`);
+          threadDots.forEach((d, i) => { d.setAttribute('cx', xs[i]); d.setAttribute('cy', ys[i]); d.setAttribute('r', 12 * clamp(springAt(t - 79.75 - i * 0.22, 0.45, 18), 0, 1.4)); });
+        }
+        triLabels.forEach((e, i) => { if (show(e, true)) { e.style.transform = `translate(${slot(i).x - 20}px,${slot(i).y + H + (i === 0 ? 110 : 44)}px)`; e.style.opacity = seg(t, 79.5 + i * 0.1, 79.8 + i * 0.1) * (1 - o3); } });
+      } else { triLabels.forEach(e => show(e, false)); show(thread, false); }
     }
 
-    // ---------- P8 (paper world) ----------
-    if (show(p8, t >= 79.8 && t < 102.4)) {
-      const R = RECTS;
-      const LY = keyed(t, [[90.2, { y: 70 }], [90.55, { y: 690 }], [95.9, { y: 690 }], [96.25, { y: 70 }]]).y;
-      line8.root.style.transform = `translate(${90 - 40}px,${LY - 140 * 0.22}px)`;
-      // the dock rises in big, the camera travels down it; it steps aside while the change panel is read
-      const keys = [
-        [79.8, { x: 1110, y: 1100, w: 700, h: 760, cx: 260, cy: 150, s: 1.45, o: 1 }],
-        [80.6, { x: 1110, y: 300, w: 700, h: 760, cx: 260, cy: 150, s: 1.45, o: 1 }],
-        [83.0, { x: 1110, y: 300, w: 700, h: 760, cx: 260, cy: 420, s: 1.45, o: 1 }],
-        [83.4, { x: 2000, y: 300, w: 700, h: 760, cx: 260, cy: 420, s: 1.45, o: 1 }],
-        [86.7, { x: 2000, y: 300, w: 700, h: 760, cx: 252, cy: 1022, s: 2.4, o: 1 }],
-        [87.2, { x: 160, y: 300, w: 1600, h: 640, cx: 252, cy: 1022, s: 2.9, o: 1 }],
-        [90.2, { x: 160, y: 300, w: 1600, h: 640, cx: 252, cy: 1000, s: 2.75, o: 1 }],
-        [90.7, { x: 1110, y: 300, w: 700, h: 760, cx: 260, cy: 440, s: 1.45, o: 1 }],
-        [97.8, { x: 1110, y: 300, w: 700, h: 760, cx: 260, cy: 440, s: 1.45, o: 1 }],
-        [98.4, { x: 160, y: 300, w: 1600, h: 680, cx: 260, cy: 560, s: 2.6, o: 1 }],
-        [101.5, { x: 160, y: 300, w: 1600, h: 680, cx: 260, cy: 600, s: 2.6, o: 1 }],
-        [102.1, { x: 160, y: 1200, w: 1600, h: 680, cx: 260, cy: 600, s: 2.6, o: 1 }],
-      ];
-      const D = keyed(t, keys);
-      const swapC = seg(t, 87.6, 88.1), swapF = seg(t, 98.75, 99.3);
-      dockB.set(D, D); show(dockB.box, true);
-      if (show(dockC.box, swapC > 0 && t < 90.7)) { dockC.set(D, D); dockC.box.style.clipPath = `inset(0 ${100 - 100 * swapC}% 0 0 round 30px)`; }
-      if (show(dockF.box, swapF > 0)) { dockF.set(D, D); dockF.box.style.clipPath = `inset(0 ${100 - 100 * swapF}% 0 0 round 30px)`; }
-      const sw = swapF > 0 && swapF < 1 ? swapF : swapC > 0 && swapC < 1 ? swapC : -1;
-      if (show(sweep, sw >= 0)) Object.assign(sweep.style, { width: '220px', height: D.h + 'px', transform: `translate(${D.x + D.w * sw - 110}px,${D.y}px)` });
-      // the change panel at reading size: the two cards, then Apply my wording
-      const chOn = t >= 83.25 && t < 87.1;
-      const CK = keyed(t, [[83.25, { x: 100, y: 1200, cx: 724, cy: 178, s: 1.2 }], [83.9, { x: 100, y: 330, cx: 724, cy: 178, s: 1.2 }], [84.6, { x: 100, y: 330, cx: 1085, cy: 175, s: 2.2 }], [86.5, { x: 100, y: 330, cx: 1085, cy: 175, s: 2.2 }], [87.1, { x: 100, y: -900, cx: 1085, cy: 175, s: 2.2 }]]);
-      const pr = pressScale(t, 85.0);
-      for (const [v, on] of [[chB, chOn && t < 85.15], [chA, chOn && t >= 85.15]]) if (show(v.box, on)) v.set({ x: CK.x, y: CK.y, w: 1720, h: 640, r: 34 }, { cx: CK.cx, cy: CK.cy, s: CK.s * pr });
-      const applyAt = { x: CK.x + 860 + (R.applyBtn.x + R.applyBtn.w * 0.5 - CK.cx) * CK.s, y: CK.y + 320 + (R.applyBtn.y + R.applyBtn.h * 0.55 - CK.cy) * CK.s };
-      const path = [[84.2, { x: 1950, y: 1150 }], [84.85, applyAt], [85.6, applyAt], [86.2, { x: 1950, y: 1150 }], [96.6, { x: 1950, y: 1150 }], [97.4, { x: 930, y: 940 }], [98.4, { x: 930, y: 940 }], [99.0, { x: 1950, y: 1150 }]];
+    // ---------- P8: the streamer stays in charge (the real replay page and its dock) ----------
+    if (show(p8, t >= 81.45 && t < 102.3)) {
+      const ap = U('repApply'), chg = U('repChange'), cheat = U('repCheat'), dock = U('repDock'), pz = U('repPause'), fg = U('repForget'), dock2 = U('repDock2');
+      const fsy = Math.max(0, Math.round(fg.y + 40 - 550)), dv = U('repDialogV'), yv = U('repYesV');
+      const dlg = { ...dv, y: dv.y + fsy }, yes = { ...yv, x: yv.x - 34, y: yv.y + fsy };
+      const dockTop = dock.y + 330;
+      const D = keyed(t, [
+        [81.45, { y: 1150, rx: 28, full: 0, cx: 720, cy: 560, s: 1600 / 1440 }],
+        [82.35, { y: 190, rx: 0, full: 0, cx: 720, cy: 560, s: 1600 / 1440 }],
+        [83.6, { y: 190, rx: 0, full: 1, cx: 720, cy: 560, s: 1.333 }],
+        [84.7, { y: 190, rx: 0, full: 1, cx: 720, cy: 560, s: 1.333 }],
+        [85.6, { y: 190, rx: 0, full: 1, cx: 720, cy: chg.y + chg.h / 2 - 40, s: 1.333 }],
+        [86.3, { y: 190, rx: 0, full: 1, cx: 900, cy: chg.y + chg.h / 2 - 20, s: 1.75 }],
+        [87.9, { y: 190, rx: 0, full: 1, cx: 900, cy: chg.y + chg.h / 2 - 20, s: 1.75 }],
+        [88.5, { y: 190, rx: 0, full: 1, cx: 1060, cy: chg.y + chg.h - 60, s: 2.1 }],
+        [89.8, { y: 190, rx: 0, full: 1, cx: 1060, cy: chg.y + chg.h - 60, s: 2.1 }],
+        [90.6, { y: 190, rx: 0, full: 1, cx: cheat.x + cheat.w / 2, cy: cheat.y + 200, s: 1.55 }],
+        [93.1, { y: 190, rx: 0, full: 1, cx: cheat.x + cheat.w / 2, cy: cheat.y + 215, s: 1.6 }],
+        [93.9, { y: 190, rx: 0, full: 1, cx: 720, cy: dockTop, s: 1.9 }],
+        [96.4, { y: 190, rx: 0, full: 1, cx: 720, cy: dockTop, s: 1.9 }],
+        [96.9, { y: 190, rx: 0, full: 1, cx: fg.x + fg.w / 2, cy: fg.y + 40, s: 2.3 }],
+        [97.85, { y: 190, rx: 0, full: 1, cx: fg.x + fg.w / 2, cy: fg.y + 40, s: 2.3 }],
+        [98.35, { y: 190, rx: 0, full: 1, cx: dlg.x + dlg.w / 2, cy: dlg.y + dlg.h / 2 - 70, s: 1.8 }],
+        [99.25, { y: 190, rx: 0, full: 1, cx: dlg.x + dlg.w / 2, cy: dlg.y + dlg.h / 2 - 70, s: 1.8 }],
+        [99.8, { y: 190, rx: 0, full: 1, cx: 720, cy: dock2.y + 330, s: 1.9 }],
+        [101.25, { y: 190, rx: 0, full: 1, cx: 720, cy: dock2.y + 330, s: 1.9 }],
+      ]);
+      const R = lerpR({ ...PLANE, y: D.y }, FULL, D.full);
+      repl.freeze = t >= 97.75 && t < 99.5 ? fsy : null;
+      repl.set(R, { cx: D.cx, cy: D.cy, s: D.s }, D.rx > 0.2 ? `perspective(1800px) rotateX(${D.rx}deg)` : '');
+      repl.box.style.transformOrigin = '50% 100%';
+      show(topFade, D.full > 0.5); topFade.style.opacity = clamp(D.full * 2 - 1);
+      // cursor: travels to the real control, presses it; the click itself happens in the page at the same frame
+      const at = r => repl.map(r.x + r.w / 2, r.y + r.h * 0.6);
+      const path = [[86.3, null], [87.0, ap], [87.8, ap], [88.3, null], [94.1, null], [94.75, pz], [95.4, pz], [95.9, null], [96.9, null], [97.6, fg], [98.1, fg], [98.6, yes], [99.4, yes], [99.9, null]];
       let cp = null;
-      for (let i = 0; i < path.length - 1; i++) { const [t0, a] = path[i], [t1, b] = path[i + 1]; if (t >= t0 && t < t1) { const e = expoOut(seg(t, t0, t1)); cp = bezier2(a, { x: (a.x + b.x) / 2 + 80, y: Math.min(a.y, b.y) - 90 }, b, e); } }
-      if (show(cur, !!cp)) { const down = [85.0, 98.0].some(tp => t >= tp && t < tp + 0.1); cur.style.transform = `translate(${cp.x - 8}px,${cp.y - 4}px) scale(${(down ? 0.9 : 1) * 1.6})`; }
-      // pause: lifted out of the dock to full scale, pressed, label swaps, the transcript gap draws
-      if (show(pauseBtn, t >= 90.5 && t < 94.0)) {
-        const a = expoInOut(seg(t, 90.5, 91.1)), back = expoIn(seg(t, 93.55, 94.0)), p2 = pressScale(t, 91.6);
-        pauseBtn.textContent = t >= 91.65 ? 'Resume listening' : 'Pause listening';
-        pauseBtn.style.transformOrigin = '50% 50%';
-        pauseBtn.style.transform = `translate(${lerp(1300, 120, a)}px,${lerp(420, 470, a) + 800 * back}px) scale(${lerp(0.4, 1, a) * p2})`;
-        pauseBtn.style.background = t >= 91.65 ? 'var(--verm)' : 'var(--ink)'; pauseBtn.style.color = t >= 91.65 ? 'var(--ink)' : 'var(--paper)';
+      for (let i = 0; i < path.length - 1; i++) {
+        const [t0, a] = path[i], [t1, b] = path[i + 1];
+        if (t >= t0 && t < t1 && (a || b)) { const A2 = a ? at(a) : { x: 1980, y: 1150 }, B2 = b ? at(b) : { x: 1980, y: 1150 }; cp = bezier2(A2, { x: (A2.x + B2.x) / 2 + 60, y: Math.min(A2.y, B2.y) - 80 }, B2, expoOut(seg(t, t0, t1))); }
       }
-      if (show(gap, t >= 91.9 && t < 93.95)) Object.assign(gap.style, { width: 880 * expoOut(seg(t, 91.9, 93.0)) + 'px', transform: 'translate(120px,760px)', opacity: 1 - seg(t, 93.55, 93.95) });
-      if (show(forgetBtn, t >= 94.3 && t < 96.4)) {
-        const a = expoInOut(seg(t, 94.3, 94.9)), p2 = pressScale(t, 96.0), out = expoIn(seg(t, 96.1, 96.4));
-        forgetBtn.style.transformOrigin = '50% 50%';
-        forgetBtn.style.transform = `translate(${lerp(1500, 120, a)}px,${lerp(420, 470, a)}px) scale(${lerp(0.4, 1, a) * p2 * (1 - out)})`;
+      if (show(cur, !!cp)) { const down = [87.2, 94.9, 97.8, 99.2].some(tp => t >= tp && t < tp + 0.1); cur.style.transform = `translate(${cp.x - 8}px,${cp.y - 4}px) scale(${(down ? 0.88 : 1) * 1.5})`; }
+      const rp = [[87.2, ap], [94.9, pz], [97.8, fg], [99.2, yes]].find(([tp]) => t >= tp && t < tp + 0.45);
+      if (show(ripple, !!rp)) { const c = at(rp[1]), q2 = seg(t, rp[0], rp[0] + 0.45), r = 20 + 90 * expoOut(q2); Object.assign(ripple.style, { width: 2 * r + 'px', height: 2 * r + 'px', transform: `translate(${c.x - r}px,${c.y - r}px)`, opacity: 1 - q2 }); }
+      // carry the object: the corrected chapter leaves the confirmation, rides with the camera and lands on its card in the recap
+      if (show(chip, t >= 89.2 && t < 90.95)) {
+        const lift = clamp(land(t, 89.2, 0.6, 12), 0, 1.08), drop = expoIn(seg(t, 90.45, 90.85));
+        const w = chip.offsetWidth;
+        const tgtY = 540 + (52 - 200) * 1.55;
+        const y = lerp(lerp(700, 470, lift), tgtY - 40, drop), sc = lerp(lerp(0.6, 1.05, clamp(lift)), 0.62, drop);
+        const sway = 4 * Math.sin((t - 89.2) * 5) * (1 - drop);
+        chip.style.transform = `translate(${960 - w / 2}px,${y}px) scale(${sc}) rotate(${sway * 0.4}deg)`;
+        chip.style.opacity = 1 - seg(t, 90.8, 90.95);
       }
-      if (show(dlgV.box, t >= 96.15 && t < 98.6)) {
-        const a = clamp(springAt(t - 96.15, 0.6, 12), 0, 1.1), p2 = pressScale(t, 98.0), out = expoIn(seg(t, 98.25, 98.6));
-        const W = 1180, H = W * 552 / 840;
-        dlgV.set({ x: 370, y: lerp(1100, 290, a) + 900 * out, w: W, h: H, r: 40 }, { cx: 280, cy: 184, s: W / 560 * p2 });
+      if (show(landRing, t >= 90.8 && t < 91.35)) {
+        const q2 = seg(t, 90.8, 91.35), c0 = repl.map(cheat.x, cheat.y), c1 = repl.map(cheat.x + cheat.w, cheat.y + cheat.h), g = 12 + 40 * expoOut(q2);
+        Object.assign(landRing.style, { width: c1.x - c0.x + 2 * g + 'px', height: c1.y - c0.y + 2 * g + 'px', borderRadius: 24 + g + 'px', transform: `translate(${c0.x - g}px,${c0.y - g}px)`, opacity: 1 - q2 });
       }
+      // zoom through the dark dock into the Codex passage
+      if (show(zoomDark, t >= 101.3 && t < 102.3)) { const c = at(yes), r = 2300 * expoIn(seg(t, 101.3, 102.0)); Object.assign(zoomDark.style, { width: 2 * r + 'px', height: 2 * r + 'px', borderRadius: '50%', transform: `translate(${c.x - r}px,${c.y - r}px)`, opacity: 1 }); }
+    } else show(zoomDark, false);
+
+    // ---------- P9: Codex, one fact at a time ----------
+    if (show(p9, t >= 102.0 && t < 126.2)) {
+      if (show(durO.box, t >= 104.0 && t < 108.0)) {
+        const g = clamp(springAt(t - 104.0, 0.6, 12), 0, 1.08), out = expoIn(seg(t, 107.6, 108.0));
+        const m = 574 * cubicInOut(seg(t, 104.1, 105.6)), hh = m / 60, mm = m % 60;
+        const str = `${Math.floor(hh)}h${String(Math.floor(mm)).padStart(2, '0')}min`;
+        durO.set(str, { 0: odoVal(m, 60, false), 2: odoVal(mm, 10, false), 3: odoVal(mm, 1, true) });
+        durO.box.style.transform = `translate(0px,${460 - 160 * out}px) scale(${0.92 + 0.08 * g})`; durO.box.style.opacity = clamp(g * 2) * (1 - out);
+        durL.style.transform = `translate(0px,${720 - 160 * out}px)`; durL.style.opacity = seg(t, 104.4, 104.8) * (1 - out); show(durL, true);
+      } else show(durL, false);
+      // the 27 workers fly through real 3D space around the camera, near ones large and sharp, far ones small and soft
+      const swOn = t >= 107.9 && t < 110.5;
+      if (show(space, swOn)) {
+        const a = expoOut(seg(t, 107.9, 108.9)), out = expoIn(seg(t, 109.8, 110.45));
+        const travel = (t - 107.9) * 560 + 2200 * out;
+        swarm.forEach((w, i) => {
+          let z = ((w.z0 * 3400 + travel) % 3400) - 2800;     // -2800 (far) .. 600 (passing the camera)
+          const ang = w.ang + (t - 107.9) * w.spin;
+          const x = Math.cos(ang) * w.rad * (0.55 + 0.45 * a), y = w.y0 * 0.7 + Math.sin(ang) * w.rad * 0.35;
+          w.e.style.transform = `translate3d(${960 + x - 160}px,${560 + y}px,${z}px) rotateY(${-x / 60}deg)`;
+          const dfocus = Math.abs(z + 600) / 900;
+          w.e.style.filter = `blur(${Math.min(8, dfocus * 3).toFixed(1)}px)`;
+          w.e.style.opacity = clamp((z + 2800) / 700) * clamp((600 - z) / 250) * a * (1 - out);
+        });
+      }
+      if (show(toolO.box, t >= 110.55 && t < 113.15)) {
+        const g = clamp(springAt(t - 110.55, 0.6, 12), 0, 1.08), out = expoIn(seg(t, 112.8, 113.15));
+        const v = 4798 * cubicInOut(seg(t, 110.5, 111.9));
+        const n = Math.floor(v), s4 = String(n).padStart(4, '0');
+        const f = {}; [1000, 100, 10, 1].forEach((pl, i) => { f[i < 1 ? 0 : i + 1] = odoVal(v, pl, pl === 1); });
+        toolO.set(`${s4[0]},${s4.slice(1)}`, f);
+        toolO.box.style.transform = `translate(0px,${330 - 120 * out}px) scale(${0.92 + 0.08 * g})`; toolO.box.style.opacity = clamp(g * 2) * (1 - out);
+        show(toolL, true); toolL.style.transform = `translate(0px,${620 - 120 * out}px)`; toolL.style.opacity = seg(t, 110.8, 111.2) * (1 - out);
+      } else show(toolL, false);
+      bugCards.forEach((b, i) => {
+        const t0 = 113.3 + i * 3.1;
+        if (!show(b.c, t >= t0 && t < t0 + 3.15)) return;
+        const a = clamp(land(t, t0, 0.6, 9), 0, 1.06), out = expoIn(seg(t, t0 + 2.8, t0 + 3.15));
+        const hit = t >= t0 + 1.7 ? Math.exp(-(t - t0 - 1.7) * 9) * Math.cos((t - t0 - 1.7) * 38) : 0;
+        b.c.style.transform = `perspective(1800px) translate3d(${100 - 1700 * out}px,${300 + 14 * hit}px,${-900 * (1 - clamp(a))}px) rotateX(${8 * (1 - clamp(a))}deg) rotateY(${-14 * (1 - clamp(a)) + 0.8 * Math.sin((t - t0) * 1.3)}deg) scale(${1 + 0.02 * seg(t, t0 + 0.5, t0 + 2.8) - 0.015 * hit},${1 + 0.02 * seg(t, t0 + 0.5, t0 + 2.8) + 0.01 * hit})`;
+        b.c.style.boxShadow = `0 10px 0 var(--paper-side), 0 ${60 - 30 * Math.abs(hit)}px ${120 - 50 * Math.abs(hit)}px -40px rgb(0 0 0 / .85)`;
+        const s = 1.9 - 0.9 * expoOut(seg(t, t0 + 1.7, t0 + 1.82));
+        b.st.style.transform = `rotate(-7deg) scale(${t >= t0 + 1.7 ? s : 0})`;
+      });
+      if (show(q, t >= 119.5 && t < 122.7)) { const a = expoOut(seg(t, 119.5, 120.0)), out = expoIn(seg(t, 122.35, 122.7)); q.style.transform = `translate(80px,${lerp(240, 150, a) - 600 * out}px)`; q.style.opacity = a * (1 - out); }
+      if (show(ans, t >= 120.9 && t < 122.7)) { const g = clamp(springAt(t - 120.9, 0.6, 14), 0, 1.1), out = expoIn(seg(t, 122.35, 122.7)); ans.style.transform = `translate(140px,${640 - 600 * out}px) scale(${g})`; }
+      if (show(testO.box, t >= 122.75 && t < 125.6)) {
+        const g = clamp(springAt(t - 122.75, 0.6, 12), 0, 1.08);
+        const v = lerp(609, 656, cubicInOut(seg(t, 124.0, 124.8)));
+        testO.set(String(Math.floor(v)), { 0: odoVal(v, 100, false), 1: odoVal(v, 10, false), 2: odoVal(v, 1, true) });
+        testO.box.style.transform = `translate(0px,${320}px) scale(${0.92 + 0.08 * g})`; testO.box.style.opacity = clamp(g * 2);
+        show(testL, true); testL.textContent = t < 124.0 ? 'tests passed when the Codex session ended' : 'tests pass today, across 73 files';
+        testL.style.transform = `translate(0px,${640}px)`; testL.style.opacity = clamp(g * 2) * (1 - seg(t, 123.85, 124.0) + seg(t, 124.0, 124.15));
+      } else show(testL, false);
     }
 
-    // ---------- P9 (ink) ----------
-    if (show(p9, t >= 101.9 && t < 126.0)) {
-      rows9.forEach((r, i) => { r.style.transform = `translateX(${(i % 2 ? -1 : 1) * (t - 102) * 40 - 600}px)`; });
-      nine2.root.style.transform = `translate(60px,${400 - 210 * 0.22 - 160 * expoInOut(seg(t, 103.9, 104.4))}px)`;
-      clk.style.display = t >= 103.95 && t < 106.0 ? 'flex' : 'none';
-      if (t >= 103.95 && t < 106.0) {
-        const a = expoOut(seg(t, 103.95, 104.4)), out = expoIn(seg(t, 105.6, 106.0));
-        clk.style.transform = `translate(${260 - 1900 * out}px,${lerp(720, 600, a)}px)`; clk.style.opacity = a;
-        const mins = Math.round(lerp(0, 574, cubicInOut(seg(t, 104.1, 105.1)))), tt = (18 * 60 + 57 + mins) % 1440;
-        cTo.textContent = `${String(Math.floor(tt / 60)).padStart(2, '0')}:${String(tt % 60).padStart(2, '0')}`;
-        hblur(cTo, 0);
-      }
-      if (show(durPlate, t >= 105.15 && t < 106.0)) { const g = clamp(springAt(t - 105.15, 0.5, 14), 0, 1.25), out = expoIn(seg(t, 105.6, 106.0)); durPlate.style.transform = `translate(${1250 - 1900 * out}px,${300}px) scale(${g}) rotate(-6deg)`; }
-      // the 27 worker names swarm in from every edge, orbit, then pour into the tool-call counter
-      const wOn = t >= 105.95 && t < 110.6;
-      workerTags.forEach((e, i) => {
-        if (!show(e, wOn)) return;
-        const ang = i * 2.399, edge = 1500;
-        const a = expoOut(seg(t, 106.0 + i * 0.035, 106.85 + i * 0.035));
-        const orbit = (t - 106) * 0.35 * (i % 2 ? 1 : -1);
-        const rad = 470 + (i % 5) * 70;
-        const hx = 960 + Math.cos(ang + orbit) * rad * 1.45, hy = 600 + Math.sin(ang + orbit) * rad * 0.68;
-        const pour = expoIn(seg(t, 107.7 + (i % 9) * 0.05, 108.4 + (i % 9) * 0.05));
-        const x = lerp(lerp(960, hx, a), 960, pour) - 150, y = lerp(lerp(540, hy, a), 600, pour);
-        const z = 0.75 + (i % 4) * 0.15;
-        e.style.transform = `translate(${x}px,${y}px) scale(${z * (1 - 0.8 * pour)})`;
-        e.style.opacity = 1 - pour;
-        e.style.filter = z < 0.8 ? 'blur(2px)' : 'none';
-      });
-      if (show(tools, t >= 107.9 && t < 110.6)) {
-        toolsN.textContent = Math.round(CODEX.toolCalls * cubicInOut(seg(t, 108.0, 109.4))).toLocaleString('en-US');
-        const g = clamp(springAt(t - 107.9, 0.55, 12), 0, 1.15), out = expoIn(seg(t, 110.15, 110.6));
-        tools.style.transform = `translate(0px,${330 - 700 * out}px) scale(${g})`; tools.style.transformOrigin = '50% 50%';
-      }
-      bugs.forEach((b, i) => {
-        if (!show(b.c, t >= b.t0 && t < b.t0 + 3.4)) return;
-        const a = expoOut(seg(t, b.t0, b.t0 + 0.5)), out = expoIn(seg(t, b.t0 + 3.0, b.t0 + 3.4));
-        b.c.style.transform = `perspective(1800px) translate(${60 + (1 - a) * 1700 - out * 2100}px,${250}px) rotateY(${-22 * (1 - a)}deg)`;
-        const s = 2.0 - 1.0 * expoOut(seg(t, b.t0 + 1.55, b.t0 + 1.66));
-        b.st.style.transform = `rotate(-7deg) scale(${t >= b.t0 + 1.55 ? s : 0})`;
-      });
-      if (show(quote, t >= 117.75 && t < 121.3)) { const a = expoOut(seg(t, 117.75, 118.25)), out = expoIn(seg(t, 120.9, 121.3)); quote.style.transform = `translate(${60}px,${lerp(420, 170, a) - 1000 * out}px)`; quote.style.opacity = a; }
-      if (show(answer, t >= 119.2 && t < 121.3)) { const g = clamp(springAt(t - 119.2, 0.6, 14), 0, 1.1), out = expoIn(seg(t, 120.9, 121.3)); answer.style.transform = `translate(${60}px,${720 - 1000 * out}px) scaleX(${g})`; }
-      // three giant numbers, each pushing the previous out (a type wall)
-      stats.forEach((e, i) => {
-        const t0 = 121.5 + i * 1.3, t1 = t0 + 1.3;
-        if (!show(e, t >= t0 - 0.05 && t < (i === 2 ? 125.7 : t1))) return;
-        const a = expoOut(seg(t, t0, t0 + 0.4)), out = i === 2 ? expoIn(seg(t, 125.3, 125.7)) : expoIn(seg(t, t1 - 0.28, t1));
-        e.style.transform = `translate(${100 + 1500 * (1 - a) - 1900 * out}px,${170}px)`;
-        hblur(e, ((1 - a) + out) * 50);
-      });
-    }
-
-    // ---------- P10 ----------
+    // ---------- P10: the real setup page, the real replay, then the mark ----------
     if (show(p10, t >= 125.6)) {
-      if (show(url, t >= 132.2 && t < 133.4)) { const g = clamp(springAt(t - 132.2, 0.55, 14), 0, 1.2), out = expoIn(seg(t, 133.05, 133.4)); url.style.transform = `translate(${960 - 780}px,${600}px) scale(${g * (1 - out)})`; }
-      for (const s of [line10, line10b]) s.root.style.opacity = 1 - seg(t, 133.0, 133.3);
-      const k = 3.8, x0 = Math.round((1920 - 440 * k) / 2), y0 = 250;
-      // the stream keeps playing behind the mark (bookend of the brand beat)
-      if (show(endBg, t >= 133.1)) { endBg.style.opacity = 0.3 * seg(t, 133.1, 134.2); const pr = seekVideo(endBg, 20 + (t - 133.1)); if (pr) pending.push(pr); }
-      // the four chapter timecodes spiral in and settle into the tile on the hit
+      show(fade10, t >= 126.0 && t < 133.5);
+      if (show(setupL.box, t >= 126.0 && t < 131.95)) {
+        const a = expoOut(seg(t, 126.0, 127.0)), out = expoIn(seg(t, 131.5, 131.95));
+        const R = { ...PLANE, y: lerp(1100, 200, a) };
+        const K = { cx: 720, cy: 450, s: 1600 / 1440 };
+        setupL.set({ ...R, y: R.y - 1150 * out }, K, a < 0.999 ? `perspective(1800px) rotateX(${24 * (1 - a)}deg)` : '');
+        setupL.box.style.transformOrigin = '50% 100%';
+      }
+      if (show(rep0.box, t >= 131.75 && t < 133.45)) {
+        const a = expoOut(seg(t, 131.75, 132.5)), out = expoInOut(seg(t, 133.0, 133.45));
+        rep0.set({ ...PLANE, y: lerp(1100, 200, a) + 1100 * out }, { cx: 720, cy: 450, s: 1600 / 1440 }, a < 0.999 ? `perspective(1800px) rotateX(${22 * (1 - a)}deg)` : '');
+        rep0.box.style.transformOrigin = '50% 100%';
+      }
+      if (show(url, t >= 132.25 && t < 133.4)) { const g = clamp(springAt(t - 132.25, 0.55, 14), 0, 1.15), out = expoIn(seg(t, 133.05, 133.4)); const w = url.offsetWidth; url.style.transform = `translate(${960 - w / 2}px,${900}px) scale(${g * (1 - out)})`; }
+      const k = 2.6, x0 = Math.round((1920 - 440 * k) / 2), y0 = 300;
       const tc = { x: x0 + 55 * k, y: y0 + 53 * k };
       endTabs.forEach((e, i) => {
-        if (!show(e, t >= 132.9 && t < 134.08)) return;
-        const g = expoIn(seg(t, 132.95 + i * 0.04, 134.02)), ang = i * Math.PI / 2 + 0.7 + g * 2.2, r = lerp(820, 0, g);
-        e.style.transform = `translate(${tc.x + Math.cos(ang) * r * 1.2 - 70}px,${tc.y + Math.sin(ang) * r * 0.6 - 40}px) scale(${1.4 - 1.1 * g}) rotate(${(1 - g) * 30}deg)`;
-        hblur(e, g * 24);
+        if (!show(e, t >= 133.0 && t < 134.05)) return;
+        const g = expoIn(seg(t, 133.0 + i * 0.04, 134.0)), ang = i * Math.PI / 2 + 0.7 + g * 2.2, r = lerp(760, 0, g);
+        e.style.transform = `translate(${tc.x + Math.cos(ang) * r * 1.25 - 70}px,${tc.y + Math.sin(ang) * r * 0.6 - 40}px) scale(${1.3 - 1.0 * g}) rotate(${(1 - g) * 25}deg)`;
+        hblur(e, g * 20);
       });
       if (show(endMark.box, t >= 133.92)) {
         const hit = t >= 134 ? 1 + 0.1 * Math.exp(-(t - 134) * 8) : 1;
-        placeMark(endMark, x0, y0, 96 * k, { sx: hit, sy: 2 - hit, back: clamp(seg(t, 133.92, 134.2)), sheen: 0.7 * Math.sin(Math.PI * seg(t, 134.15, 135.8)) + 0.6 * Math.sin(Math.PI * seg(t, 136.2, 137.9)) });
+        placeMark(endMark, x0, y0, 96 * k, { sx: hit, sy: 2 - hit, back: clamp(seg(t, 133.92, 134.2)), sheen: 0.7 * Math.sin(Math.PI * seg(t, 134.15, 135.8)) + 0.6 * Math.sin(Math.PI * seg(t, 136.0, 137.8)) });
       }
-      if (show(endWord, t >= 134.0)) { const a = expoOut(seg(t, 134.0, 134.55)); Object.assign(endWord.style, { width: 300 * k + 'px', transform: `translate(${x0 + 109 * k - 90 * (1 - a)}px,${y0}px)`, clipPath: `inset(0 ${100 - 100 * a}% 0 0)` }); }
-      if (show(endTag, t >= 134.5)) { const a = wordIn(t, 134.6, 0.4); endTag.style.opacity = a.op; endTag.style.transform = `translate(0px,${690 + 30 * (1 - a.e)}px)`; endTag.style.filter = a.blur > 0.4 ? `blur(${a.blur}px)` : 'none'; }
-      if (show(endUrl, t >= 135.05)) { const g = clamp(springAt(t - 135.1, 0.55, 14), 0, 1.15); endUrl.style.transform = `translate(${960 - 520}px,${840}px) scale(${g})`; }
-      p10.style.transformOrigin = '50% 50%';
-      p10.style.transform = `scale(${1 + 0.03 * seg(t, 134.0, END)})`;
+      if (show(endWord, t >= 134.0)) { const a = expoOut(seg(t, 134.0, 134.55)); Object.assign(endWord.style, { width: 300 * k + 'px', transform: `translate(${x0 + 109 * k - 80 * (1 - a)}px,${y0}px)`, clipPath: `inset(0 ${100 - 100 * a}% 0 0)` }); }
+      if (show(endTag, t >= 134.5)) { const a = wordIn(t, 134.6, 0.4); endTag.style.opacity = a.op; endTag.style.transform = `translate(0px,${630 + 24 * (1 - a.e)}px)`; endTag.style.filter = a.blur > 0.4 ? `blur(${a.blur}px)` : 'none'; }
+      if (show(endUrl, t >= 135.1)) { const g = clamp(springAt(t - 135.15, 0.55, 14), 0, 1.12); const w = endUrl.offsetWidth; endUrl.style.transform = `translate(${960 - w / 2}px,${760}px) scale(${g})`; }
     }
   }
   return { setup, render };
 }
+

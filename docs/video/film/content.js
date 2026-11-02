@@ -3,17 +3,19 @@
 export const FACTS = {
   channel: 'Foxlight Dev', title: 'Building a tiny cave platformer',
   raid: { from: 'pixelmoth', viewers: 37 },
-  moment: { count: 45, messages: ["MOON JUMP", "he's gone", "fox to the moon", "LUL", "o7 fox", "the fox has left the cave", "MOON JUMP MOON JUMP", "clip it", "where did he go", "LUL LUL", "bye fox", "lol", "moon jump any%", "o7"] },
+  moment: { count: 45, burst: ["MOON JUMP", "he's gone", "fox to the moon", "LUL", "o7 fox", "the fox has left the cave", "MOON JUMP MOON JUMP", "clip it", "where did he go", "LUL LUL", "bye fox", "lol", "moon jump any%", "o7", "that spring is strong", "the ceiling was a suggestion", "clip that", "MOON JUMP", "he is in orbit now", "fox astronaut", "LUL", "see you on the moon", "speedrun strat", "MOON JUMP", "lol what", "o7", "the fox is free", "clip it", "gone forever", "MOON JUMP MOON JUMP", "LUL", "too much spring", "he went to space", "moon jump is canon", "byeee", "lmao", "one small jump for fox", "MOON JUMP", "o7 fox", "that was perfect", "LUL", "the fox has left the cave", "clip it", "fox to the moon", "MOON JUMP"], messages: ["MOON JUMP", "he's gone", "fox to the moon", "LUL", "o7 fox", "the fox has left the cave", "MOON JUMP MOON JUMP", "clip it", "where did he go", "LUL LUL", "bye fox", "lol", "moon jump any%", "o7"] },
+  // all 45 messages of the moon jump window, in order (fixtures/foxlight.ts BURST_TEXT)
   lore: { term: "moon jump", origin: '2:05' },
 };
 // CODEX: mined from the Codex session transcript by tools/mine-codex.py (tools/codex-facts.json),
 // test counts from docs/testing/functional/release-preflight.md, load numbers from the submission journal.
+export const CHAT = { early: ['hello, the fox is cute', 'what engine is this', 'love the lantern idea', 'a spring pad, nice'] };
 export const CODEX = {
-  workers: 27, toolCalls: 4798, duration: '9 h 34 min',
+  workers: 27, toolCalls: 4798, duration: '9 h 34 min', from: '18:57', to: '04:31',
   workerNames: ["twitch_research", "story_engine_research", "product_challenge", "architecture_proposal", "visual_direction", "install_twitch_cli", "storage_build", "shared_ui_build", "runtime_foundation", "foundation_review", "foundation_review_final", "story_domain", "twitch_engine", "providers_engine", "publication_engine", "owner_service", "live_engine_review", "dock_experience", "public_experience", "overlay_experience", "replay_experience", "experience_review", "documentation", "release_audit", "experience_review_two", "engine_write_probe", "source_recovery"],
   bugs: [
-    { t0: 110.9, label: 'Reproduced, then fixed', text: 'When the chat queue was full, a deletion that had already arrived was dropped', stamp: 'fixed' },
-    { t0: 114.2, label: 'Found in a long load run, reproduced, then fixed', text: 'After a provider outage, chat pushed out recent speech and the story stopped updating', stamp: 'fixed' },
+    { t0: 110.9, label: 'It reproduced the bug first', text: 'When the chat queue was full, a deletion that had already arrived was dropped', stamp: 'fixed' },
+    { t0: 114.2, label: 'Found in a long load run', text: 'After a provider outage, chat pushed out recent speech and the story stopped updating', stamp: 'fixed' },
   ],
   question: { label: 'The owner, translated from Russian', text: 'Is a test this long really needed?', answer: 'Codex ended the run early and recorded it as partial: 280,780 chats over 3.80 virtual hours' },
   stats: [

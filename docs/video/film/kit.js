@@ -55,11 +55,14 @@ export class Slot {
         for (const e of [w.el, w.plate, w.under]) if (e) e.style.display = on ? '' : 'none';
         if (!on) continue;
         const a = wordIn(t, w.t, 0.34);
+        const sp = springAt(t - w.t + 0.08, 0.55, 17);          // 0 -> 1 with a small overshoot
         const out = expoIn(seg(t, ph.t1 + w.i * 0.025, ph.t1 + 0.26 + w.i * 0.025));
-        const y = S * 0.22 + S * 1.25 * (1 - a.e) * (ph.from === 'side' ? 0 : 0.55) - S * 1.3 * out;
-        const dx = ph.from === 'side' ? a.dx * 2 : 0;
+        const y = S * 0.22 + S * 0.62 * (1 - sp) * (ph.from === 'side' ? 0 : 1) - S * 1.3 * out;
+        const dx = ph.from === 'side' ? S * 0.8 * (1 - sp) : 0;
+        const land = w.emph ? Math.max(0, Math.sin(Math.PI * seg(t, w.t + 0.12, w.t + 0.34))) : 0;   // contact squash
         w.el.style.opacity = a.op;
-        w.el.style.transform = `translate(${w.x + dx}px,${y}px) scale(${a.sc})`;
+        w.el.style.transformOrigin = '50% 90%';
+        w.el.style.transform = `translate(${w.x + dx}px,${y}px) scale(${(1 + 0.05 * (1 - clamp(sp))) * (1 + 0.06 * land)},${(1 + 0.05 * (1 - clamp(sp))) * (1 - 0.07 * land)})`;
         const bl = a.blur * 0.8 + out * 10;
         w.el.style.filter = bl > 0.4 ? `blur(${bl.toFixed(2)}px)` : 'none';
         if (w.emph === 'outline') { const f = seg(t, w.t + 0.25, w.t + 0.45); w.el.style.webkitTextStroke = `${Math.max(2, S * 0.025)}px currentColor`; w.el.style.color = `rgb(244 239 230 / ${f})`; w.el.style.webkitTextStrokeColor = 'var(--paper)'; }

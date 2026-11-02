@@ -13,7 +13,7 @@ const shot = async (loc, name) => { try { await loc.first().scrollIntoViewIfNeed
   await sec.scrollIntoViewIfNeeded(); await p.mouse.wheel(0, 200); await p.waitForTimeout(6000);
   await shot(sec.locator('[aria-label*="chat" i]').first(), 'chat-answer');
   // public recap page
-  await p.goto(APP + '/c/foxlight_dev'); await p.waitForTimeout(2500);
+  await p.goto(APP + '/example'); await p.waitForTimeout(2500);
   await p.screenshot({ path: O + 'public-page.png', fullPage: true });
   await shot(p.locator('article, section, div', { hasText: 'Right now' }).filter({ hasText: 'The goal' }).last(), 'public-now');
   await shot(p.locator('article', { hasText: 'The moon jump' }).first(), 'public-moon');

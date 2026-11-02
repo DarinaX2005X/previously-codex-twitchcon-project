@@ -18,7 +18,7 @@ Sound world: tape and felt. Rewind chirps and tape stops, felt thumps under plat
 
 ## Truth rules for this film
 
-- All product footage is the real app (`/replay`, `/c/foxlight_dev`, the replay demo dock, the overlay lab with the Foxlight plan) replaying the example recording. Said once, plainly, at 0:24: the game footage is ours, the speech, chat and raid in it are written as an example, and streamers run it with their own Twitch app and OpenAI key (said again at the end).
+- All product footage is the real app (`/replay`, `/example`, the replay demo dock, the overlay lab with the Foxlight plan) replaying the example recording. Said once, plainly, at 0:24: the game footage is ours, the speech, chat and raid in it are written as an example, and streamers run it with their own Twitch app and OpenAI key (said again at the end).
 - Numbers only from evidence. Codex numbers come from `tools/codex-facts.json` (mined from the Codex session transcript and its 27 worker sessions with `tools/mine-codex.py`), test counts from `docs/testing/functional/*.md`, load numbers from the submission journal.
 - The visual redesign and this film were made with Claude agents. The Codex passage credits Codex only for what the transcript shows: research, architecture, the engine, the integration, tests and reproduced bugs.
 - The owner wrote to Codex in Russian. Her quotes on screen are marked as translated.
@@ -59,37 +59,41 @@ Times are film seconds. "Scene t" is the raid scene's own clock in the overlay l
 | 11–12 | 20.55–22.90 | The mark rises and shrinks to the top; the tagline lands at 128 px in word groups: "Catch up" / "with the stream", then "while it" rises, "keeps going" pops in on a vermilion plate | the plate grows | thumps per group, plate pop |
 | 12 | 22.95–24.00 | Fill-through: the "keeps going" plate grows until vermilion fills the frame | the next passage lives on it | riser into a plate slap |
 
-### 4. Honest frame (24.0–30.0, bars 13–15)
+### Draft 5: the real app, live
 
-On the vermilion field, ink type at 112 px: "What you see next is the real app" ("real app" on an ink plate), "replaying an example recording" (an ink line draws under "example recording"). A paper note opens and its words light in reading order: "We made the game for this example. The speech, chat and raid in it are written as an example too." The field then contracts into a rounded window that becomes the stream player, and the note folds into the "Example recording" tag on the player's title bar, where it stays. Sound: field drop, thumps, draw, paper flick, morph.
+The owner rejected UI shown as cropped screenshots inside window frames. From draft 5 the film embeds the running product pages live (`/example`, `/replay`, `/setup`) as iframes at real resolution and moves the camera through them; `tools/ui-live.cjs` puts the replay into each state with the real controls at the film time it is shown (Apply my wording at 87.2 s, the dock at 93.45 s, Pause listening at 94.9 s, Forget last 2 min at 97.8 s, Forget 2 minutes at 99.2 s), so the corrections, the paused state, the Forget dialog and its result are the product's own screens. The one component shown as an image is the whole chat panel with the bot's answer (the landing demo animates in real time and cannot be held still). The hook's first line plays slower (time remap in `film.js`) with lighter blur and a camera that leads each word and centres "stream". The Codex passage drops the rings; the workers fly through real 3D depth; counts roll on odometer digits.
 
-### 5. Listening (30.0–45.5, bars 16–22)
+### Rework after the owner's review (draft 4)
 
-One headline slot above the player swaps phrases in place while the demo below never stops: "It listens to what the streamer says" / "and reads the chat" / "then writes a short chapter" / "and waits 75 seconds before showing it" / "Then the stream goes on". The real transcript types under the player (0:05 tab), three real early chat messages pop in on the right. Speech and chat fly into a paper title card that types "Fox learns to jump" with its 0:05 tab; a vermilion ring counts the 75 second hold down (labelled "counted faster here"); "Published" stamps; the card drops into the timeline strip at the bottom. The rewind tile appears at the end of the strip and is pressed, mirrored, as fast forward: the clock rolls to 1:40, the moon jump clip plays, the transcript types "Okay, let me try the spring." Sound: key presses varied, chat pops, whoosh, plate, rising ticks, stamp, deep click and a forward tape squeal.
+The owner judged draft 3 dense, dark, abrupt and full of small piles. Every reference sheet was studied again (notes in `review/video/REFERENCE-NOTES.md`). From 24 s on the film now follows these rules: one focal object per moment while the context dims; calm centred captions at 84 px that hold at least 1.5 s; a light paper field with soft vermilion and teal light (dark only for the hook and the Codex passage); field changes only through a shrink, zoom-through or growing circle; chat is always the real chat column with one lit row, never a pile.
 
-### 6. The moon jump (45.5–56.0, bars 23–28)
+### 4. Honest frame (24.0–30.0)
 
-"Chat reacts to the moon jump": the 14 real messages burst from the player as lime-edged slips while a lime counter rolls to 45 messages in 10 seconds. The slips collapse into the vermilion "moon jump" plate with its 2:05 origin tab and one-line explanation ("and the running joke keeps its origin"), which docks on the strip. "Every chapter points to its sources": the 3:30 and 5:20 cards whip in, open into their clips for a beat and file into the strip. Sound: granular chatter, whoosh, ceramic taps, card flicks, shutters, ticks.
+Vermilion field: "What you see next is the real app" / "replaying an example recording" at 100 px, and a paper note whose words light in reading order: "We made the game for this example. The speech, chat and raid in it are written as an example too." The vermilion field shrinks into the "Example recording" tag on the player's title bar, revealing the light field.
 
-### 7. Three ways in (56.0–80.0, bars 29–40), highest energy
+### 5. Listening and the first chapter (30.0–45.5)
 
-The strip gathers into the real "Right now" card from the public page ("A viewer arrives at 7:10"), which parks lower left as the anchor while worlds swap behind it:
-- "and types !previously in chat": the real chat answer (the product's `composeReply` output as rendered on the landing) arrives tilted, the camera pushes in and a vermilion ring draws around the answer.
-- "or opens the recap page": the real `/c/foxlight_dev` page rises from below in perspective and the camera travels down its chapters; the moon jump chapter is extracted and its clip plays inside it.
-- "A raid gets the same story on stream": the real raid scene again (live from the overlay lab, take 6) at near full frame with its own sound.
-- "One published story feeds all three": chat, page and scene stand side by side in depth with the now card in front.
+Caption above an uninterrupted demo (Helio): "It listens to the streamer" (the real transcript types as a subtitle), "and reads the chat" (the player steps aside, the chat column slides in, newest row lit), "then writes a short chapter" (context blurs, the 0:05 card forms centred and types its title), "and waits 75 seconds before showing it" (the card's edge pulls out into a bar that empties, counted faster here, contracts into a dot, the dot into a check: Published, LangEase chain). The card drops into the timeline strip at the bottom.
 
-### 8. The streamer stays in charge (80.0–102.0, bars 41–51), the quiet contrast
+### 6. The moon jump (45.5–60.0)
 
-Half time, drums out, felt keys and pad. The real streamer dock rises in from below. "Correct a chapter once": the dock steps back, the real "Change the recap" panel arrives at reading size, the camera pushes onto the two cards, the cursor presses "Apply my wording" and the panel shows the product's own confirmation. "and every place uses it": the dock comes forward, zoomed on the 3:30 card, and a vermilion sweep swaps it to "Moon jump becomes a cheat code". "Pause listening any time": the real button is lifted out of the dock, pressed, its label turns to "Resume listening" and a dashed gap draws. "Or forget the last two minutes": one beat of silence, the Forget button is lifted out and pressed, the real dialog "Forget 5:19 to 7:19?" opens, "Forget 2 minutes" is pressed, and a sweep swaps the dock to its real state after Forget, zoomed on its notice ("and what was made from them goes too").
+"Then the fox tries the spring" (clip-moon, transcript "Okay, let me try the spring."), "and chat reacts" (all 45 real messages scroll through the chat column with the newest lit, a lime counter rolls to 45), "Chat named it the moon jump" (the lit MOON JUMP row is lifted out of the chat and grows into the moon jump plate with its origin tab, Teamble extraction), "Every chapter keeps its sources" (the 0:05 card rises, turns edge-on and becomes the four chapters, LangEase ensemble, then they file into the strip).
 
-### 9. Built in one Codex session (102.0–126.0, bars 52–63)
+### 7. Three ways in (60.0–82.0)
 
-Kinetic data from `tools/codex-facts.json`: "Built in one Codex session" with the clock rolling from 18:57 to 04:31 UTC and a "9 h 34 min" plate; "27 parallel workers" with the real worker names fanning out in depth and a counter rolling to 4,798 tool calls; "It reproduced bugs before fixing them" with two paper cards stamped fixed (the full chat queue that dropped an arrived deletion; the provider outage after which chat pushed out recent speech); "and changed course when the owner asked" with her question, translated from Russian, "Is a test this long really needed?" and the lime answer "Codex ended the run early and recorded it as partial: 280,780 chats over 3.80 virtual hours"; "Tested on the way": 29 commits from the Codex session, 609 tests across 67 files when the session ended (656 pass today), 1,000 chat messages at 20 per second with no gaps. The numbers collapse into the centre on a tape stop.
+"A viewer arrives at 7:10" (the real Right now card at reading size), "and types !previously in chat" (a capsule grows with the typed command, iBanPay; then the real chat answer, the camera travels down it and a ring draws around the reply), "or opens the recap page" (the real page rises from below in perspective, the camera travels down it, the moon jump chapter is lifted out and its clip plays), "A raid gets it on stream" (the page shrinks into a rounded window that becomes the stage of the real raid scene, Helio morphing window), "One story feeds all three" (chat, page and scene stand in a row, linked by vermilion lines to the now card).
 
-### 10. Try it and the mark (125.7–138.0, bars 64–69)
+### 8. The streamer stays in charge (82.0–102.0), the quiet contrast
 
-"Run it on your own channel" / "with your Twitch app and OpenAI key" / "or try the example replay without an account" with the URL plate `previously-seven.vercel.app/replay`. The four chapter timecode tabs gather into the tile (bookend of the hook) on a riser; at 134.0 the logo hits on the resolved D major chord, the wordmark wipes out of the tile, tagline and URL settle, and the frame holds to 138 with a slow push and a sheen across the tile. Draft 3 staging: the mark is large (3.8×), the four chapter timecodes spiral into the tile on the hit, the tagline is at 80 px and the URL sits on a paper plate, over the stream playing blurred behind.
+The real dock rises from below in perspective and straightens. "Correct a chapter once": the real Change the recap panel, camera pushes onto the cards, Apply my wording is pressed, the camera moves to the product's confirmation. "and every place uses the new wording": the dock card zooms and is swept to "Moon jump becomes a cheat code". "Pause listening at any time": the real button is lifted out, pressed, turns to Resume listening. "or forget the last two minutes": a beat of silence, the Forget button is lifted out and pressed, the real dialog opens, "Forget 2 minutes" is pressed, the dock is swept to its real state after Forget. Zoom through the dark dock into the Codex passage.
+
+### 9. Built in one Codex session (102.0–126.0)
+
+Dark field with a soft vermilion glow, one fact at a time: "Built in one Codex session"; the session length rolls to 9 h 34 min inside rings (18:57 to 04:31 UTC); "27 parallel workers" with the real worker names on a horizontal wheel, centre lit (NeuralSeek); 4,798 tool calls; two large bug cards stamped fixed; the owner's question, translated from Russian, with the lime answer; tests roll from 609 (when the session ended) to 656 (today, across 73 files). A light circle grows from the number.
+
+### 10. Try it and the mark (126.0–138.0)
+
+"Run it on your own channel" over the real setup page arriving in perspective, "with your Twitch app and OpenAI key" as the camera moves through its steps, "or try the example replay" over the real replay page with the URL plate. The four timecodes spiral into the tile on the hit at 134 s, the wordmark wipes out, tagline and URL pill; light hold to 138 s.
 
 ## Transition kinds used
 
