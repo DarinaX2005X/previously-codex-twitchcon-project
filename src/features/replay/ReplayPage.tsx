@@ -18,7 +18,7 @@ function sourceExcerpt(text:string){
 function chatterName(actor:string|null):string|null{if(!actor||/viewer[-_]?\d+$/i.test(actor)||/^fx-/.test(actor))return null;const value=actor.replace(/^(user|chatter|actor)[-_:]/,'');return /^[a-z0-9_]{2,25}$/i.test(value)?value:null;}
 
 export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
-  const {client,view,error,origin,resolveMedia,chat,mediaRanges}=useRecording(manifestUrl);
+  const {client,view,error,origin,resolveMedia,chat,mediaRanges,seek:seekTo}=useRecording(manifestUrl);
   const footage=useFootage();
   const [dock,setDock]=useState(false),[evidence,setEvidence]=useState<Source[]|null>(null),[actionError,setActionError]=useState<string|null>(null),[preview,setPreview]=useState<RecapPlan|null>(null),[busy,setBusy]=useState(false);
   const dockRegion=useRef<HTMLElement|null>(null),dockTrigger=useRef<HTMLButtonElement|null>(null);
@@ -91,7 +91,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
               {t.playing?<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13"/></svg>:<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>}
             </button>
             <output className="rp-clock" aria-label="Recording position">{time(t.atMs)}<span> / {time(t.durationMs)}</span></output>
-            <Timeline atMs={t.atMs} durationMs={t.durationMs} chapters={published?.chapters??[]} milestones={t.milestones} chat={chat} busy={busy} onSeek={id=>seek(id)}/>
+            <Timeline atMs={t.atMs} durationMs={t.durationMs} chapters={published?.chapters??[]} milestones={t.milestones} chat={chat} busy={busy} onSeek={id=>seek(id)} onSeekTo={ms=>seekTo(ms)} warnBack={t.correctionApplied}/>
           </div>
           <div className="rp-controls">
             <SegmentedControl className="rp-speed" label="Playback speed" disabled={busy} value={String(t.speed)} options={[{value:'1',label:'1×'},{value:'2',label:'2×'},{value:'4',label:'4×'}]} onChange={speed=>void run(()=>client.controlReplay({action:t.playing?'play':'pause',speed:Number(speed) as 1|2|4}))}/>
@@ -163,19 +163,31 @@ function Caption({source}:{source:NonNullable<NonNullable<ReturnType<typeof useR
   return <p className="rp-caption" key={source.id}><span>{sourceLabels[source.kind]} at {time(source.startMs)}</span>{excerpt.text}{excerpt.truncated||source.truncated?'…':''}</p>;
 }
 
-function Timeline({atMs,durationMs,chapters,milestones,chat,busy,onSeek}:{atMs:number;durationMs:number;chapters:PublicChapter[];milestones:{id:string;label:string;atMs:number}[];chat:RecordedChat[];busy:boolean;onSeek:(id:string)=>void}){
+function Timeline({atMs,durationMs,chapters,milestones,chat,busy,onSeek,onSeekTo,warnBack}:{atMs:number;durationMs:number;chapters:PublicChapter[];milestones:{id:string;label:string;atMs:number}[];chat:RecordedChat[];busy:boolean;onSeek:(id:string)=>void;onSeekTo:(ms:number)=>Promise<unknown>;warnBack:boolean}){
   const bins=useMemo(()=>{const n=96,counts=new Array(n).fill(0);for(const c of chat){const i=Math.min(n-1,Math.floor(c.atMs/Math.max(1,durationMs)*n));counts[i]++;}const max=Math.max(1,...counts);return counts.map(c=>c/max);},[chat,durationMs]);
+  const track=useRef<HTMLDivElement>(null);
+  const [drag,setDrag]=useState<number|null>(null),[pending,setPending]=useState<number|null>(null);
+  const shown=drag??pending??atMs;
   const at=(ms:number)=>`${Math.min(100,Math.max(0,ms/Math.max(1,durationMs)*100))}%`;
-  return <div className="rp-timeline">
-    <div className="rp-timeline__chat" aria-hidden="true">{bins.map((v,i)=><span key={i} style={{height:`${Math.round(v*100)}%`}} className={i/bins.length*durationMs<=atMs?'is-past':undefined}/>)}</div>
-    <div className="rp-timeline__track" role="progressbar" aria-label="Recording position" aria-valuemin={0} aria-valuemax={durationMs} aria-valuenow={Math.round(atMs)} aria-valuetext={time(atMs)}>
-      <span className="rp-timeline__fill" style={{width:at(atMs)}}/>
-      <span className="rp-timeline__head" style={{left:at(atMs)}}/>
+  const fromPointer=(clientX:number)=>{const r=track.current!.getBoundingClientRect();return Math.round(Math.min(1,Math.max(0,(clientX-r.left)/r.width))*durationMs/1000)*1000;};
+  const commit=(ms:number)=>{const target=Math.min(durationMs,Math.max(0,ms));setDrag(null);setPending(target);void onSeekTo(target).catch(()=>undefined).finally(()=>setPending(null));};
+  const locked=busy||pending!==null;
+  return <div className={`rp-timeline ${pending!==null?'is-pending':''} ${drag!==null?'is-dragging':''}`}>
+    <div className="rp-timeline__chat" aria-hidden="true">{bins.map((v,i)=><span key={i} style={{height:`${Math.round(v*100)}%`}} className={i/bins.length*durationMs<=shown?'is-past':undefined}/>)}</div>
+    <div ref={track} className="rp-timeline__track" role="slider" tabIndex={locked?-1:0} aria-label="Recording position" aria-disabled={locked||undefined} aria-valuemin={0} aria-valuemax={durationMs} aria-valuenow={Math.round(shown)} aria-valuetext={pending!==null?`Moving to ${time(pending)}`:time(shown)}
+      onPointerDown={event=>{if(locked)return;event.currentTarget.setPointerCapture(event.pointerId);setDrag(fromPointer(event.clientX));}}
+      onPointerMove={event=>{if(drag!==null)setDrag(fromPointer(event.clientX));}}
+      onPointerUp={event=>{if(drag!==null)commit(fromPointer(event.clientX));}}
+      onPointerCancel={()=>setDrag(null)}
+      onKeyDown={event=>{if(locked)return;const step=event.shiftKey?30000:5000;const target=event.key==='ArrowRight'||event.key==='ArrowUp'?atMs+step:event.key==='ArrowLeft'||event.key==='ArrowDown'?atMs-step:event.key==='Home'?0:event.key==='End'?durationMs:null;if(target===null)return;event.preventDefault();commit(target);}}>
+      <span className="rp-timeline__fill" style={{width:at(shown)}}/>
+      <span className="rp-timeline__head" style={{left:at(shown)}}>{(drag!==null||pending!==null)&&<span className="rp-timeline__bubble">{pending!==null?`Moving to ${time(pending)}`:time(drag!)}</span>}</span>
     </div>
     <div className="rp-timeline__marks">
       {chapters.map(c=><span key={c.id} className="rp-mark rp-mark--chapter" style={{left:at(c.startMs)}} title={`${time(c.startMs)} ${c.title}`}><span className="pv-sr-only">Chapter at {time(c.startMs)}: {c.title}</span></span>)}
-      {milestones.map(m=><button key={m.id} type="button" disabled={busy} className={`rp-mark rp-mark--milestone ${m.id==='raid'?'rp-mark--raid':''}`} style={{left:at(m.atMs)}} onClick={()=>onSeek(m.id)}>{m.id==='raid'?'Raid':m.id==='published'?'First recap':m.label}<span className="pv-sr-only"> at {time(m.atMs)}</span></button>)}
+      {milestones.map(m=><button key={m.id} type="button" disabled={locked} className={`rp-mark rp-mark--milestone ${m.id==='raid'?'rp-mark--raid':''}`} style={{left:at(m.atMs)}} onClick={()=>onSeek(m.id)}>{m.id==='raid'?'Raid':m.id==='published'?'First recap':m.label}<span className="pv-sr-only"> at {time(m.atMs)}</span></button>)}
     </div>
+    {warnBack&&<p className="rp-timeline__warn">Moving back on the timeline restarts the recording in this tab and removes your change.</p>}
   </div>;
 }
 

@@ -41,7 +41,19 @@
 .rp-timeline__chat { display: flex; align-items: flex-end; gap: 1px; height: 26px; }
 .rp-timeline__chat span { flex: 1; min-height: 1px; border-radius: 1px 1px 0 0; background: #3A4350; transition: background-color 300ms; }
 .rp-timeline__chat span.is-past { background: var(--pv-lime); }
-.rp-timeline__track { position: relative; height: 8px; border-radius: 4px; background: var(--pv-ink-deep); box-shadow: inset 0 1px 2px rgb(0 0 0 / .5); }
+.rp-timeline__track { position: relative; height: 8px; border-radius: 4px; background: var(--pv-ink-deep); box-shadow: inset 0 1px 2px rgb(0 0 0 / .5); cursor: pointer; touch-action: none; transition: height 160ms var(--pv-ease), margin 160ms var(--pv-ease); }
+.rp-timeline__track::before { content: ''; position: absolute; inset: -12px 0; }
+.rp-timeline__track:hover, .rp-timeline.is-dragging .rp-timeline__track { height: 12px; margin-block: -2px; }
+.rp-timeline__track:focus-visible { outline: 3px solid var(--pv-focus); outline-offset: 6px; }
+.rp-timeline__track[aria-disabled='true'] { cursor: progress; }
+.rp-timeline__head { transition: transform 200ms var(--pv-spring); }
+.rp-timeline__track:hover .rp-timeline__head, .rp-timeline.is-dragging .rp-timeline__head { transform: scale(1.3); }
+.rp-timeline.is-pending .rp-timeline__head { animation: rp-seek-pulse 900ms var(--pv-ease) infinite; }
+.rp-timeline.is-pending .rp-timeline__fill { background: repeating-linear-gradient(-45deg, var(--pv-paper) 0 8px, #CFC5B3 8px 16px); background-size: 200% 100%; animation: rp-seek-stripe 900ms linear infinite; }
+.rp-timeline__bubble { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); transform-origin: bottom center; padding: 5px 10px 6px; border-radius: 9px; background: var(--pv-paper); color: var(--pv-ink); font-size: .875rem; font-weight: 750; white-space: nowrap; font-variant-numeric: tabular-nums; box-shadow: 0 3px 0 var(--pv-paper-side); pointer-events: none; }
+.rp-timeline__warn { margin-top: 44px; color: var(--pv-warning); font-size: .875rem; font-weight: 600; }
+@keyframes rp-seek-pulse { 0%, 100% { box-shadow: 0 2px 0 var(--pv-paper-side), 0 0 0 4px rgb(244 239 230 / .14); } 50% { box-shadow: 0 2px 0 var(--pv-paper-side), 0 0 0 10px rgb(244 239 230 / .06); } }
+@keyframes rp-seek-stripe { to { background-position: -32px 0; } }
 .rp-timeline__fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--pv-paper); }
 .rp-timeline__head { position: absolute; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: var(--pv-paper); box-shadow: 0 2px 0 var(--pv-paper-side), 0 0 0 4px rgb(244 239 230 / .14); }
 .rp-timeline__marks { position: absolute; left: 0; right: 0; top: 26px; height: 0; }
@@ -159,7 +171,8 @@
 }
 @media (max-width: 600px) {
   .rp { padding: 0 0 64px; }
-  .rp-nav, .rp-head, .rp-story, .rp-owner, .rp-error, .rp-preview, .rp-unavailable { margin-inline: 16px; }
+  .rp-nav, .rp-head, .rp-owner, .rp-error, .rp-preview, .rp-unavailable, .rp-dock__bar { margin-inline: 16px; }
+  .rp-story { padding-inline: 16px; }
   .rp-nav { height: 68px; }
   .rp-nav .pv-brand { font-size: 30px; height: 30px; }
   .rp-head { margin-top: 0; margin-bottom: 16px; }
@@ -182,3 +195,4 @@
 @media (prefers-reduced-motion: reduce) {
   .rp *, .rp *::before { animation: none !important; transition-duration: 0ms !important; }
 }
+.rp-timeline.is-dragging .rp-timeline__bubble { transform: translateX(-50%) scale(.77); }

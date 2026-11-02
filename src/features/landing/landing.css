@@ -294,3 +294,15 @@
 @media (prefers-reduced-motion: reduce) {
   .lp *, .lp *::before { animation: none !important; transition-duration: 0ms !important; }
 }
+@media (max-width: 900px) {
+  .lp-story__panel { height: 360px; }
+  .lp-story__stack { top: calc(52px + min(var(--n, 0), 2) * 22px); left: 16px; right: 16px; }
+  .lp-story__card:nth-child(n+4) { display: none; }
+  .lp-story__now { padding: 14px 16px 16px; }
+  .lp-story__now-text { font-size: 1.25rem; }
+  .lp-hand { height: 300px; margin-top: 12px; }
+  .lp-hand__card { width: 210px; margin: -60px 0 0 -105px; min-height: 120px; transform-origin: 50% 300%; transform: rotate(calc((var(--i) - (var(--n) - 1) / 2) * 6deg)); }
+  .lp-hand__card .pv-card__title { font-size: 1.0625rem; }
+  .lp-hand__text { font-size: 1.125rem; }
+  .lp-hand__raid { top: 0; font-size: .875rem; padding: 8px 12px 9px; }
+}
