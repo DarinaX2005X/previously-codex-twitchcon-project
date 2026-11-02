@@ -13,6 +13,10 @@ const SCENE_URL = '/src/features/overlay/lab/index.html?capture=1&plan=foxlight&
 const SCENE_START = 6.0;          // film time when the raid scene's clock is 0
 const STREAM_LAND = 4.0;          // stream-full.mp4 time the rewind lands on (= lab bgAt)
 const CATCH = 17.3;               // film time we catch the scene's P mark
+// The raid scene runs 44 s (take 8). The film shows an excerpt, cut on the scene's own hard cuts:
+// welcome and the "Previously" lockup, three chapter clips with their captions, "Right now", then the P mark.
+export const SCENE_SEGS = [[6.0, 0.0, 3.6], [9.6, 4.3, 2.0], [11.6, 14.2, 2.6], [14.2, 24.3, 1.9], [16.1, 34.2, 1.2], [17.3, 42.75, 1.3]];
+const sceneAt = t => { let ms = 0; for (const [f0, s0, d] of SCENE_SEGS) if (t >= f0) ms = (s0 + Math.min(d, t - f0)) * 1000; return ms; };
 
 export const EVENTS = [];
 // The hook was authored on an old clock; HOOK maps film time to it so the first line reads slower (owner review 4).
@@ -124,7 +128,7 @@ const caption = el('div', '', stage); caption.id = 'caption';
 const capLines = [
   { html: `This is what <em>${FACTS.raid.viewers} raiders</em> see`, t0: 7.55, t1: 10.25 },
   { html: 'built from the stream so far', t0: 10.25, t1: 13.4 },
-  { html: 'and then it gets out of the way', t0: 13.4, t1: 16.15 },
+  { html: 'then it hands the stream back', t0: 13.4, t1: 16.15 },
 ].map(l => ({ ...l, el: Object.assign(el('div', 'line', caption), { innerHTML: l.html }) }));
 
 // --- brand: scrim, mark clone with trail, wordmark letters, tagline
@@ -380,7 +384,7 @@ async function renderPassage1(t) {
       streaks.style.display = rw > 0.02 ? '' : 'none';
       streakLines.forEach((s, i) => { const yy = ((i * 0.23 + t * (1.7 + i * 0.4)) % 1) * vh; s.style.top = yy + 'px'; s.style.opacity = rw * (0.35 + 0.15 * i % 0.5); s.style.height = (2 + (i % 3)) + 'px'; });
     } else {
-      const sceneMs = Math.min(12000, (t - SCENE_START) * 1000);
+      const sceneMs = sceneAt(t);
       const p = seekScene(sceneMs); if (p) pending.push(p);
       hideSceneMark(t >= CATCH);
       // depth of field as the brand takes over
@@ -594,7 +598,7 @@ async function renderPassage1(t) {
 }
 
 // ---------- boot ----------
-window.EVENTS = EVENTS;
+window.EVENTS = EVENTS; window.SCENE_SEGS = SCENE_SEGS;
 window.FILM = { fps: FPS, duration: END };
 const film2 = createFilm2(stage, { ev, seekVideo, FPS });
 let ready;
@@ -612,7 +616,7 @@ window.__ready = ready = (async () => {
   if (!w.__seek) console.error('scene lab did not expose __seek');
   await new Promise(r => { if (vStream.readyState >= 2) r(); else vStream.addEventListener('loadeddata', r, { once: true }); });
   // read where the scene's mark sits at the catch moment once, so any frame renders the same after a cold seek
-  if (w.__seek) { await w.__seek((CATCH - SCENE_START) * 1000); sceneMarkRect = readSceneMark(); lastScene = -1; }
+  if (w.__seek) { await w.__seek(sceneAt(CATCH + 0.05)); sceneMarkRect = readSceneMark(); lastScene = -1; }
   // preload scene SFX for the sound layer
   window.SCENE_SFX = async () => w.__renderSfx ? await w.__renderSfx() : null;
   window.SCENE_EVENTS = () => w.__events;

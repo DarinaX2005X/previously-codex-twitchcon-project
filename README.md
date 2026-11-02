@@ -40,7 +40,7 @@ In the example recording, Foxlight Dev is building a small cave platformer. At 1
 
 The same story answers `!previously` in chat and fills the channel's public page, where a late viewer can open the source behind any chapter. Every sentence is held back for 75 seconds after its last source and checked before anyone sees it, so the streamer has time to fix or remove it first.
 
-https://github.com/user-attachments/assets/403faf40-6864-4395-9494-d190995cd7de
+https://github.com/user-attachments/assets/02b17fa6-1d23-4566-a3fa-e40039a10d35
 
 ## Try the example recording
 

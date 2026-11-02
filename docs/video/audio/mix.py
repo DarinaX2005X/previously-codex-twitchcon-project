@@ -39,6 +39,7 @@ def main():
     ap.add_argument('--stems'); ap.add_argument('--events'); ap.add_argument('--scene-sfx'); ap.add_argument('--scene-at', type=float, default=6.0)
     ap.add_argument('--from', dest='t0', type=float, default=0); ap.add_argument('--to', dest='t1', type=float, default=24); ap.add_argument('--out')
     ap.add_argument('--lufs', type=float, default=-14.0)
+    ap.add_argument('--scene-segs', default=None);  # 'film:scene:dur,...' places excerpts of the scene sound
     ap.add_argument('--scene-at2', type=float, default=None); ap.add_argument('--scene-from2', type=float, default=1.3); ap.add_argument('--scene-dur2', type=float, default=5.3)
     a = ap.parse_args()
     events = json.load(open(a.events, encoding='utf-8'))
@@ -55,7 +56,15 @@ def main():
     scene = np.zeros((2, n_all))
     if a.scene_sfx and os.path.exists(a.scene_sfx):
         sc = read_wav(a.scene_sfx)
-        place(scene, sc, a.scene_at, 1.0)
+        if a.scene_segs:
+            for spec in a.scene_segs.split(','):
+                f0, s0, d = map(float, spec.split(':'))
+                if d <= 0: continue
+                i0 = int(s0 * SR); seg2 = sc[:, i0:i0 + int(d * SR)].copy(); k = int(0.012 * SR)
+                if seg2.shape[1] > 2 * k: seg2[:, :k] *= np.linspace(0, 1, k); seg2[:, -k:] *= np.linspace(1, 0, k)
+                place(scene, seg2, f0, 1.0)
+        else:
+            place(scene, sc, a.scene_at, 1.0)
         if a.scene_at2 is not None:  # the scene again inside the montage, from its own clock offset
             i0 = int(a.scene_from2 * SR); seg2 = sc[:, i0:i0 + int(a.scene_dur2 * SR)].copy()
             k = int(0.08 * SR); seg2[:, -k:] *= np.linspace(1, 0, k)

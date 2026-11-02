@@ -16,7 +16,7 @@ python music.py "$OUT/music" --events "$OUT/events.json" --dur "$TO"
 python mix.py --stems "$OUT/music" --events "$OUT/events.json" --scene-sfx "$OUT/scene-sfx.wav" --scene-at 6.0 --scene-at2 71.75 --scene-from2 1.2 --scene-dur2 5.5 --from "$FROM" --to "$TO" --out "$OUT/mix.wav"
 # 3. picture at 60 fps through h264_nvenc
 cd "$HERE/tools"
-bash render-par.sh "$OUT/picture.mp4" "$FROM" "$TO" 6
+bash render-par.sh "$OUT/picture.mp4" "$FROM" "$TO" 4
 # 4. mux
 ffmpeg -y -v error -i "$OUT/picture.mp4" -i "$OUT/mix.wav" -map 0:v -map 1:a -c:v copy -c:a aac -b:a 320k -movflags +faststart "$HERE/previously-submission.mp4"
 ffmpeg -y -v error -i "$OUT/picture.mp4" -i "$OUT/mix.wav" -map 0:v -map 1:a -vf fps=30 -c:v h264_nvenc -preset p7 -tune hq -multipass fullres -rc vbr -b:v 1.75M -maxrate 4M -bufsize 6M -pix_fmt yuv420p -c:a aac -b:a 320k -movflags +faststart "$HERE/previously-submission-web.mp4"

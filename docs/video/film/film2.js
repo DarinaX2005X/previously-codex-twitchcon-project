@@ -745,7 +745,7 @@ export function createFilm2(stage, { ev, seekVideo, FPS }) {
           scene2.style.transform = `translate(${(R.w - 1920 * s) / 2}px,${(R.h - 1080 * s) / 2}px) scale(${s})`;
         }
         const w = scene2.contentWindow;
-        if (w && w.__seek) pending.push(w.__seek(Math.min(11500, 1200 + Math.max(0, t - 74.5) * 1000)));
+        if (w && w.__seek) { const SEG = [[74.5, 1.6, 1.1], [75.6, 16.3, 1.6], [77.2, 34.4, 1.1], [78.3, 42.7, 0.7], [79.0, 17.4, 0]]; let ms = 0; for (const [f0, s0, d] of SEG) if (t >= f0) ms = (s0 + Math.min(d, t - f0)) * 1000; pending.push(w.__seek(ms)); }
       }
       // E: one story feeds all three: three whole surfaces stand in depth, each at full composition
       if (t >= 78.95) {
