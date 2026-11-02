@@ -10,6 +10,8 @@ import './landing.css';
 const EXAMPLE_PATH = '/example';
 const exampleRecapUrl = () => typeof location === 'undefined' ? `https://localhost${EXAMPLE_PATH}` : `${location.protocol === 'https:' ? location.origin : `https://${location.host}`}${EXAMPLE_PATH}`;
 const REPOSITORY = 'https://github.com/DarinaX2005X/previously-codex-twitchcon-project';
+const DEMO_VIDEO = '/demo/previously-demo.mp4';
+const DEMO_POSTER = '/demo/previously-demo.jpg';
 
 export interface LandingPageProps {
   story?: LandingStory | null;
@@ -37,21 +39,28 @@ function useSeen<T extends Element>() {
 export function LandingPage({ story = null, unavailable = false, replayHref = '/replay', setupHref = '/setup/local' }: LandingPageProps) {
   const footage = useFootage();
   const raidHref = `${replayHref}${replayHref.includes('?') ? '&' : '?'}at=raid`;
+  const [demo, setDemo] = useState(false);
+  const demoOpener = useRef<HTMLButtonElement | null>(null);
   return <main className="lp">
     <div className="lp-field lp-field--paper">
       <nav className="lp-nav lp-in" aria-label="Main navigation">
         <a href="/" className="lp-nav__home" aria-label="Previously home"><Brand /></a>
-        <div className="lp-nav__links"><a href={replayHref}>Example recording</a><a href={setupHref}>Set up my channel</a><a className={buttonClass('primary')} href={raidHref}>Watch the raid scene</a></div>
+        <div className="lp-nav__links"><a href={setupHref}>Set up my channel</a><a href={REPOSITORY}>GitHub</a><a className={buttonClass('primary')} href={raidHref}>Explore the example</a></div>
       </nav>
       <section className="lp-hero lp-in" aria-labelledby="lp-hero-title">
-        <h1 id="lp-hero-title"><span>Show late arrivals</span> <Plate>what they missed</Plate></h1>
-        <div className="lp-hero__aside">
+        <div className="lp-hero__copy">
+          <h1 id="lp-hero-title"><span>Show late arrivals</span> <Plate>what they missed</Plate></h1>
           <p>Previously listens to your stream and its chat, writes short chapters as you go, and plays a “Previously on” recap over the stream when a raid comes in.</p>
-          <a className={buttonClass('primary', 'large')} href={raidHref}>Watch the raid scene</a>
+          <div className="lp-hero__actions">
+            <a className={buttonClass('primary', 'large')} href={raidHref}>Explore the example</a>
+            <button type="button" className={buttonClass('quiet', 'large', 'lp-hero__demo')} aria-haspopup="dialog" onClick={event => { demoOpener.current = event.currentTarget; setDemo(true); }}><VideoIcon />Watch demo</button>
+            <a className={buttonClass('quiet', 'large', 'lp-hero__github')} href={REPOSITORY}><GitHubIcon />GitHub</a>
+          </div>
         </div>
+        <HeroEnsemble story={story} footage={footage} unavailable={unavailable} />
       </section>
-      <HeroEnsemble story={story} footage={footage} unavailable={unavailable} />
     </div>
+    <DemoVideo open={demo} onClose={() => { setDemo(false); demoOpener.current?.focus({ preventScroll: true }); }} />
 
     {story && story.published.chapters.length > 0 && <StoryScroll story={story} poster={footage.poster} />}
     {story && <ChatCommand story={story} />}
@@ -65,6 +74,31 @@ export function LandingPage({ story = null, unavailable = false, replayHref = '/
       </div>
     </footer>
   </main>;
+}
+
+function VideoIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="3.5" /><path d="M10 9.2v5.6l4.6-2.8z" fill="currentColor" stroke="none" /></svg>;
+}
+function GitHubIcon() {
+  // GitHub mark (Octicons, MIT)
+  return <svg viewBox="0 0 16 16" aria-hidden="true" className="lp-icon-fill"><path fill="currentColor" stroke="none" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" /></svg>;
+}
+
+/** The demo film in a modal player: opens on click, pauses on close, returns focus to its button. */
+function DemoVideo({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null), video = useRef<HTMLVideoElement>(null);
+  const reduced = useReducedMotion();
+  useEffect(() => {
+    const d = dialog.current, v = video.current; if (!d || !v) return;
+    if (open && !d.open) { d.showModal(); if (!reduced) void v.play().catch(() => undefined); }
+    if (!open && d.open) { v.pause(); d.close(); }
+  }, [open, reduced]);
+  return <dialog ref={dialog} className="lp-demo" aria-label="Previously demo video" onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="lp-demo__frame">
+      <div className="lp-demo__bar"><p>Previously demo</p><button type="button" className="lp-demo__close" onClick={onClose} aria-label="Close the demo video"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>
+      <video ref={video} className="lp-demo__video" src={DEMO_VIDEO} poster={DEMO_POSTER} controls playsInline preload="none" />
+    </div>
+  </dialog>;
 }
 
 /** The stream with the raid scene, and around it the material the recap is made from. */
@@ -81,20 +115,21 @@ function HeroEnsemble({ story, footage, unavailable }: { story: LandingStory | n
   const chapters = story ? [...story.published.chapters].sort((a, b) => a.startMs - b.startMs) : [];
   const now = story?.published.current?.now;
   const lore = story?.published.lore.find(l => l.originKind !== 'unknown');
-  return <div className="lp-ensemble lp-in">
+  return <div className="lp-ensemble">
     {chapters[0] && <TitleCard className="lp-obj lp-obj--card-a" title={chapters[0].title} atMs={chapters[0].startMs} ground="var(--lp-paper)" aria-hidden="true"><p>{chapters[0].summary}</p></TitleCard>}
     {chapters[1] && <TitleCard className="lp-obj lp-obj--card-b" title={chapters[1].title} atMs={chapters[1].startMs} aria-hidden="true"><p>{chapters[1].summary}</p></TitleCard>}
     <figure className="lp-player" aria-label="A raid recap playing over the stream">
-      <div className="lp-player__chrome"><span className="lp-player__name">{story?.channel.displayName ?? ''}</span><span className="lp-player__title">{story?.title ?? ''}</span><span className="lp-player__note">Example recording</span></div>
+      <div className="lp-player__chrome"><span className="lp-player__name">{story?.channel.displayName ?? ''}</span><span className="lp-player__title">{story?.title ?? ''}</span><span className="lp-player__note">Example recording</span>
+        {plan && !reduced && <button type="button" className="lp-player__toggle" onClick={() => setPaused(value => !value)} aria-label={paused ? 'Play the scene' : 'Pause the scene'}>
+          {paused ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" /></svg> : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13" /></svg>}
+        </button>}
+      </div>
       <div className="lp-player__screen">
         {footage.src ? <video ref={video} className="lp-player__footage" src={footage.src} poster={footage.poster} muted loop playsInline autoPlay={!reduced} preload="auto" aria-hidden="true" />
           : footage.poster ? <img className="lp-player__footage" src={footage.poster} alt="" /> : <div className="lp-player__footage" />}
         {plan && <ScenePlayer key={`${plan.id}:${cycle}`} className="lp-player__scene" plan={plan} channel={story?.channel.displayName} title={story?.title ?? undefined} playing={!paused && !reduced} timeMs={reduced ? 9000 : undefined} soundEnabled={false} resolveMedia={story?.resolveMedia} onEnded={restartLater} />}
         {story?.raider && <p key={`raid:${cycle}`} className={`lp-player__raid ${plan && !reduced ? '' : 'is-static'}`}><b>{story.raider.login}</b> is raiding with {story.raider.viewers} viewers</p>}
         {!story && <p className="lp-player__status" role="status">{unavailable ? 'The example recording could not open. Reload to try again.' : 'Opening the example recording…'}</p>}
-        {plan && !reduced && <button type="button" className="lp-player__toggle" onClick={() => setPaused(value => !value)} aria-label={paused ? 'Play the scene' : 'Pause the scene'}>
-          {paused ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" /></svg> : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13" /></svg>}
-        </button>}
       </div>
     </figure>
     {now && <article className="pv-card lp-obj lp-obj--now" aria-hidden="true"><p className="lp-obj__label">Right now</p><p className="lp-obj__now">{now}</p></article>}
@@ -266,7 +301,7 @@ function Closing({ story, raidHref, setupHref }: { story: LandingStory | null; r
     <div className="lp-in lp-close__in">
       <div className="lp-close__copy">
         <h2 id="lp-close-title">Your next raid arrives already caught up</h2>
-        <div className="lp-close__actions"><a className={buttonClass('primary', 'large')} href={raidHref}>Watch the raid scene</a><a className={buttonClass('text', 'regular', 'lp-close__setup')} href={setupHref}>Set up my channel</a></div>
+        <div className="lp-close__actions"><a className={buttonClass('primary', 'large')} href={raidHref}>Explore the example</a><a className={buttonClass('text', 'regular', 'lp-close__setup')} href={setupHref}>Set up my channel</a></div>
       </div>
       {chapters.length > 0 && <div className="lp-hand" aria-hidden="true" style={{ ['--n' as string]: chapters.length + (now ? 1 : 0) }}>
         {chapters.map((c, i) => <TitleCard key={c.id} className="lp-hand__card" title={c.title} atMs={c.startMs} ground="var(--lp-cave)" style={{ ['--i' as string]: i }} />)}
