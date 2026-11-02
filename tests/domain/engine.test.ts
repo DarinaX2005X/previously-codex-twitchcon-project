@@ -185,6 +185,19 @@ describe('integration-facing editorial and recovery contracts',()=>{
     h.send({type:'settings',baseRevision:0,settings:{...h.state.settings,revision:1,recapLanguage:'ru'}});expect(h.state.published!.language).toBe('ru');expect(h.state.published!.current?.goal).toBe('Сохранить заметки');expect(h.state.published!.chapters[0]?.summary).toContain('Автор');
     h.set(100000);h.source('b','Another change.');expect(h.state.pendingGeneration).not.toBeNull();h.send({type:'settings',baseRevision:1,settings:{...h.state.settings,revision:2,listeningPaused:true}});expect(h.state.pendingGeneration).toBeNull();expect(h.state.captureEpoch).toBe(1);
   });
+  it('switches to any BCP 47 recap language only once its checked presentation exists, and Forget still removes it',()=>{
+    const h=published(),chapter=h.state.chapters[0]!;
+    h.send({type:'settings',baseRevision:0,settings:{...h.state.settings,revision:1,recapLanguage:'es'}});expect(h.state.settings.recapLanguage).toBe('en');expect(h.state.published!.language).toBe('en');
+    h.send({type:'presentation',entityId:chapter.id,baseRevision:chapter.revision,ownerRevision:0,language:'es',title:'Guardar notas',summary:'La autora añade el guardado de notas.',current:{goal:'Guardar las notas',change:null,now:'Comprueba el guardado',sourceTimeMs:0,maxDependencyEndMs:0},safety:allowed,inputRefs:chapter.dependencyRefs});
+    h.send({type:'settings',baseRevision:0,settings:{...h.state.settings,revision:1,recapLanguage:'es'}});expect(h.state.published!.language).toBe('es');expect(h.state.published!.chapters[0]?.summary).toBe('La autora añade el guardado de notas.');expect(h.state.published!.current?.goal).toBe('Guardar las notas');
+    h.send({type:'privacy',target:{kind:'session',sessionId:h.state.session.id}});expect(h.state.published!.chapters).toHaveLength(0);expect(h.state.published!.current).toBeNull();
+    expect(h.state.candidates.filter(candidate=>candidate.language==='es'&&candidate.status==='published'&&candidate.privacyEpoch===h.state.session.privacyEpoch)).toHaveLength(0);
+  });
+  it('refuses a recap language that is not a canonical language tag',()=>{
+    const h=published();
+    for(const recapLanguage of ['pt-br','english','x-private','en-u-ca-gregory'])h.send({type:'settings',baseRevision:0,settings:{...h.state.settings,revision:1,recapLanguage}});
+    expect(h.state.settings.recapLanguage).toBe('en');
+  });
   it('quarantines cleared chat with descendant invalidation but preserves owner evidence and speech',()=>{
     const h=harness();h.set(10000);h.source('chat','Maybe fixed.',10000,{kind:'chat',actorId:'viewer'});h.finish('Chat thinks the issue may be fixed.','question');h.set(85000);h.send({type:'tick'});expect(h.state.published!.chapters).toHaveLength(1);
     h.send({type:'chat.clear',throughMs:10000});expect(h.state.sources[0]?.text).toBe('Maybe fixed.');expect(h.state.sources[0]?.status).toBe('quarantined');expect(h.state.tombstones).toHaveLength(0);expect(h.state.published!.chapters).toHaveLength(0);expect(h.state.session.privacyEpoch).toBe(1);

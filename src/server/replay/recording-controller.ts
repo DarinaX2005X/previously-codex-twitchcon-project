@@ -6,6 +6,7 @@ import {assertPackageBounds} from '../../replay/package.js';
 import type {CommittedTransition} from '../runtime/engine.js';
 import type {DomainState} from '../../core/index.js';
 import {safetyAllowsPublication,type Clock,type Scope,type Source,type VersionRef} from '../../shared/contracts/index.js';
+import {canonicalLanguageTag} from '../../shared/languages.js';
 import type {Principal} from '../runtime/security.js';
 import {ApiError} from '../runtime/errors.js';
 import {storyInput,type RecordedOutcome,type WordingOutcome} from '../../replay/contracts.js';
@@ -114,7 +115,7 @@ export class RecordingController {
         const chapter=input.previous.chapters.find(c=>c.id===event.entityId);if(!chapter)throw new Error('recording_owner_prefix_missing');
         const request={title:chapter.title,summary:chapter.summary};append('owner_review',request,{title:event.title,summary:event.summary,safety:event.safety,...event.current?{current:event.current}:{}});
         const source=input.previous.sources.find(s=>s.id===event.sourceId&&s.revision===event.sourceRevision);
-        if(source&&source.text===event.summary&&request.title===event.title&&safetyAllowsPublication(event.safety)){record.safeSourceHashes.push(sourceHash(source));record.correction={...request,targetId:event.entityId,language:event.language??source.languageCodes.find((language):language is 'en'|'ru'=>language==='en'||language==='ru')??input.previous.settings.recapLanguage};}
+        if(source&&source.text===event.summary&&request.title===event.title&&safetyAllowsPublication(event.safety)){record.safeSourceHashes.push(sourceHash(source));record.correction={...request,targetId:event.entityId,language:event.language??source.languageCodes.map(canonicalLanguageTag).find((language):language is string=>language!==null)??input.previous.settings.recapLanguage};}
       }
       if(event.type==='presentation'){
         const chapter=input.previous.chapters.find(c=>c.id===event.entityId);if(!chapter)throw new Error('recording_presentation_prefix_missing');

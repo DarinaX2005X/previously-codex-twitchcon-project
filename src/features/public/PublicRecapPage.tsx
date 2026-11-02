@@ -76,7 +76,7 @@ function RecapContent({ snapshot, untilMs, watch, example, resolveMoment, onUnti
   const looseMoments = snapshot.moments.filter(moment => !assignedMoments.has(moment.id));
   const looseLore = snapshot.lore.filter(lore => !chapterForLore(snapshot, lore));
   const synced = snapshot.lastSyncedAt ? new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit' }).format(new Date(snapshot.lastSyncedAt)) : null;
-  return <div className="pr-content" lang={snapshot.language}>
+  return <div className="pr-content" lang="en">
     <section className="pr-hero" aria-labelledby="pr-channel">
       <div className="pr-id">
         <h1 className="pr-channel" id="pr-channel">{snapshot.channel.displayName}</h1>
@@ -90,10 +90,10 @@ function RecapContent({ snapshot, untilMs, watch, example, resolveMoment, onUnti
       </div>
       {hero ? <article className="pr-now" aria-labelledby="pr-now-text">
         <span className="pv-tab pv-tab--now">{ended ? 'Where it finished' : 'Right now'}</span>
-        <h2 id="pr-now-text" className="pr-now__text">{hero}</h2>
+        <h2 id="pr-now-text" className="pr-now__text" lang={snapshot.language}>{hero}</h2>
         {(current?.goal && current.goal !== hero) || (current?.change && current.change !== hero) ? <dl className="pr-facts">
-          {current?.goal && current.goal !== hero && <div><dt>The goal</dt><dd>{current.goal}</dd></div>}
-          {current?.change && current.change !== hero && <div><dt>What changed</dt><dd>{current.change}</dd></div>}
+          {current?.goal && current.goal !== hero && <div><dt>The goal</dt><dd lang={snapshot.language}>{current.goal}</dd></div>}
+          {current?.change && current.change !== hero && <div><dt>What changed</dt><dd lang={snapshot.language}>{current.change}</dd></div>}
         </dl> : null}
         <p className="pr-fresh" data-live={!ended || undefined}>{current && <>From <Timecode milliseconds={current.sourceTimeMs} /> in the stream{ended ? '. ' : `, ${sourceAge(snapshot, now)}. `}</>}{synced && (ended ? `Final recap published at ${synced}.` : `Published at ${synced}.`)}</p>
       </article> : <div className="pr-now pr-now--empty">{untilMs === undefined ? <><h2>The stream is still gathering context</h2><p>The first update appears a minute or two after something happens on stream.</p></> : chapters.length ? <><h2>What is happening now is hidden</h2><p>You chose to read up to {formatTimecode(untilMs)}, so the story below stops there.</p></> : <><h2>Nothing was published before {formatTimecode(untilMs)}</h2><p>Choose a later time, or read the whole recap.</p><QuietButton onClick={() => onUntil(undefined)}>Read the whole recap</QuietButton></>}</div>}
@@ -113,8 +113,8 @@ function RecapContent({ snapshot, untilMs, watch, example, resolveMoment, onUnti
           <article className="pv-card pv-card--tabbed pr-card" data-theme="light" data-media={moment ? 'yes' : 'no'}>
             <span className="pv-tab">{formatTimecode(chapter.startMs)}</span>
             <div className="pr-card__text">
-              <h3 className="pr-card__title">{chapter.title}</h3>
-              <p className="pr-card__summary">{chapter.summary}</p>
+              <h3 className="pr-card__title" lang={snapshot.language}>{chapter.title}</h3>
+              <p className="pr-card__summary" lang={snapshot.language}>{chapter.summary}</p>
               {chapter.edited && <p className="pr-card__edited"><Icon name="pencil" />Wording edited by the streamer</p>}
               <div className="pr-card__actions">
                 <button type="button" className="pr-readto" onClick={() => onUntil(chapter.endMs)}><Icon name="arrowUp" />Read up to here</button>
@@ -123,13 +123,13 @@ function RecapContent({ snapshot, untilMs, watch, example, resolveMoment, onUnti
             </div>
             {moment && <MomentFrame moment={moment} media={resolveMoment?.(moment) ?? null} onOpen={setClipId} />}
           </article>
-          {lore.map(item => <LoreBlock key={item.id} lore={item} moments={snapshot.moments} resolveMoment={resolveMoment} onOpen={setClipId} />)}
+          {lore.map(item => <LoreBlock key={item.id} lore={item} moments={snapshot.moments} resolveMoment={resolveMoment} onOpen={setClipId} language={snapshot.language} />)}
         </li>;
       })}</ol>
     </section>}
     {(looseMoments.length > 0 || looseLore.length > 0) && <section className="pr-extra" aria-label="More from this stream">
       {looseMoments.map(moment => <MomentFrame key={moment.id} moment={moment} media={resolveMoment?.(moment) ?? null} onOpen={setClipId} standalone />)}
-      {looseLore.map(lore => <LoreBlock key={lore.id} lore={lore} moments={snapshot.moments} resolveMoment={resolveMoment} onOpen={setClipId} />)}
+      {looseLore.map(lore => <LoreBlock key={lore.id} lore={lore} moments={snapshot.moments} resolveMoment={resolveMoment} onOpen={setClipId} language={snapshot.language} />)}
     </section>}
     {snapshot.gaps.length > 0 && <p className="pr-gap">Some parts of the stream are not covered. The recap only includes what could be published.</p>}
 
@@ -170,9 +170,9 @@ function MomentFrame({ moment, media, onOpen, standalone = false }: { moment: Pu
   return <p className="pr-noclip"><Timecode milliseconds={moment.startMs} /><span>{moment.mediaState === 'pending' ? 'The clip from this moment is still being prepared.' : moment.label}</span></p>;
 }
 
-function LoreBlock({ lore, moments, resolveMoment, onOpen }: { lore: PublicLore; moments: PublicMoment[]; resolveMoment?: PublicRecapPageProps['resolveMoment']; onOpen: (id: string) => void }) {
+function LoreBlock({ lore, moments, resolveMoment, onOpen, language }: { lore: PublicLore; moments: PublicMoment[]; resolveMoment?: PublicRecapPageProps['resolveMoment']; onOpen: (id: string) => void; language?: string }) {
   const moment = moments.find(item => item.id === lore.momentId);
-  return <aside className="pr-lore" aria-label={`Running joke: ${lore.term}`}>
+  return <aside className="pr-lore" aria-label={`Running joke: ${lore.term}`} lang={lore.originKind === 'unknown' ? undefined : language}>
     <LorePlate term={lore.term} originMs={lore.originMs ?? undefined} explanation={lore.originKind === 'unknown' ? 'Where this came from has not been confirmed yet.' : lore.explanation} />
     {moment && <MomentFrame moment={moment} media={resolveMoment?.(moment) ?? null} onOpen={onOpen} standalone />}
   </aside>;

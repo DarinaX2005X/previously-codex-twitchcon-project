@@ -29,7 +29,7 @@ function harness(language: 'en' | 'ru' = 'en') {
   const safety = new SafetyService({classify: async () => ({decision: 'allow', spans: []})}, {moderate: async () => moderation}, clock.now);
   const propose = vi.fn<StoryProvider['propose']>(async (packet, ticket) => {
     const source = packet.sources.at(-1)!;
-    const value: StoryPatch = {sessionId: ticket.sessionId, baseRevision: ticket.baseEntityRevision, action: ticket.baseEntityRevision ? 'update' : 'new_chapter', title: title[ticket.recapLanguage], claims: [{id: 'note', text: text[ticket.recapLanguage], role: 'state', support: [{id: source.id, revision: source.revision}], attribution: 'streamer', epistemic: 'explicit'}], relations: [], currentAttemptId: null, language: ticket.recapLanguage, missingContext: []};
+    const value: StoryPatch = {sessionId: ticket.sessionId, baseRevision: ticket.baseEntityRevision, action: ticket.baseEntityRevision ? 'update' : 'new_chapter', title: title[ticket.recapLanguage as 'en' | 'ru'], claims: [{id: 'note', text: text[ticket.recapLanguage as 'en' | 'ru'], role: 'state', support: [{id: source.id, revision: source.revision}], attribution: 'streamer', epistemic: 'explicit'}], relations: [], currentAttemptId: null, language: ticket.recapLanguage, missingContext: []};
     return {value, model: 'authored-acceptance', requestId: 'authored', usage: {chargedMicroUsd: 0}};
   });
   const present: OpenAIStoryProvider['present'] = async (_claims, input) => {

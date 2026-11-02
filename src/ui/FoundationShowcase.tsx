@@ -3,7 +3,7 @@ import { Button, Field, IconButton, QuietButton, SegmentedControl, Select, Texta
 import { Dialog, Sheet } from './overlays';
 import { ActionGroup, Brand, DockLayout, ReadingLayout } from './layout';
 import { ChapterRow, InlineNotice, LanguageControl, MomentPlayer, SourceDisclosure, SourceStatus } from './story';
-import { recapMessages, type RecapLanguage } from '../i18n';
+import { recapMessagesFor, type RecapLanguage } from '../i18n';
 
 /** Temporary integration review surface. All story content is explicitly authored sample material. */
 export function FoundationShowcase() {
@@ -18,7 +18,7 @@ export function FoundationShowcase() {
   const [error, setError] = useState<string>();
   const [receipt, setReceipt] = useState('');
   const [layout, setLayout] = useState('lower');
-  const messages = recapMessages[language];
+  const messages = recapMessagesFor(language);
   function edit() { setDraftTitle(title); setDraftText(text); setError(undefined); setSheetOpen(true); }
   function save() {
     if (!draftTitle.trim() || !draftText.trim()) { setError('Enter a title and an explanation before saving.'); return; }
@@ -33,7 +33,7 @@ export function FoundationShowcase() {
         <h2>Recap controls</h2>
         <div className="pv-showcase__statuses"><SourceStatus label="Microphone paused" state="paused" observation="No speech is being captured." /><SourceStatus label="Chat not connected" state="unavailable" observation="No chat has been observed." /></div>
         <ActionGroup><Button onClick={() => setPreviewOpen(true)}>Preview sample</Button><QuietButton onClick={edit}>Edit sample</QuietButton></ActionGroup>
-        <LanguageControl value={language} onChange={setLanguage} />
+        <LanguageControl value={language} onChange={setLanguage} options={['en', 'ru']} />
       </>}>
         <SegmentedControl label="Example chapter collection" value={filter} onChange={setFilter} options={[{ value: 'published', label: 'Published' }, { value: 'drafts', label: 'Drafts' }, { value: 'held', label: 'Held' }]} />
         {filter === 'published' ? <div className="pv-showcase__draft" data-theme="light" style={{ marginTop: 20 }}>{chapter}</div> : <div style={{ marginTop: 20 }}><InlineNotice>{filter === 'drafts' ? 'There are no sample drafts.' : 'There are no sample items that need review.'}</InlineNotice></div>}

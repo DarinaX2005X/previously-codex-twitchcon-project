@@ -1,11 +1,13 @@
 import { z } from 'zod';
+import { DEFAULT_RECAP_LANGUAGE, isRecapLanguage, type RecapLanguage } from '../languages.js';
 
 export const IdSchema = z.string().min(1).max(160);
 export const IsoTimeSchema = z.string().datetime({ offset: true });
 export const OffsetSchema = z.number().int().min(0).max(172_800_000);
 export const RevisionSchema = z.number().int().min(0);
-export const LanguageSchema = z.enum(['en', 'ru']);
-export type RecapLanguage = z.infer<typeof LanguageSchema>;
+/** Any written language as a canonical BCP 47 tag (`en`, `es`, `pt-BR`, `zh-Hant`); see src/shared/languages.ts. */
+export const LanguageSchema = z.string().min(2).max(35).refine(isRecapLanguage, { message: 'Use a canonical BCP 47 language tag such as en, es or pt-BR.' });
+export type { RecapLanguage };
 export const ScopeSchema = z.object({ channelId: IdSchema, runId: IdSchema }).strict();
 export type Scope = z.infer<typeof ScopeSchema>;
 export const VersionRefSchema = z.object({ id: IdSchema, revision: RevisionSchema }).strict();
@@ -134,7 +136,7 @@ export const SettingsSchema = z.object({
 }).strict();
 export type Settings = z.infer<typeof SettingsSchema>;
 export const defaultSettings: Settings = {
-  revision: 0, recapLanguage: 'en', publicationDelaySeconds: 75,
+  revision: 0, recapLanguage: DEFAULT_RECAP_LANGUAGE, publicationDelaySeconds: 75,
   listeningPaused: true, autoClips: false, autoRaid: true,
   narrationEnabled: false, broadcastSoundEnabled: false, volume: 0.35, uiSoundEnabled: false,
   // A typical face cam in the top-right corner. Streamers add or move areas in scene settings.
@@ -231,6 +233,8 @@ export const RecapSceneSchema = z.object({
 }).strict();
 export type RecapScene = z.infer<typeof RecapSceneSchema>;
 
+/** A moment clip's in-point sits this far before the moment's start when its capture allows; the scene reads the real offset from `media.inMs`. */
+export const MOMENT_CLIP_LEAD_MS = 1000;
 export const RecapPlanSchema = z.object({
   id: IdSchema, sessionId: IdSchema, revision: RevisionSchema, privacyEpoch: RevisionSchema,
   language: LanguageSchema, variant: z.enum(['full', 'compact', 'welcome']),

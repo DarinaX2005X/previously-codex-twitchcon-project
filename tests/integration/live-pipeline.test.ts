@@ -91,6 +91,9 @@ describe('authored WAV through the assembled live pipeline', () => {
     expect(engine.state('stream_fixture').published?.chapters).toHaveLength(1);
     for (let n = 0; n < 10 && await cloud.tick() !== 'idle'; n++) { /* Drain durable fixture effects. */ }
     expect((await cloudService.readSnapshot(scope.channelId)).chapters[0].summary).toContain('disappeared');
+    // An English recap presents English only; switching to Russian first presents the published claims in Russian.
+    expect(engine.state('stream_fixture').candidates.some(candidate => candidate.language === 'ru')).toBe(false);
+    await engine.prepareLanguage('stream_fixture', 'ru');
     const russian = await engine.dispatch('stream_fixture', {type: 'language', language: 'ru'});
     expect(russian.published?.language).toBe('ru');
     expect(russian.published?.current?.now).toBe('После перезагрузки заметка исчезла.');

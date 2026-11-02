@@ -3,6 +3,7 @@ import {Brand,Button,ClipFrame,LorePlate,QuietButton,SegmentedControl,TextButton
 import {DockPage} from '../dock/index.js';
 import {ScenePlayer,ScenePreview} from '../overlay/index.js';
 import type {OwnerSnapshot,PublicChapter,RecapPlan,Source} from '../../shared/contracts/index.js';
+import {englishLanguageName} from '../../shared/languages.js';
 import {useRecording,type RecordedChat} from './useRecording.js';
 import {correctionTarget} from './correction.js';
 import {useFootage} from './footage.js';
@@ -95,7 +96,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
           </div>
           <div className="rp-controls">
             <SegmentedControl className="rp-speed" label="Playback speed" disabled={busy} value={String(t.speed)} options={[{value:'1',label:'1×'},{value:'2',label:'2×'},{value:'4',label:'4×'}]} onChange={speed=>void run(()=>client.controlReplay({action:t.playing?'play':'pause',speed:Number(speed) as 1|2|4}))}/>
-            {availableLanguages.length>1&&<SegmentedControl className="rp-language" label="Recap language" disabled={busy} value={s.settings.recapLanguage} options={availableLanguages.map(language=>({value:language,label:language==='en'?'EN':'RU'}))} onChange={language=>void run(()=>client.setSettings({baseRevision:s.settings.revision,recapLanguage:language as 'en'|'ru'}))}/>}
+            {availableLanguages.length>1&&<SegmentedControl className="rp-language" label={`Recap language. This recording holds ${availableLanguages.map(englishLanguageName).join(' and ')} wording only, so a replay offers no other language.`} disabled={busy} value={s.settings.recapLanguage} options={availableLanguages.map(language=>({value:language,label:language.toUpperCase()}))} onChange={language=>void run(()=>client.setSettings({baseRevision:s.settings.revision,recapLanguage:language}))}/>}
             {raidMilestone&&<Button disabled={busy} onClick={()=>seek(raidMilestone.id)}>Jump to the raid</Button>}
             <TextButton disabled={busy} onClick={()=>void run(()=>client.controlReplay({action:'reset'}))}>Restart</TextButton>
           </div>

@@ -1,6 +1,7 @@
 import { createDomainState, reduceDomain, stateHash, compileRecap, recapLineage, type DomainState, type DomainEvent, type DomainEffect } from '../core/index.js';
 import {safetyAllowsPublication,type Chapter,type Clock,type OwnerSnapshot,type Source,type Settings,type PrivacyTarget,type ReplayControl,type Safety,type RecapLanguage} from '../shared/contracts/index.js';
 import {isRefActive} from '../core/evidence.js';
+import {isRecapLanguage} from '../shared/languages.js';
 import { validateBundle, storyInput, type CaptureBundle, type StoryOutcome, type WordingOutcome } from './contracts.js';
 import { LogicalIds, RecordedProviders, FixtureMissing } from './providers.js';
 import { SimulationSink } from './simulation.js';
@@ -32,11 +33,19 @@ export class ReplayDriver {
     if(this.revoked)return [];
     const chapters=this.state.chapters.filter(chapter=>chapter.publicationState!=='deleted');
     if(!chapters.length){const initial=this.bundle.initial.settings.recapLanguage;return this.bundle.providers.some(record=>record.operation==='story'&&!record.error&&(record.input as {packet?:{recapLanguage?:string}}).packet?.recapLanguage===initial&&safetyAllowsPublication((record.output as StoryOutcome).safety))?[initial]:[];}
-    return (['en','ru'] as const).filter(language=>[...this.laggingPublished(),...chapters].every(chapter=>{
+    return this.recordedLanguages.filter(language=>[...this.laggingPublished(),...chapters].every(chapter=>{
       if(!chapter.dependencyRefs.every(ref=>isRefActive(this.state,ref)))return false;
       if(this.state.candidates.some(candidate=>candidate.entityId===chapter.id&&candidate.revision===chapter.revision&&candidate.ownerRevision===chapter.ownerEditRevision&&candidate.language===language&&candidate.status!=='rejected'&&safetyAllowsPublication(candidate.safety)&&candidate.inputRefs.every(ref=>isRefActive(this.state,ref))))return true;
       try{const recorded=this.providers.lookup('translation',{title:chapter.title,summary:chapter.summary,language});return !recorded.error&&safetyAllowsPublication((recorded.output as WordingOutcome).safety);}catch{return false;}
     }));
+  }
+  /** Languages this recording holds outcomes for. A replay never asks a model, so it offers no other language. */
+  private get recordedLanguages():RecapLanguage[]{
+    const found=new Set<RecapLanguage>([this.bundle.initial.settings.recapLanguage]);
+    if(this.bundle.correction?.language)found.add(this.bundle.correction.language);
+    for(const record of this.bundle.providers){const input=record.input as {language?:unknown;packet?:{recapLanguage?:unknown}}|null;for(const value of [input?.language,input?.packet?.recapLanguage])if(isRecapLanguage(value))found.add(value);}
+    for(const candidate of this.state.candidates)found.add(candidate.language);
+    return [...found].sort();
   }
   /** Published revisions that a newer draft has not replaced yet, with the wording that is public now. */
   private laggingPublished():Chapter[]{

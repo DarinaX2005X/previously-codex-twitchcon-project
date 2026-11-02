@@ -44,10 +44,10 @@ describe('emitted Structured Outputs requests, authored transport only',()=>{
     }});
     const provider=new OpenAIStoryProvider(transport),context=new OpenAIContextualPrivacy(transport),safety=new SafetyService({classify:async()=>({decision:'allow',spans:[]})},{moderate:async()=> 'allowed'});
     await provider.propose(packet,ticket);await provider.review(packet,ticket,patch);
-    await provider.present(patch.claims,{entityId:'chapter',revision:1,eligibleAt:ticket.eligibleAt,claimRefs:[{id:'claim',revision:1}]},safety);
+    await provider.present(patch.claims,{entityId:'chapter',revision:1,eligibleAt:ticket.eligibleAt,claimRefs:[{id:'claim',revision:1}]},safety,undefined,['en','ru']);
     expect((await provider.proposeLore(packet,[{id:'lore',term}],safety)).value.candidates).toHaveLength(1);
     unknown=true;expect((await provider.proposeLore(packet,[{id:'lore',term}],safety)).value.observations).toHaveLength(1);
-    await provider.presentLore({term,explanation:packet.sources[0].text!,originRefs:refs},safety);
+    await provider.presentLore({term,explanation:packet.sources[0].text!,originRefs:refs},safety,undefined,['en','ru']);
     await context.classify('Safe text');await context.classifyMany(['First safe text','Second safe text']);
     expect([...sizes.keys()].sort()).toEqual(['grounding_review','lore_observation_review','lore_origin_review','lore_presentations','lore_proposals','lore_translation_review','presentation','presentation_review','privacy_batch','privacy_spans','story_patch']);
   });

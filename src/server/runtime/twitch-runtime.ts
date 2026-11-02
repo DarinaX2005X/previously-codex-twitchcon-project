@@ -9,6 +9,7 @@ import type {RuntimeConfig} from './config.js';
 import type {RuntimeStorage,StoryEngine} from './engine.js';
 import {ApiError} from './errors.js';
 import type {RevisionStream} from './updates.js';
+import {messagesFor} from '../../i18n/index.js';
 
 type EnginePort=Pick<StoryEngine,'state'|'dispatch'|'ingest'|'observeStream'|'resolveSession'|'activeSessionId'|'allowed'|'setStatus'>&Partial<Pick<StoryEngine,'ingestBatch'>>;
 type EventSubPort=Pick<TwitchEventSub,'start'|'stop'>;
@@ -260,7 +261,7 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
         if(state&&envelope.kind==='channel.chat.message'&&contentAllowed&&typeof text==='string'){
           enqueueCommand(envelope,actor,text);
         }
-        if(state&&envelope.kind==='channel.raid'&&state.settings.autoRaid&&!payload.late){const fresh=engine.state(state.session.id),reply=safeReply(fresh,{kind:'previously'});const prefix=fresh.settings.recapLanguage==='ru'?'Добро пожаловать! ':'Welcome, raiders! ';const message=prefix+composeReply({kind:'previously'},reply.snapshot,fresh.settings.recapLanguage,publicUrl,false,500-[...prefix].length);effects.enqueueChat({sessionId:state.session.id,privacyEpoch:fresh.session.privacyEpoch,dependencyRefs:reply.refs,publicationRevision:fresh.published?.revision??null,message,actorId:channel.id,key:`raid-welcome:${envelope.externalId}`} as EffectContext&{publicationRevision:number|null;message:string;actorId:string;key:string});}
+        if(state&&envelope.kind==='channel.raid'&&state.settings.autoRaid&&!payload.late){const fresh=engine.state(state.session.id),reply=safeReply(fresh,{kind:'previously'});const prefix=`${messagesFor(fresh.settings.recapLanguage).bot.raidWelcome} `;const message=prefix+composeReply({kind:'previously'},reply.snapshot,fresh.settings.recapLanguage,publicUrl,false,500-[...prefix].length);effects.enqueueChat({sessionId:state.session.id,privacyEpoch:fresh.session.privacyEpoch,dependencyRefs:reply.refs,publicationRevision:fresh.published?.revision??null,message,actorId:channel.id,key:`raid-welcome:${envelope.externalId}`} as EffectContext&{publicationRevision:number|null;message:string;actorId:string;key:string});}
       }
       control.put(key,'done',clock.now()+7*86400000);
     }catch(error){control.delete(key);throw error;}finally{inFlightIngest.delete(key);}

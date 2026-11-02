@@ -8,11 +8,13 @@ import { compileRecap, canDispatch, recapLineage } from './recap.js';
 import { reconcilePrivacyEpoch } from './epoch.js';
 import { publishedLore, loreLanguageReady, recordLorePresentation, retireLorePresentations } from './lore-presentations.js';
 import { retainRecentSources } from './source-retention.js';
+import { canonicalLanguageTag } from '../shared/languages.js';
+import { messagesFor } from '../i18n/index.js';
 
 const iso=(ms:number)=>new Date(ms).toISOString();
 const offset=(s:DomainState,c:Clock)=>Math.max(0,c.now()-Date.parse(s.session.startedAt));
 const safeDefault:Safety={moderation:'pending',pii:'pending',checkedAt:null,reason:null};
-const ownerLanguage=(source:Source,fallback:RecapLanguage):RecapLanguage=>source.languageCodes.find((language):language is RecapLanguage=>language==='en'||language==='ru')??fallback;
+const ownerLanguage=(source:Source,fallback:RecapLanguage):RecapLanguage=>source.languageCodes.map(canonicalLanguageTag).find((language):language is RecapLanguage=>language!==null)??fallback;
 export function createDomainState(input:{channel:Channel;session:Session;settings?:Settings;blockedTerms?:string[];bannedActors?:string[];tombstones?:DomainState['tombstones']}):DomainState {
   return {version:1,revision:0,channel:structuredClone(input.channel),session:structuredClone(input.session),metadataReviewed:false,settings:structuredClone(input.settings??defaultSettings),sources:[],nodes:{},memory:[],chapters:[],lore:[],lorePresentations:[],moments:[],media:[],candidates:[],published:null,current:null,activeChapterId:null,ownerRevisions:{},ownerLocks:[],suppressedIds:[],editorialExcludedRefs:[],tombstones:structuredClone(input.tombstones??[]),bannedActors:[...input.bannedActors??[]],blockedTerms:(input.blockedTerms??[]).map(normalizeTerm),captureEpoch:0,chatClearThroughMs:null,sourceRevision:0,processedSourceRevision:0,lastCurrentAtMs:null,lastChapterAtMs:null,pendingGeneration:null,boundary:null,sequence:0,windows:[],openWindow:null,lastAutoMomentAtMs:null,pendingClipId:null,phrases:[],playbacks:[],playbackTiming:{},seenTriggers:[],lastRecapRevision:null,closing:null,nextGenerationAfterMs:0,gaps:[],lastReceipt:null};
 }
@@ -406,10 +408,10 @@ export function hydrateDomainState(checkpoint:DomainState,authority:{privacyEpoc
   prune(state);return state;
 }
 export function loreAnswer(state:DomainState,term:string):string {
-  const normalized=normalizeTerm(term);if(blockedPhrase(state,normalized))return state.settings.recapLanguage==='ru'?'Происхождение не подтверждено.':'Its origin is not confirmed.';
+  const normalized=normalizeTerm(term);if(blockedPhrase(state,normalized))return messagesFor(state.settings.recapLanguage).story.originUnconfirmed;
   const canonicalLore=state.lore.find(l=>[l.term,...l.aliases].some(term=>normalizeTerm(term)===normalized));
   const lore=state.published?.lore.find(l=>normalizeTerm(l.term)===normalized||l.id===canonicalLore?.id);
-  return lore?.explanation??(state.settings.recapLanguage==='ru'?'Происхождение не подтверждено.':'Its origin is not confirmed.');
+  return lore?.explanation??messagesFor(state.settings.recapLanguage).story.originUnconfirmed;
 }
 
 

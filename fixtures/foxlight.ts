@@ -85,6 +85,8 @@ const BURST_TEXT = [
 const EMOTES = /^(?:LUL(?: LUL)*|o7(?: fox)?)$/;
 const BURST: Chat[] = BURST_TEXT.map((text, i) => ({ atMs: 100_800 + i * 200, actor: i % 23 + 1, text, emote: EMOTES.test(text) }));
 
+/** The example recording was authored with English and Russian outcomes only. */
+type FoxlightLanguage = 'en' | 'ru';
 type ClaimSpec = { key: string; role: GroundedClaim['role']; support: string[]; en: string; ru: string };
 type Version = { segment: number; needs: string[]; title: { en: string; ru: string }; claims: ClaimSpec[] };
 const GOAL: ClaimSpec = { key: 'goal', role: 'goal', support: ['fx-speech-01'], en: 'Make the lanterns light up the cave.', ru: 'Сделать так, чтобы фонари освещали пещеру.' };
@@ -204,10 +206,10 @@ function authorStory(request: GenerationRequest, input: StoryInput, segments: Ma
   const segment = segments.get(request.entityId) ?? newest;
   const version = request.reason === 'metadata' || newest > segment ? undefined
     : [...VERSIONS].reverse().find(v => v.segment === segment && v.needs.every(id => available.has(id)) && v.claims.every(c => c.support.every(id => available.has(id))));
-  const hold = (language: RecapLanguage): StoryOutcome => ({ patch: { sessionId: FOXLIGHT_SESSION_ID, baseRevision: input.baseRevision, action: 'hold', title: null, claims: [], relations: [], currentAttemptId: null, language, missingContext: [] }, safety: allowed(request.requestedAtMs), grounding: { acceptedClaimIds: [], acceptedRelationKeys: [] } });
+  const hold = (language: FoxlightLanguage): StoryOutcome => ({ patch: { sessionId: FOXLIGHT_SESSION_ID, baseRevision: input.baseRevision, action: 'hold', title: null, claims: [], relations: [], currentAttemptId: null, language, missingContext: [] }, safety: allowed(request.requestedAtMs), grounding: { acceptedClaimIds: [], acceptedRelationKeys: [] } });
   if (!version) return { en: hold('en'), ru: hold('ru'), version: null };
   if (!segments.has(request.entityId)) segments.set(request.entityId, segment);
-  const outcome = (language: RecapLanguage): StoryOutcome => {
+  const outcome = (language: FoxlightLanguage): StoryOutcome => {
     const claims = version.claims.map(c => ({ id: `c-${c.key}`, text: c[language], role: c.role, support: c.support.map(id => ({ id, revision: 1 })), attribution: 'streamer' as const, epistemic: 'supported_inference' as const }));
     const patch: StoryPatch = { sessionId: FOXLIGHT_SESSION_ID, baseRevision: input.baseRevision, action: input.baseRevision === 0 ? 'new_chapter' : 'update', title: version.title[language], claims, relations: [], currentAttemptId: null, language, missingContext: [] };
     return { patch, safety: allowed(request.requestedAtMs), grounding: { acceptedClaimIds: claims.map(c => c.id), acceptedRelationKeys: [] } };

@@ -1,4 +1,5 @@
 import type {PublicSnapshot,RecapLanguage} from './contracts/index.js';
+import {messagesFor} from '../i18n/index.js';
 export type ChatCommand={kind:'previously'}|{kind:'lore';term:string};
 export function parseCommand(text:string):ChatCommand|null {
   const value=text.normalize('NFKC').trim().replace(/\s+/gu,' ');
@@ -11,10 +12,10 @@ export function composeReply(command:ChatCommand,snapshot:PublicSnapshot|null,la
   let text:string;
   if(command.kind==='lore'){
     const match=!blocked&&snapshot?.lore.find(item=>item.term.normalize('NFKC').toLowerCase()===command.term.toLowerCase());
-    text=match&&match.originKind!=='unknown'?`${match.term}: ${match.explanation}`:language==='ru'?'Происхождение этой шутки пока не подтверждено.':'The origin of that joke is not confirmed yet.';
+    text=match&&match.originKind!=='unknown'?`${match.term}: ${match.explanation}`:messagesFor(language).bot.loreUnconfirmed;
   }else{
     const chapters=snapshot?.chapters.slice(-2)??[];
-    text=chapters.length?chapters.map(chapter=>chapter.summary).join(' '):(language==='ru'?'Подтверждённый пересказ ещё готовится.':'A confirmed recap is still being prepared.');
+    text=chapters.length?chapters.map(chapter=>chapter.summary).join(' '):messagesFor(language).bot.recapPreparing;
     const now=snapshot?.current?.now?.trim();
     if(now&&!text.replace(/\s+/gu,' ').includes(now.replace(/\s+/gu,' ')))text+=` ${now}`;
   }

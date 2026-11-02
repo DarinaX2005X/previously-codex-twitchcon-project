@@ -29,7 +29,7 @@ describe('topic-neutral authored provider contract; does not measure live model 
     const {provider,fetcher}=setup([patch,{acceptedClaimIds:['fact'],acceptedRelationKeys:[],issues:[]},presentation(row.text),{faithful:true,issues:[]},presentation(row.ru),{faithful:true,issues:[]}]);
     const proposed=await provider.propose(packet,ticket);expect(proposed.value).toEqual(patch);
     expect((await provider.review(packet,ticket,proposed.value)).value.acceptedClaimIds).toEqual(['fact']);
-    const rendered=await provider.present(proposed.value.claims,{entityId:'chapter',revision:1,eligibleAt:ticket.eligibleAt,claimRefs:[{id:'fact',revision:1}]},safety());
+    const rendered=await provider.present(proposed.value.claims,{entityId:'chapter',revision:1,eligibleAt:ticket.eligibleAt,claimRefs:[{id:'fact',revision:1}]},safety(),undefined,['en','ru']);
     expect(rendered.en.current.goal).toBeNull();expect(rendered.ru.current.goal).toBeNull();expect(rendered.en.summary).toBe(row.text);expect(rendered.ru.summary).toBe(row.ru);
     if(row.role!=='change')expect(rendered.en.current.change).toBeNull();
     expect((await provider.proposeLore(packet,[],safety())).value).toEqual({candidates:[],observations:[],heldIds:[]});expect(fetcher).toHaveBeenCalledTimes(6);
@@ -39,11 +39,11 @@ describe('topic-neutral authored provider contract; does not measure live model 
     const {packet,ticket}=evidence('Mm.');const hold:StoryPatch={sessionId:'session',baseRevision:0,action:'hold',title:null,claims:[],relations:[],currentAttemptId:null,language:'en',missingContext:['No supported activity or discussion.']};
     const {provider,fetcher}=setup([hold]);expect((await provider.propose(packet,ticket)).value).toEqual(hold);
     expect(await provider.review(packet,ticket,hold)).toMatchObject({value:{acceptedClaimIds:[],acceptedRelationKeys:[]},model:'local-empty-review',usage:{chargedMicroUsd:0}});
-    await expect(provider.present([],{entityId:'empty',revision:1,eligibleAt:ticket.eligibleAt,claimRefs:[]},safety())).rejects.toMatchObject({code:'held'});expect(fetcher).toHaveBeenCalledOnce();
+    await expect(provider.present([],{entityId:'empty',revision:1,eligibleAt:ticket.eligibleAt,claimRefs:[]},safety(),undefined,['en','ru'])).rejects.toMatchObject({code:'held'});expect(fetcher).toHaveBeenCalledOnce();
   });
   it('rejects an invented goal for an ordinary performance before translation review',async()=>{
     const {packet,ticket}=evidence(cases[1].text);const claim:StoryPatch['claims'][number]={id:'music',text:packet.sources[0].text!,role:'state',support:ticket.inputRefs,attribution:'streamer',epistemic:'explicit'};
     const {provider,fetcher}=setup([{title:'Piano performance',summary:claim.text,current:{goal:'Win the piano competition.',change:null,now:claim.text}}]);
-    await expect(provider.present([claim],{entityId:'chapter',revision:1,eligibleAt:ticket.eligibleAt,claimRefs:[{id:'music',revision:1}]},safety())).rejects.toMatchObject({code:'held'});expect(fetcher).toHaveBeenCalledOnce();
+    await expect(provider.present([claim],{entityId:'chapter',revision:1,eligibleAt:ticket.eligibleAt,claimRefs:[{id:'music',revision:1}]},safety(),undefined,['en','ru'])).rejects.toMatchObject({code:'held'});expect(fetcher).toHaveBeenCalledOnce();
   });
 });

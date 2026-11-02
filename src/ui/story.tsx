@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { Button, SegmentedControl } from './controls';
-import type { RecapLanguage } from '../i18n';
+import { hasOwnCatalog, type RecapLanguage } from '../i18n';
+import { COMMON_RECAP_LANGUAGES, englishLanguageName, nativeLanguageName, resolveLanguageInput } from '../shared/languages';
 
 export interface InlineNoticeProps { children: ReactNode; tone?: 'info' | 'success' | 'warning' | 'danger'; action?: ReactNode; live?: boolean; }
 export function InlineNotice({ children, tone = 'info', action, live = false }: InlineNoticeProps) {
@@ -25,9 +26,29 @@ export function Timecode({ milliseconds, onSeek, label }: TimecodeProps) {
   return onSeek ? <button type="button" className="pv-timecode pv-timecode--action" aria-label={label ?? `Go to ${value}`} onClick={() => onSeek(milliseconds)}>{value}</button> : <span className="pv-timecode">{value}</span>;
 }
 
-export interface LanguageControlProps { value: RecapLanguage; onChange: (value: RecapLanguage) => void; disabled?: boolean; label?: string; showHint?: boolean; }
-export function LanguageControl({ value, onChange, disabled, label = 'Recap language', showHint = true }: LanguageControlProps) {
-  return <div className="pv-language"><span>{label}</span><SegmentedControl label={label} value={value} onChange={next => { if (next === 'en' || next === 'ru') onChange(next); }} disabled={disabled} options={[{ value: 'en', label: 'English' }, { value: 'ru', label: 'Русский' }]} />{showHint && <p className="pv-secondary">Your speech language is detected automatically.</p>}</div>;
+export interface LanguageControlProps { value: RecapLanguage; onChange: (value: RecapLanguage) => void; disabled?: boolean; label?: string; showHint?: boolean; /** Fixed choices, for example the languages a recording contains. Without it any language can be picked. */ options?: readonly RecapLanguage[]; }
+export function LanguageControl({ value, onChange, disabled, label = 'Recap language', showHint = true, options }: LanguageControlProps) {
+  if (options) return <div className="pv-language"><span>{label}</span><SegmentedControl label={label} value={value} onChange={next => { if (options.includes(next)) onChange(next); }} disabled={disabled} options={options.map(code => ({ value: code, label: nativeLanguageName(code) }))} />{showHint && <p className="pv-secondary">Your speech language is detected automatically.</p>}</div>;
+  return <LanguagePicker value={value} onChange={onChange} disabled={disabled} label={label} showHint={showHint} />;
+}
+
+/** A searchable list of common languages by their own names, plus any other language by its code (es, pt-BR, zh-Hant). */
+function LanguagePicker({ value, onChange, disabled, label, showHint }: Required<Pick<LanguageControlProps, 'label' | 'showHint'>> & Omit<LanguageControlProps, 'options' | 'label' | 'showHint'>) {
+  const id = useId(), listId = `${id}-list`, hintId = `${id}-hint`, errorId = `${id}-error`;
+  const [text, setText] = useState(() => nativeLanguageName(value));
+  useEffect(() => { setText(nativeLanguageName(value)); }, [value]);
+  const resolved = resolveLanguageInput(text), changed = resolved !== null && resolved !== value, invalid = text.trim() !== '' && resolved === null;
+  const labels = hasOwnCatalog(value) ? 'Scene labels and chat bot replies use it too.' : `Scene labels and chat bot replies stay in English for ${englishLanguageName(value)}; the story itself is written in it.`;
+  return <form className="pv-language" onSubmit={event => { event.preventDefault(); if (changed && !disabled) onChange(resolved); }}>
+    <label htmlFor={id}>{label}</label>
+    <div className="pv-language__pick">
+      <input id={id} className="pv-input" list={listId} value={text} disabled={disabled} autoComplete="off" spellCheck={false} aria-invalid={invalid || undefined} aria-describedby={[showHint && hintId, invalid && errorId].filter(Boolean).join(' ') || undefined} onFocus={event => event.currentTarget.select()} onChange={event => setText(event.currentTarget.value)} />
+      <Button type="submit" tone="quiet" disabled={disabled || !changed}>Use</Button>
+    </div>
+    <datalist id={listId}>{COMMON_RECAP_LANGUAGES.map(code => <option key={code} value={nativeLanguageName(code)} label={`${englishLanguageName(code)} · ${code}`} />)}</datalist>
+    {invalid && <p id={errorId} className="pv-field__error">Pick a language from the list or type its code, such as es or pt-BR.</p>}
+    {showHint && <p id={hintId} className="pv-secondary">Chapters, summaries and lore are written in {englishLanguageName(value)} ({value}). {labels} Your speech language is detected automatically.</p>}
+  </form>;
 }
 
 export interface ChapterRowProps { title: string; children: ReactNode; atMs?: number; onSeek?: (milliseconds: number) => void; state?: ReactNode; actions?: ReactNode; sources?: ReactNode; selected?: boolean; className?: string; }

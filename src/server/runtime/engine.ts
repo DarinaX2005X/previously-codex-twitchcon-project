@@ -3,7 +3,9 @@ import {
   recoverDomainState, hydrateDomainState, reduceDomain, canonical, canDispatch,
   type DomainState, type DomainEvent, type DomainEffect, type GenerationRequest,
 } from '../../core/index.js';
-import { GroundedClaimSchema, safetyAllowsPublication, type Channel, type Clock, type EventEnvelope, type OwnerIssue, type OwnerSnapshot, type Scope, type Settings, type Source, type SourceStatus, type StoryProvider, type Safety } from '../../shared/contracts/index.js';
+import { GroundedClaimSchema, safetyAllowsPublication, type Channel, type Clock, type EventEnvelope, type OwnerIssue, type OwnerSnapshot, type Scope, type Settings, type Source, type SourceStatus, type StoryProvider, type Safety, type StoryPatch, type RecapLanguage } from '../../shared/contracts/index.js';
+import { eagerPresentationLanguages } from '../../shared/languages.js';
+import { safeLorePresentation } from '../../core/lore-presentations.js';
 import { createStorage, StorageError, type WorkLease } from '../storage/index.js';
 import type { SafetyService } from '../providers/safety.js';
 import type { OpenAIStoryProvider } from '../providers/story.js';
@@ -294,9 +296,12 @@ export class StoryEngine {
         // The reducer namespaces accepted claim IDs. Translate the committed claims, not provider-local IDs.
         const committedClaims = chapter.claimIds.map(id => GroundedClaimSchema.parse(state.nodes[id]?.body));
         const claimRefs = chapter.claimIds.map(id => ({id, revision: state.nodes[id]!.revision}));
-        const presentations = await this.options.story.present(committedClaims, {entityId: chapter.id, revision: chapter.revision, eligibleAt: chapter.eligibleAt, claimRefs}, this.safety, signal);
-        for (const language of ['en', 'ru'] as const) {
+        // The chosen language and English are presented right away; any other language is prepared when the owner switches to it.
+        const languages = eagerPresentationLanguages(request.ticket.recapLanguage);
+        const presentations = await this.options.story.present(committedClaims, {entityId: chapter.id, revision: chapter.revision, eligibleAt: chapter.eligibleAt, claimRefs}, this.safety, signal, languages);
+        for (const language of languages) {
           const value = presentations[language];
+          if (!value) continue;
           await this.dispatch(job.sessionId, {type: 'presentation', entityId: chapter.id, baseRevision: chapter.revision, ownerRevision: chapter.ownerEditRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: chapter.dependencyRefs, current: {...value.current, sourceTimeMs: chapter.maxDependencyEndMs, maxDependencyEndMs: chapter.maxDependencyEndMs}});
         }
       }
@@ -341,10 +346,12 @@ export class StoryEngine {
     const source = chapter.dependencyRefs.map(ref => state.sources.find(value => value.id === ref.id && value.revision === ref.revision)).find(value => value?.kind === 'owner_statement');
     if (!source?.text || source.status !== 'active') return;
     const ref = {id: source.id, revision: source.revision};
-    const presentations = await this.options.story.present([{id: source.id, text: source.text, role: 'state', support: [ref], attribution: 'owner', epistemic: 'explicit'}], {entityId: chapter.id, revision: chapter.revision, eligibleAt: chapter.eligibleAt, claimRefs: [ref]}, this.safety);
-    for (const language of ['en', 'ru'] as const) {
-      if (language === state.settings.recapLanguage) continue;
+    const languages = eagerPresentationLanguages(state.settings.recapLanguage).filter(language => language !== state.settings.recapLanguage);
+    if (!languages.length) return;
+    const presentations = await this.options.story.present([{id: source.id, text: source.text, role: 'state', support: [ref], attribution: 'owner', epistemic: 'explicit'}], {entityId: chapter.id, revision: chapter.revision, eligibleAt: chapter.eligibleAt, claimRefs: [ref]}, this.safety, undefined, languages);
+    for (const language of languages) {
       const value = presentations[language];
+      if (!value) continue;
       await this.dispatch(sessionId, {type: 'presentation', entityId, baseRevision: chapter.revision, ownerRevision: chapter.ownerEditRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: chapter.dependencyRefs, current: {...value.current, sourceTimeMs: chapter.maxDependencyEndMs, maxDependencyEndMs: chapter.maxDependencyEndMs}});
     }
   }
@@ -353,10 +360,54 @@ export class StoryEngine {
     const state = this.entityState(sessionId, entityId), lore = state.lore.find(value => value.id === entityId);
     if (!lore || !['confirmed', 'published'].includes(lore.status) || !safetyAllowsPublication(lore.safety)) return;
     const originRefs = state.nodes[entityId]?.supports ?? [];
-    const presentations = await this.options.story.presentLore({term: lore.term, explanation: lore.explanation, originRefs}, this.safety, signal);
-    for (const language of ['en', 'ru'] as const) {
+    const languages = eagerPresentationLanguages(state.settings.recapLanguage);
+    const presentations = await this.options.story.presentLore({term: lore.term, explanation: lore.explanation, originRefs}, this.safety, signal, languages);
+    for (const language of languages) {
       const value = presentations[language];
+      if (!value) continue;
       await this.dispatch(sessionId, {type: 'lore.presentation', id: entityId, baseRevision: lore.revision, privacyEpoch: state.session.privacyEpoch, language, term: value.term, explanation: value.explanation, safety: value.safety, inputRefs: [{id: entityId, revision: lore.revision}, ...lore.dependencyRefs]});
+    }
+  }
+  /**
+   * Before a language switch: presents every published chapter and lore entry that has no checked wording in
+   * `language` yet, from the same committed claims. The switch itself stays a domain decision; anything that
+   * cannot be prepared keeps the switch held, as before.
+   */
+  async prepareLanguage(sessionId: string, language: RecapLanguage, signal?: AbortSignal): Promise<void> {
+    const state = this.state(sessionId), published = state.published;
+    if (!published || language === state.settings.recapLanguage) return;
+    const active = (refs: readonly {id: string; revision: number}[]) => this.allowed({sessionId, privacyEpoch: state.session.privacyEpoch, dependencyRefs: [...refs]});
+    const present = this.options.story.present?.bind(this.options.story);
+    const jobs = present ? published.chapters.flatMap(visible => {
+      const ready = state.candidates.some(c => c.entityId === visible.id && c.revision === visible.revision && c.language === language && safetyAllowsPublication(c.safety) && (c.status === 'published' || c.privacyEpoch === state.session.privacyEpoch));
+      const base = state.candidates.find(c => c.entityId === visible.id && c.revision === visible.revision && c.status === 'published' && c.language === state.settings.recapLanguage);
+      const chapter = state.chapters.find(c => c.id === visible.id);
+      return ready || !base || !chapter || !active(base.chapter.dependencyRefs) ? [] : [{visible, base, ownerRevision: chapter.ownerEditRevision}];
+    }) : [];
+    // A few chapters at a time: each one is a generation, a safety check and a faithfulness review.
+    const queue = [...jobs];
+    const worker = async () => {
+      for (let job = queue.shift(); job; job = queue.shift()) {
+        const {visible, base, ownerRevision} = job;
+        try {
+          const owner = base.chapter.edited ? base.chapter.dependencyRefs.map(ref => state.sources.find(value => value.id === ref.id && value.revision === ref.revision)).find(value => value?.kind === 'owner_statement') : undefined;
+          const ownerClaim = owner?.text && owner.status === 'active' ? owner : undefined;
+          const claims: StoryPatch['claims'] = ownerClaim ? [{id: ownerClaim.id, text: ownerClaim.text!, role: 'state', support: [{id: ownerClaim.id, revision: ownerClaim.revision}], attribution: 'owner', epistemic: 'explicit'}] : base.chapter.claimIds.map(id => GroundedClaimSchema.parse(state.nodes[id]?.body));
+          const claimRefs = ownerClaim ? [{id: ownerClaim.id, revision: ownerClaim.revision}] : base.chapter.claimIds.map(id => ({id, revision: state.nodes[id]!.revision}));
+          const value = (await present!(claims, {entityId: visible.id, revision: visible.revision, eligibleAt: base.chapter.eligibleAt, claimRefs}, this.safety, signal, [language]))[language];
+          if (value) await this.dispatch(sessionId, {type: 'presentation', entityId: visible.id, baseRevision: visible.revision, ownerRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: base.chapter.dependencyRefs, current: {...value.current, sourceTimeMs: base.chapter.maxDependencyEndMs, maxDependencyEndMs: base.chapter.maxDependencyEndMs}});
+        } catch {signal?.throwIfAborted(); /* This chapter stays unready; the switch is refused with a clear reason. */}
+      }
+    };
+    await Promise.all(Array.from({length: Math.min(3, jobs.length)}, worker));
+    if (this.options.story.presentLore) for (const visible of published.lore) {
+      const fresh = this.state(sessionId), lore = fresh.lore.find(item => item.id === visible.id);
+      if (!lore || safeLorePresentation(fresh, lore, language)) continue;
+      try {
+        const originRefs = fresh.nodes[lore.id]?.supports ?? [];
+        const value = (await this.options.story.presentLore({term: lore.term, explanation: lore.explanation, originRefs}, this.safety, signal, [language]))[language];
+        if (value) await this.dispatch(sessionId, {type: 'lore.presentation', id: lore.id, baseRevision: lore.revision, privacyEpoch: fresh.session.privacyEpoch, language, term: value.term, explanation: value.explanation, safety: value.safety, inputRefs: [{id: lore.id, revision: lore.revision}, ...lore.dependencyRefs]});
+      } catch {signal?.throwIfAborted();}
     }
   }
   async idle(): Promise<void> {await this.chain;}

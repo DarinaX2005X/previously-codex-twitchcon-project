@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { z } from 'zod';
+import { canonicalLanguageTag, DEFAULT_RECAP_LANGUAGE } from '../../shared/languages.js';
 
 const optionalText = z.string().trim().max(8192).optional();
 const envSchema = z.object({
@@ -22,7 +23,8 @@ const envSchema = z.object({
   OPENAI_API_KEY: optionalText,
   OPENAI_PAID_CALLS_ENABLED: z.enum(['true', 'false']).default('false'),
   RECAP_PUBLIC_ORIGIN: z.url().refine(value => new URL(value).protocol === 'https:').optional(),
-  RECAP_LANGUAGE: z.enum(['en', 'ru']).default('en'),
+  // Any BCP 47 language tag; `pt-br` is stored as `pt-BR`.
+  RECAP_LANGUAGE: z.string().default(DEFAULT_RECAP_LANGUAGE).transform((value, context) => canonicalLanguageTag(value) ?? (context.addIssue({code: 'custom', message: 'Use a BCP 47 language tag such as en, es or pt-BR.'}), z.NEVER)),
   PUBLICATION_DELAY_SECONDS: z.coerce.number().int().min(60).max(90).default(75),
 });
 

@@ -109,6 +109,7 @@ main[data-theme='light'] { background: var(--pv-surface); color: var(--pv-text);
 .pv-language { display: grid; gap: 8px; min-width: 0; font-size: var(--pv-text-label); font-weight: 600; }
 .pv-language > .pv-segments { max-width: 320px; }
 .pv-language > p { font-weight: 400; }
+.pv-language__pick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; max-width: 420px; }
 
 /* ------------------------------------------------------------ story rows */
 .pv-chapter { display: flex; align-items: flex-start; gap: 20px; padding-block: 20px; color: var(--pv-text); min-width: 0; overflow-wrap: anywhere; }

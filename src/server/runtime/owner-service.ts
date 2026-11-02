@@ -10,6 +10,7 @@ import { ApiError } from './errors.js';
 import type { ChapterPatch, LorePatch, OwnerMutation, OwnerRevisionMutation, OwnerService, PlaybackAck, SessionQuery, SettingsPatch, SourceQuery } from './owner-routes.js';
 import type { Principal } from './security.js';
 import { historyItem, loadHistoryEntity } from './history.js';
+import { englishLanguageName } from '../../shared/languages.js';
 
 export type OwnerDispatchOptions = {envelope?: EventEnvelope; idempotencyKey?: string; requestBody?: unknown; expectedEntity?: {id: string; revision: number}; settingsPatch?: {baseRevision: number; patch: SettingsPatch}};
 export interface OwnerEnginePort {
@@ -28,6 +29,7 @@ export interface OwnerEnginePort {
   issues?(): NonNullable<OwnerSnapshot['issues']>;
   presentOwnerChapter?(sessionId: string, entityId: string): Promise<void>;
   presentOwnerLore?(sessionId: string, entityId: string): Promise<void>;
+  prepareLanguage?(sessionId: string, language: string): Promise<void>;
 }
 type ResultRef = {kind: 'chapter'|'lore'|'moment'|'playback'; sessionId: string; id: string} | {kind: 'settings'} | {kind: 'receipt'; value: InvalidationReceipt} | {kind: 'void'};
 type MutationRecord = {hash: string; result?: ResultRef};
@@ -193,7 +195,11 @@ export class RuntimeOwnerService implements OwnerService {
     return this.mutate(context,'settings',patch,async()=>{
       const current=this.engine.repository.getSettings(this.engine.scope);if(current.revision!==context.baseRevision)throw conflict();
       SettingsSchema.parse({...current,...patch,revision:current.revision+1});const sessionId=this.engine.activeSessionId();
-      if(sessionId)await this.engine.dispatch(sessionId,{type:'tick'},{...this.options(context,{operation:'settings',patch,baseRevision:context.baseRevision}),settingsPatch:{baseRevision:context.baseRevision,patch}});
+      const switching=sessionId&&patch.recapLanguage!==undefined&&patch.recapLanguage!==current.recapLanguage?patch.recapLanguage:null;
+      // Published chapters need checked wording in the new language first; the model presents the same claims again.
+      if(sessionId&&switching)await this.engine.prepareLanguage?.(sessionId,switching);
+      if(sessionId)try{await this.engine.dispatch(sessionId,{type:'tick'},{...this.options(context,{operation:'settings',patch,baseRevision:context.baseRevision}),settingsPatch:{baseRevision:context.baseRevision,patch}});}
+      catch(error){if(switching&&error instanceof ApiError&&error.code==='settings_not_ready')throw new ApiError(409,'language_not_ready',`Some published chapters are not ready in ${englishLanguageName(switching)} yet. The current language stays published. Try again in a minute.`,true);throw error;}
       else this.engine.repository.updateSettings(this.engine.scope,context.baseRevision,patch,{idempotencyKey:context.idempotencyKey,requestBody:this.requestBody});
       return {kind:'settings'};
     });

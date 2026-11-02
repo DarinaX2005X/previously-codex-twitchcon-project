@@ -1,8 +1,9 @@
-import { safetyAllowsPublication } from '../shared/contracts/index.js';
+import { MOMENT_CLIP_LEAD_MS, safetyAllowsPublication } from '../shared/contracts/index.js';
 import type { OverlayLayout, PublicChapter, PublicLore, PublicSnapshot, RecapPlan, RecapScene, RecapTrigger, VersionRef } from '../shared/contracts/index.js';
 import type { DomainMedia, DomainState } from './types.js';
 import { canonical, isRefActive, normalizeTerm, sourceAllowed, uniqueRefs } from './evidence.js';
 import { safeLorePresentation } from './lore-presentations.js';
+import { messagesFor } from '../i18n/index.js';
 
 /** Every public consumer uses this projection; this selector never falls back to drafts. */
 export const selectPublicSnapshot = (state: DomainState): PublicSnapshot | null => state.published;
@@ -273,7 +274,7 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
   if (welcome) {
     const fields = [snapshot.session.title.trim(), snapshot.session.category.trim()].filter(Boolean);
     const welcomeText = fields.find(field => short(field, CAPTION_WITHOUT_VIDEO)) ?? fields[0]
-      ?? (snapshot.language === 'ru' ? 'Проверенный контекст эфира пока недоступен.' : 'Reviewed stream context is not available yet.');
+      ?? messagesFor(snapshot.language).story.contextUnavailable;
     selected = [{ kind: 'now', text: welcomeText, refs: [], sourceRange: {
       startMs: snapshot.session.metadataMaxDependencyEndMs, endMs: snapshot.session.metadataMaxDependencyEndMs,
     }, sourceIds: [], momentIds: [] }];
@@ -319,7 +320,7 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
     media: permitted.map(media => {
       // A moment clip starts just before the reaction it documents, never outside its canonical capture.
       const moment = snapshot.moments.find(item => item.id === media.momentId);
-      const lead = moment && !media.previousSession ? moment.startMs - media.captureStartMs - 1000 : 0;
+      const lead = moment && !media.previousSession ? moment.startMs - media.captureStartMs - MOMENT_CLIP_LEAD_MS : 0;
       const inMs = Math.max(0, Math.min(Math.round(lead), Math.max(0, media.durationMs - 1000)));
       return { id: media.id, kind: media.kind === 'image' ? 'image' as const : 'video' as const,
         inMs, outMs: Math.min(media.durationMs, inMs + total), captureStartMs: media.captureStartMs,

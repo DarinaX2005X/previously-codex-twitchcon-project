@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonical, compileRecap, narrationScript, recapLineage, type DomainEffect, type DomainEvent, type DomainMedia, type DomainState } from '../../core/index.js';
-import { VersionRefSchema, type Clock, type NarrationProvider, type RecapLanguage, type Scope, type VersionRef } from '../../shared/contracts/index.js';
+import { LanguageSchema, VersionRefSchema, type Clock, type NarrationProvider, type RecapLanguage, type Scope, type VersionRef } from '../../shared/contracts/index.js';
 import { parseWav } from '../audio/wav.js';
 import type { MediaDescriptor, PrivateMediaCache } from '../media/cache.js';
 import type { SqliteRepository, WorkLease } from '../storage/index.js';
@@ -17,7 +17,7 @@ export interface NarrationEnginePort {
 }
 const TicketSchema=z.object({
   version:z.literal(1),assetId:z.string().min(1).max(160),sessionId:z.string().min(1).max(160),privacyEpoch:z.number().int().nonnegative(),
-  language:z.enum(['en','ru']),script:z.string().min(1).max(1200),dependencyRefs:z.array(VersionRefSchema).min(1).max(100),
+  language:LanguageSchema,script:z.string().min(1).max(1200),dependencyRefs:z.array(VersionRefSchema).min(1).max(100),
   captureStartMs:z.number().int().nonnegative(),captureEndMs:z.number().int().nonnegative(),maxDurationMs:z.union([z.literal(10000),z.literal(12000),z.literal(15000)]),
 }).strict();
 export type NarrationTicket=z.infer<typeof TicketSchema>;

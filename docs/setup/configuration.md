@@ -21,12 +21,27 @@ The server reads `.env` from the project directory; process environment values t
 | `TWITCH_MARKERS_ENABLED` | Optional `true` or `false`, default `false`. Enables attempts to add VOD markers for saved moments. Restart and reconnect Twitch after enabling to grant `channel:manage:broadcast`. Unavailable markers leave the saved moment and its timecode intact. |
 | `OPENAI_API_KEY` | Server-side API key from a project with credit and access to the models below. Missing or disabled access leaves new provider-dependent work held; key, model-access and billing failures print one diagnostic line in the server terminal. Keyless replay does not use it. |
 | `OPENAI_PAID_CALLS_ENABLED` | Explicit `true` or `false`, default `false`. A key alone cannot enable dispatch. Replay never enables live providers. |
-| `RECAP_LANGUAGE` | Initial recap language, `en` or `ru`. The owner can change the persisted setting in the dock. It does not set the source recognition language. |
+| `RECAP_LANGUAGE` | Initial recap language as a BCP 47 tag, default `en`: for example `es`, `pt-BR`, `ja` or `zh-Hant`. Case is normalized (`pt-br` becomes `pt-BR`); a value that does not name a written language is rejected at startup. The owner can change the persisted setting in the dock. It does not set the source recognition language. See [recap languages](#recap-languages). |
 | `PUBLICATION_DELAY_SECONDS` | Initial source hold, from 60 to 90 seconds, default 75. Current safety and dependency checks remain required. |
 | `RECAP_PUBLIC_ORIGIN` | Optional HTTPS origin of the Vercel deployment. Without it, `!previously`, `!lore` and the raid welcome reply in chat with the published context only; with it, the public recap link is appended. |
 | `PUBLISH_SHARED_SECRET` | At least 32 bytes, identical locally and in the cloud function. Authenticates publication writes. The setup script generates a local value when absent. |
 
 Defaults for language and hold initialize fresh persisted settings. An existing channel keeps its saved settings. Use the dock to change them.
+
+## Recap languages
+
+The recap can be written in any language. The dock's **Recap language** field lists common streaming languages by their own names (type to search, for example `esp` or `日本`), and any other language can be entered by its BCP 47 code, such as `sw` or `es-419`. Speech and chat are recognized in whatever language they are spoken; this setting only chooses the output language.
+
+What follows the setting:
+
+- **Story text** (chapter titles and summaries, the current state, lore explanations, the chat bot's recap and the narration script) is written by the model in the chosen language from the same checked claims, then safety-checked and reviewed for faithfulness in that language. One published version feeds the public page, the chat bot and the raid scene.
+- **Fixed scene labels and chat bot fallbacks** ("Previously on", "Right now", "Type !previously in chat", "A confirmed recap is still being prepared", the raid welcome) come from built-in catalogs for English, Russian, Ukrainian, Spanish, Portuguese, German, French, Italian, Polish, Turkish, Japanese, Korean, Simplified Chinese and Traditional Chinese (`zh-Hant`, `zh-TW`, `zh-HK`). Regional variants use their base language (`pt-BR` uses Portuguese). Any other language shows these few labels in English while its story text stays in the chosen language; the dock says so under the field.
+- **The public recap page's own interface** (buttons, headings such as "The story so far") stays English in every language, as it was for Russian. Its chapters, summaries and lore are in the chosen language.
+- **The streamer dock** stays English.
+
+New chapters are presented right away in the chosen language and in English. Switching to a language the published chapters do not have yet asks the model to present those same chapters in it first; the switch can take a little while and the previous language stays published until every published chapter and lore entry has checked wording. If any of them cannot be prepared (a provider outage or a held translation), the dock reports that and nothing changes. Forget and other privacy actions invalidate the wording in every language, because each one depends on the same sources.
+
+The keyless example replay holds recorded English and Russian outcomes only, so its language control offers exactly those two. A replay never asks a model for a new language.
 
 The cloud also requires `BLOB_READ_WRITE_TOKEN`, described in [public deployment](publication.md). The normal local publisher uses the signed cloud API and does not need that token. The explicit authored-export publishing script uses it for its administrative head lookup; do not expose it to the browser.
 

@@ -1,4 +1,5 @@
 import type { RecapPlan, Rect } from '../../shared/contracts/index.js';
+import { MOMENT_CLIP_LEAD_MS } from '../../shared/contracts/index.js';
 import { FRAME, conservativeMeasure, intersects, protectedBounds, wrapCaption, type MeasureText, type SceneLayout } from './geometry.js';
 import { clamp, enter, exitIn, expoOut, glide, mix, pulse, quadIn, rand, seg, springAt } from './motion.js';
 import { sceneScript, type SceneScript } from './script.js';
@@ -197,7 +198,10 @@ function geometry(plan: RecapPlan, layout: SceneLayout, options: RenderOptions):
   }
   const frame = { x: x0, y: Math.round((H - fh) / 2), w: fw, h: fh };
   const spec = focusMedia ? plan.media.find(m => m.id === focusMedia) : undefined;
-  const preroll = script.moment && spec ? Math.max(0, Math.min(MOMENT_CLIP_PREROLL_MS, spec.outMs - spec.inMs - 6000)) : 0;
+  // MOMENT_CLIP_PREROLL_MS was tuned for an in-point MOMENT_CLIP_LEAD_MS before the moment; when the capture clamps the
+  // in-point, the plan's real offset keeps the reaction on the same point of the moment.
+  const momentShift = (script.moment?.clipOffsetMs ?? MOMENT_CLIP_LEAD_MS) - MOMENT_CLIP_LEAD_MS;
+  const preroll = script.moment && spec ? Math.max(0, Math.min(MOMENT_CLIP_PREROLL_MS + momentShift, spec.outMs - spec.inMs - 6000)) : 0;
   // Reaction column to the right of the frame: the counted number over a short chat feed, later the lore plate.
   const rx = x0 + fw + 44, rw = W - rx - 10;
   let counter: Geo['counter'] = null, panel: Geo['panel'] = null;

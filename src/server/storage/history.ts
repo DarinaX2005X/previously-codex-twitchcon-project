@@ -1,3 +1,4 @@
+import { isRecapLanguage } from '../../shared/languages.js';
 import type {Scope,Source,VersionRef} from '../../shared/contracts/index.js';
 import {IdSchema,safetyAllowsPublication} from '../../shared/contracts/index.js';
 import {normalizeTerm} from '../../core/evidence.js';
@@ -64,13 +65,15 @@ export class HistoryPersistence {
     const merge=(next:Closure)=>{for(const node of next.entities)entityMap.set(node.id,node);for(const source of next.sources)sourceMap.set(source.id,source);this.bound({entities:[...entityMap.values()],sources:[...sourceMap.values()]});};
     const candidateRows:Row[]=[];
     if(root.kind==='chapter'){
-      for(const language of ['en','ru'])candidateRows.push(...this.db.all("SELECT body,status FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND entity_id=? AND owner_revision=? AND status='published' AND body IS NOT NULL AND json_extract(body,'$.language')=? ORDER BY revision DESC,eligible_at_ms DESC,id DESC LIMIT 1",...this.scope(scope),sessionId,id,root.ownerRevision,language));
+      // One newest published wording per language this chapter was ever presented in (bounded: at most 32 languages).
+      const languages=this.db.all("SELECT DISTINCT json_extract(body,'$.language') AS language FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND entity_id=? AND owner_revision=? AND status='published' AND body IS NOT NULL LIMIT 32",...this.scope(scope),sessionId,id,root.ownerRevision).map(row=>String(row.language));
+      for(const language of languages)candidateRows.push(...this.db.all("SELECT body,status FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND entity_id=? AND owner_revision=? AND status='published' AND body IS NOT NULL AND json_extract(body,'$.language')=? ORDER BY revision DESC,eligible_at_ms DESC,id DESC LIMIT 1",...this.scope(scope),sessionId,id,root.ownerRevision,language));
       const pending=this.db.all("SELECT body,status FROM publication_candidates WHERE channel_id=? AND run_id=? AND session_id=? AND entity_id=? AND owner_revision=? AND privacy_epoch=? AND status='pending' AND body IS NOT NULL ORDER BY revision DESC,id LIMIT 5",...this.scope(scope),sessionId,id,root.ownerRevision,session.privacyEpoch);
       if(pending.length>4)throw new StorageError('capacity','Historical candidate queue exceeds its limit.');candidateRows.push(...pending);
     }
     for(const candidateRow of candidateRows){
       const candidate=JSON.parse(String(candidateRow.body)) as StoryCandidate;
-      if(!candidate.id||candidate.entityId!==id||candidate.chapter?.id!==id||candidate.chapter.sessionId!==sessionId||candidate.chapter.revision!==candidate.revision||candidate.revision>root.revision||candidate.ownerRevision!==root.ownerRevision||!Array.isArray(candidate.inputRefs)||!['en','ru'].includes(candidate.language))continue;
+      if(!candidate.id||candidate.entityId!==id||candidate.chapter?.id!==id||candidate.chapter.sessionId!==sessionId||candidate.chapter.revision!==candidate.revision||candidate.revision>root.revision||candidate.ownerRevision!==root.ownerRevision||!Array.isArray(candidate.inputRefs)||!isRecapLanguage(candidate.language))continue;
       if(candidateRow.status==='pending'&&candidate.privacyEpoch!==session.privacyEpoch)continue;
       const roots=[candidate.id,...candidate.currentNodeId?[candidate.currentNodeId]:[],...candidate.inputRefs.map(ref=>ref.id)];
       const next=this.closure(scope,roots);if(!next)continue;

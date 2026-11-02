@@ -9,6 +9,7 @@ import { SafetyService } from '../../src/server/providers/safety.js';
 import { RevisionStream } from '../../src/server/runtime/updates.js';
 import type { Principal } from '../../src/server/runtime/security.js';
 import type { Safety, Source, StoryPatch } from '../../src/shared/contracts/index.js';
+import type { OpenAIStoryProvider } from '../../src/server/providers/story.js';
 
 // Authored integration fixtures; no Twitch or paid provider requests.
 const start=Date.parse('2026-11-02T00:00:00Z');
@@ -16,13 +17,13 @@ const allowed:Safety={moderation:'allowed',pii:'allowed',checkedAt:new Date(star
 const resources:ReturnType<typeof createStorage>[]=[];
 const directories:string[]=[];
 afterEach(()=>{for(const storage of resources.splice(0))storage.close();for(const directory of directories.splice(0)){if(!resolve(directory).startsWith(resolve(tmpdir())+sep))throw new Error('Unexpected test directory');rmSync(directory,{recursive:true,force:true});}});
-function harness(options:{deferReview?:boolean;session?:boolean;safeReview?:boolean;blockReview?:boolean;path?:string;transientReview?:boolean}={}) {
+function harness(options:{deferReview?:boolean;session?:boolean;safeReview?:boolean;blockReview?:boolean;path?:string;transientReview?:boolean;present?:OpenAIStoryProvider['present']}={}) {
   let now=start+10_000;
   const reviewResolvers:((value:{decision:'allow';spans:[]})=>void)[]=[];
   const safety=new SafetyService({classify:async()=>{if(options.transientReview)throw new Error('Fixture provider unavailable');return options.deferReview?await new Promise(resolve=>{reviewResolvers.push(resolve);}):{decision:options.safeReview||options.blockReview?'allow':'review',spans:[]};}}, {moderate:async()=>options.blockReview?'blocked':options.safeReview?'allowed':'unavailable'},()=>now);
   const storage=createStorage({path:options.path??':memory:',now:()=>now});resources.push(storage);
   const scope={channelId:'channel',runId:'live'},channel={id:'channel',login:'fixture',displayName:'Authored fixture'};
-  const engine=new StoryEngine({scope,channel,storage,clock:{now:()=>now,iso:()=>new Date(now).toISOString()},updates:new RevisionStream(),safety,story:{propose:async()=>{throw new Error('No provider calls in service tests.');}}});
+  const engine=new StoryEngine({scope,channel,storage,clock:{now:()=>now,iso:()=>new Date(now).toISOString()},updates:new RevisionStream(),safety,story:{propose:async()=>{throw new Error('No provider calls in service tests.');},...options.present?{present:options.present}:{}}});
   storage.repository.updateSettings(scope,0,{listeningPaused:false});
   if(options.session!==false)storage.repository.createSession(scope,{id:'session',startedAt:new Date(start).toISOString()});
   const principal:Principal={...scope,role:'owner',actorId:'owner',sessionId:'auth-session',expiresAtMs:start+1_000_000};
@@ -183,6 +184,19 @@ describe('owner service integration',()=>{
     h.storage.repository.controlDelete(h.scope,`owner-mutation:${context.idempotencyKey}`);
     expect((await new RuntimeOwnerService(h.engine).setSettings(context,{volume:0.2})).revision).toBe(2);
     await expect(h.service.setSettings(h.context('settings-key-0002',1),{volume:0.3})).rejects.toMatchObject({status:409});
+  });
+  it('switches to a language the published chapters lack by presenting the same claims in it first',async()=>{
+    const requested:string[][]=[];
+    const present:OpenAIStoryProvider['present']=async(claims,input,_safety,_signal,languages=['en'])=>{requested.push([...languages]);return Object.fromEntries(languages.map(language=>[language,{id:`${input.entityId}:${language}`,entityId:input.entityId,revision:input.revision,language,title:'Probando la persistencia',summary:`La autora prueba la persistencia (${claims.length}).`,current:{goal:'Guardar las notas',change:null,now:null},claimRefs:input.claimRefs!,eligibleAt:input.eligibleAt,safety:allowed}]));};
+    const h=harness({present});const seeded=await h.seed();expect(seeded.published?.language).toBe('en');
+    const settings=await h.service.setSettings(h.context('language-key-0001',seeded.settings.revision),{recapLanguage:'es'});
+    expect(settings.recapLanguage).toBe('es');expect(requested).toEqual([['es']]);
+    const state=h.engine.state('session');expect(state.published?.language).toBe('es');expect(state.published?.chapters[0]?.summary).toBe('La autora prueba la persistencia (1).');
+  });
+  it('keeps the current language and says why when a chapter cannot be prepared',async()=>{
+    const h=harness({present:async()=>{throw new Error('Fixture provider unavailable');}});const seeded=await h.seed();
+    await expect(h.service.setSettings(h.context('language-key-0002',seeded.settings.revision),{recapLanguage:'fr'})).rejects.toMatchObject({status:409,code:'language_not_ready'});
+    expect(h.engine.state('session').published?.language).toBe('en');expect(h.engine.state('session').settings.recapLanguage).toBe('en');
   });
   it('atomically applies active-session pause settings and advances capture epoch',async()=>{
     const h=harness();const before=h.engine.state('session').captureEpoch;
