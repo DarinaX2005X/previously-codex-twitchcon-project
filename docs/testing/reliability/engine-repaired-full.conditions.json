@@ -1,0 +1,115 @@
+{
+  "profile": "engine-repaired-full.json",
+  "status": "running",
+  "sourceCommit": "a9df89c",
+  "sourceCommitProvenance": "Coordinator launch handoff; no Git operations performed.",
+  "startedAt": "2026-11-02T00:50:30.103Z",
+  "process": {
+    "pid": 164168,
+    "unifiedSession": 38214,
+    "verifiedCommandLine": "\"C:\\Program Files\\nodejs\\node.exe\" --expose-gc --import tsx scripts/stress/engine-full-profile.mts 28800 docs/testing/reliability/engine-repaired-full.json normal",
+    "priority": "Normal",
+    "normalFromStart": true,
+    "priorityChanges": []
+  },
+  "databasePath": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-engine-full-xluGSP\\state.sqlite",
+  "profileTarget": {
+    "durationSeconds": 28800,
+    "baselineRate": 20,
+    "burstRate": 200,
+    "burstSeconds": 60,
+    "burstVirtualSeconds": [
+      7200,
+      7259
+    ],
+    "hourlyQuietSeconds": 60,
+    "expectedChats": 577200,
+    "expectedSpeechSamples": 96,
+    "expectedEligibleFreshnessObligations": 88,
+    "expectedDeletes": 47,
+    "expectedDuplicateProbes": 96,
+    "expectedTotalSourceRows": 577392
+  },
+  "freshnessContract": {
+    "boundSeconds": 240,
+    "eligible": "Supplied speech outside the first 300 seconds of each virtual hour.",
+    "success": "One snapshot contains the supplied speech verbatim in a grounded chapter summary and current.now, with the speech source label and sufficiently recent dependency/source times; that snapshot is consumed by the local sink by the deadline.",
+    "scope": "Deterministic harness recovery bound, not product live latency; near-end obligations without a reached deadline remain pending."
+  },
+  "sourceHashesAtLaunch": {
+    "src/server/runtime/engine.ts": "0911db7c2b51c082c87b6dab17d2af818456c9d3bdef5572428fd443a17d4d93",
+    "src/server/runtime/input.ts": "db7018085e06756bad291f8945bf057e4c43a45795f3451d8b48a58abf6d9f14",
+    "src/server/runtime/history.ts": "831605ee3e6f09b0c2957140945065433b75a401cf4bc8a5a5edc6f76719453a",
+    "src/server/storage/repository.ts": "d89cce845eb636a412cb7879c2b5fddc559222277bec4cfd37280a5de317688a",
+    "src/server/storage/domain.ts": "a02507b166fbe5830ba73a2fadad053d952c0a6b19185f657eb70c80b5b0dba2",
+    "src/server/storage/database.ts": "cecd990d46636b8fdde42e7f79d5a2fc455a6c7dc4201e400e425ac8830ef138",
+    "src/server/storage/migrations.ts": "ed13fb82838c4666dce38c0d66444224f326647db69d1fda2cec456fb51ff01b",
+    "src/server/storage/history.ts": "816a3d6c13b6275c66458b5c8a70fe3d8de29896eac5c9753aa380f1bccf2be8",
+    "src/server/providers/safety.ts": "b72101496cc6aada8ec489c605e08c37b93a0a095e07f32c5657a585d352dc0b",
+    "src/core/reducer.ts": "f9ef084788a8410c317df1392eb762ec0a7a3895d17c911285f35d7665109a9e",
+    "src/core/source-retention.ts": "9461afec1ac47d96bef4430fbd09df00f35e1200f01cfd3465a9c537b6d2054b",
+    "src/core/recovery.ts": "a6085bc44c6856addbec596e91e6aa4fb299d2885f91ba5111297e7d49e4e6d7",
+    "src/core/evidence.ts": "2b7cb66220a6966f3635f9387fe70799fbbc091c79752128c7ba791290d6ff96",
+    "src/core/types.ts": "57652c66a966fb454df10a6eafbf92d2fa6066edcad698d1d227d95ed2e57d44",
+    "src/core/privacy.ts": "1b3b52d7c1829943e0731cacffd718f464a5880b6c573f1b0d9b992de3678f57",
+    "src/core/epoch.ts": "fb7129e8c7a27318f8314e867757c252d27e182ae89aa089d8e8b49315b7dc05",
+    "src/core/recap.ts": "302984eea80194ccb46ed3694bd92b4eef737a96181af0378a3ab2ea0178672c",
+    "src/shared/contracts/index.ts": "46ed213d0514c44ba7b9770107afad949cf19d5553d0e7f598fdf8988cdf1650",
+    "scripts/stress/engine-full-profile.mts": "2e71f345b9bf56d4ce1719e22baea282bb1e4ec1cf45919e806ead1073dfdfc0"
+  },
+  "sourceHashesAtMonitorHandoff": {
+    "src/server/runtime/engine.ts": "0911db7c2b51c082c87b6dab17d2af818456c9d3bdef5572428fd443a17d4d93",
+    "src/server/runtime/input.ts": "db7018085e06756bad291f8945bf057e4c43a45795f3451d8b48a58abf6d9f14",
+    "src/server/runtime/history.ts": "831605ee3e6f09b0c2957140945065433b75a401cf4bc8a5a5edc6f76719453a",
+    "src/server/storage/repository.ts": "d89cce845eb636a412cb7879c2b5fddc559222277bec4cfd37280a5de317688a",
+    "src/server/storage/domain.ts": "a02507b166fbe5830ba73a2fadad053d952c0a6b19185f657eb70c80b5b0dba2",
+    "src/server/storage/database.ts": "cecd990d46636b8fdde42e7f79d5a2fc455a6c7dc4201e400e425ac8830ef138",
+    "src/server/storage/migrations.ts": "ed13fb82838c4666dce38c0d66444224f326647db69d1fda2cec456fb51ff01b",
+    "src/server/storage/history.ts": "816a3d6c13b6275c66458b5c8a70fe3d8de29896eac5c9753aa380f1bccf2be8",
+    "src/server/providers/safety.ts": "b72101496cc6aada8ec489c605e08c37b93a0a095e07f32c5657a585d352dc0b",
+    "src/core/reducer.ts": "f9ef084788a8410c317df1392eb762ec0a7a3895d17c911285f35d7665109a9e",
+    "src/core/source-retention.ts": "9461afec1ac47d96bef4430fbd09df00f35e1200f01cfd3465a9c537b6d2054b",
+    "src/core/recovery.ts": "a6085bc44c6856addbec596e91e6aa4fb299d2885f91ba5111297e7d49e4e6d7",
+    "src/core/evidence.ts": "2b7cb66220a6966f3635f9387fe70799fbbc091c79752128c7ba791290d6ff96",
+    "src/core/types.ts": "57652c66a966fb454df10a6eafbf92d2fa6066edcad698d1d227d95ed2e57d44",
+    "src/core/privacy.ts": "1b3b52d7c1829943e0731cacffd718f464a5880b6c573f1b0d9b992de3678f57",
+    "src/core/epoch.ts": "fb7129e8c7a27318f8314e867757c252d27e182ae89aa089d8e8b49315b7dc05",
+    "src/core/recap.ts": "302984eea80194ccb46ed3694bd92b4eef737a96181af0378a3ab2ea0178672c",
+    "src/shared/contracts/index.ts": "46ed213d0514c44ba7b9770107afad949cf19d5553d0e7f598fdf8988cdf1650",
+    "scripts/stress/engine-full-profile.mts": "2e71f345b9bf56d4ce1719e22baea282bb1e4ec1cf45919e806ead1073dfdfc0"
+  },
+  "sourceHashDeltasAtMonitorHandoff": [],
+  "sharedHost": true,
+  "isolatedBenchmark": false,
+  "hostContext": "Shared Windows host; other user processes may overlap. No process or priority changes were made by this monitor.",
+  "oldBaseline": {
+    "status": "stopped_for_known_freshness_failure",
+    "stoppedAt": "2026-11-02T00:25:49.3746738Z",
+    "processId": 170564,
+    "artifact": "engine-full-profile.stopped.json",
+    "overlapsThisRun": false
+  },
+  "repairedCalibration": {
+    "artifact": "engine-repaired-calibration.json",
+    "durationSeconds": 4200,
+    "chats": 82800,
+    "freshnessFulfilled": 12,
+    "freshnessEligible": 12,
+    "maxSupplyToSinkSeconds": 80,
+    "scope": "Completed separately before this full run; its mixed BelowNormal/Normal timing is not this run timing."
+  },
+  "timingScope": "Accelerated virtual timestamps and already-queued batches of at most 20. Measured wall processing does not establish real-time socket arrival/queue latency, live 200/s capacity, microphone/OBS capture, paid-provider quality or cloud consistency. Chat remains pending safety and supplied speech is synthetic pre-reviewed text; provider and sink behavior is deterministic/local.",
+  "monitorOwnership": "runtime_foundation monitors progress/failure/result files and PID 164168. Root retains, drains and closes stdout session 38214 because that session is not accessible across agent tool ownership. No further cross-agent write_stdin attempt will be made.",
+  "stdoutHandoff": {
+    "requestedSession": 38214,
+    "result": "Unknown process id from monitoring agent; actual engine process remained alive.",
+    "resolvedBy": "Coordinator confirmed file/PID monitoring and retained stdout-session closure."
+  },
+  "monitorRecovery": {
+    "activeFunctionsCell": "201",
+    "nextMilestoneVirtualSecond": 3600,
+    "waitMaxMilliseconds": 55000,
+    "mode": "Read progress/failure/result files and PID only; root owns stdout session38214.",
+    "reportMilestones": "1h virtual, complete burst,4h virtual,completion/failure; no unchanged polling narration."
+  }
+}
