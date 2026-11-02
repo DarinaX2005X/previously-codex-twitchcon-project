@@ -19,3 +19,6 @@ tools/
 *.pem
 *.key
 *.log
+docs/video/
+docs/gallery/
+docs/readme/
