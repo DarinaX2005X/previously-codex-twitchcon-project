@@ -438,7 +438,7 @@ function loreState(t: number, g: Geo, slot: Slot, items: { key: string; lore: bo
   out.push(obj({ key: 'lore', kind: 'plate', tone: 'vermilion', origin: 'tl', ...box, radius: mix(20, 12, recede), z: absorb > 0 ? 45 : 56, sx: scale * (1 - absorb * .4), sy: scale * (1 - absorb * .4), rot: mix(mix(5, -1.2, pop), 0, recede), mask: true,
     opacity: 1 - seg(absorb, .7, 1), runs }));
   const stamp = springAt(t, loreAt + 380, .4, 20);
-  if (t >= loreAt + 380 && recede < 1) out.push(obj({ key: 'lore-stamp', kind: 'stamp', tone: 'ink', origin: 'tl', x: box.x + box.w - L.stampW + 10, y: box.y - 22, w: L.stampW, h: 54, radius: 10, z: 57,
+  if (t >= loreAt + 380 && recede < 1) out.push(obj({ key: 'lore-stamp', kind: 'stamp', tone: 'ink', origin: 'tl', x: Math.min(box.x + box.w - L.stampW + 10, g.W - L.stampW - 6), y: box.y - 22, w: L.stampW, h: 54, radius: 10, z: 57,
     sx: mix(1.7, 1, stamp), sy: mix(1.7, 1, stamp), rot: 4, opacity: clamp(seg(t, loreAt + 380, loreAt + 430)) * (1 - clamp(recede * 2.5)),
     runs: [run('st', s.lore!.stamp, 14, 8, 36, 700, COLORS.paper, { tabular: true })] }));
   return out;
@@ -490,7 +490,7 @@ function heroState(t: number, g: Geo): SceneObject[] {
   // Paper while it carries chapters; the present is vermilion.
   const presentP = N ? (slots.length ? mergeP : 1) : contract;
   const fill = N ? undefined : presentP > 0 ? mixColor(COLORS.paper, COLORS.vermilion, presentP) : undefined;
-  const wipe = N ? clamp(presentP * 1.3) : undefined;
+  const wipe = N ? (slots.length ? clamp(glide(seg(t, T.mergeAt - 40, T.mergeAt + 280))) : 1) : undefined;
   const side = presentP > 0 ? mixColor(COLORS.paperSide, COLORS.vermilionSide, presentP) : undefined;
   const radius = mix(mix(24, 28, open), g.mark.size * .26, contract);
   // ── Deck: waiting cards sit behind the hero, each a little higher and further right ──
@@ -508,7 +508,6 @@ function heroState(t: number, g: Geo): SceneObject[] {
     const words = g.chapters[s0.chapter]!.closed, lines = g.chapters[s0.chapter]!.closedLines;
     out.push(obj({ key: `deck:${s0.chapter}`, kind: 'card', tone: 'paper', x: flyIn.x, y: flyIn.y, w: deckBox.w, h: deckBox.h, radius: mix(24, 28, open), z: 40 - k,
       rot: mix(-14 - k * 3, k * 1.4, arrive) * (1 - taken), fill: mixColor(COLORS.paperShade, '#C9C1B3', (k - 1) * .5), opacity: 1 - seg(taken, .7, 1) - mergeP, lift: .3,
-      notch: { x: 28 + k * 18, w: notchWidth(g.measure, script.chapters[s0.chapter]!.timecode, 36), h: g.notchH, opacity: 1, runs: [] },
       runs: words.map((w, i) => { const cs = g.chapters[s0.chapter]!.closedSize; return run(`d${i}`, w.text, 48 + w.x, NOTCH + 32 + (2 - lines) * lineH(cs) / 2 + w.line * lineH(cs), cs, 800, COLORS.mutedPaper); }) }));
   });
   // ── Media: the slot's clip fills the frame's window; after the merge the last clip keeps playing in a corner window ──
@@ -528,12 +527,12 @@ function heroState(t: number, g: Geo): SceneObject[] {
     // The frame opens as a shutter: the picture is revealed from its centre line outward.
     const reveal = 1;
     media = { id: mediaId, x: mix(inner.x, inner.x + inner.w / 2, collapse), y: mix(inner.y + inner.h / 2 * (1 - reveal), inner.y + inner.h / 2, collapse), w: inner.w * (1 - collapse), h: inner.h * reveal * (1 - collapse),
-      radius: 14, opacity: (1 - collapse) * (mergeP > 0 ? 1 : clamp(open * 2.2 - .15)) * (folding ? clamp(open * 1.8 - .3) : 1) * (N && !N.window ? 1 - clamp(mergeP * 2.5) : 1), timeMs: Math.max(0, t - mediaStart), playing: collapse < 1 };
+      radius: 14, opacity: (1 - collapse) * (mergeP > 0 ? 1 : clamp((open - .3) * 3)) * (folding ? clamp(open * 1.8 - .3) : 1) * (N && !N.window ? 1 - clamp(mergeP * 2.5) : 1), timeMs: Math.max(0, t - mediaStart), playing: collapse < 1 };
   }
   // ── Words: chapter title (closed 88 px → open 64 px in the frame's strip), swaps word by word; the now statement lands in groups ──
   const runs: Run[] = [];
   const titleRuns = (index: number, s0: Slot, enterP: number, exitQ: number) => {
-    const L = g.chapters[index]!, ride = s0.openAt !== null ? glide(seg(t, s0.openAt + 30, s0.openedAt! + 60)) * (s0 === slot ? clamp(open * 4) : 1) : 0;
+    const L = g.chapters[index]!, ride = s0.openAt !== null ? glide(seg(t, s0.openAt - 120, s0.openAt + 150)) : 0;
     const closedTop = box.h - (C.h - (NOTCH + 32 + (2 - L.closedLines) * lineH(L.closedSize) / 2));
     const openTop = V.y + V.h + Math.round((g.stripH - L.openLines * lineH(L.openSize)) / 2) - 2;
     // Open-state positions are measured against the card's actual height so the words stay on the strip.
@@ -569,15 +568,17 @@ function heroState(t: number, g: Geo): SceneObject[] {
     const toNow = N ? (slots.length ? seg(t, T.mergeAt + 120, T.mergeAt + 420) : 1) : 0;
     const ty = Math.round((g.notchH - 36) / 2) - 1;
     const nruns: Run[] = [];
-    let w = N?.notchW ?? 120;
+    let w = N?.notchW ?? 120, cut = 1;
     if (slot) {
       const tc = script.chapters[slot.chapter]!.timecode;
-      const rise = slotIndex > 0 ? enter(seg(t, slot.focusAt + 160, slot.focusAt + 420)) : 1;
+      const rise = slotIndex > 0 ? enter(seg(t, slot.focusAt + 260, slot.focusAt + 500)) : 1;
+      // The old notch has left for the strip; the new one is cut into the edge as its timecode rises.
+      if (slotIndex > 0) cut = Math.max(1 - clamp(seg(t, slot.focusAt, slot.focusAt + 120) * 1), rise);
       w = mix(notchWidth(g.measure, tc, 36), N?.notchW ?? 0, enter(toNow));
       nruns.push({ ...kinetic(run('tc' + slot.chapter, tc, 20, ty, 36, 700, paper, { tabular: true }), rise, toNow, 1.4) });
     }
     if (N) nruns.push(kinetic(run('now-label', script.now!.label, 20, ty, 36, 700, paper), toNow, notchOut, 1.4));
-    notch = { x: 28, w: Math.max(40, w), h: g.notchH * (1 - notchOut), runs: nruns, opacity: 1 };
+    notch = { x: 28, w: Math.max(40, w), h: g.notchH * (1 - notchOut) * cut, runs: nruns, opacity: 1 };
   }
   const sheen = N && t > T.settleAt - 200 && contract <= 0 ? seg(t, T.settleAt - 200, T.settleAt + 1800) : undefined;
   out.push(obj({ key: 'hero', kind: 'card', tone: 'paper', x: box.x, y: box.y, w: box.w, h: box.h, radius, z: 50, rot, sx: scale, sy: scale,
@@ -685,7 +686,7 @@ export function sceneSoundEvents(plan: RecapPlan, layout?: SceneLayout | null, o
     if (slot.chat) cues.push(['chatter', slot.chat.burstAt, .5, slot.chat.collapseAt - slot.chat.burstAt + 150], ['tap', slot.chat.loreAt + 20, .55], ['tap2', slot.chat.loreAt + 390, .5]);
   });
   if (g.now) cues.push(['felt', T.mergeAt, .55, 1100], ['resolve', T.settleAt, .5]);
-  cues.push(['release', T.exitAt + 60, .45], ['tap', T.exitAt + 450, .4], ['release', T.leaveAt, .5]);
+  cues.push(['release', T.exitAt + 60, .45], ['tap', T.exitAt + 400, .4], ['release', T.leaveAt, .5]);
   return cues.filter(([, at]) => at >= 0 && at < plan.durationMs).sort((a, b) => a[1] - b[1])
     .map(([kind, atMs, gain, durationMs], i) => ({ id: `${plan.id}:sfx:${i}:${kind}`, kind, atMs: Math.round(atMs), gain, ...(durationMs ? { durationMs: Math.round(durationMs) } : {}) }));
 }

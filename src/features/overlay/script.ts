@@ -52,7 +52,7 @@ export function sceneScript(plan: RecapPlan, extra: { channel?: string; title?: 
     const chapterIndex = scene.moment.chapterId ? chapters.findIndex(c => c.id === scene.moment!.chapterId) : -1;
     if (chapterIndex >= 0) moment = { chapterIndex, count: scene.moment.count, windowSeconds: scene.moment.windowSeconds, messages: scene.moment.messages.slice(0, 14), mediaId: scene.moment.mediaId };
   }
-  const lore = !welcomeOnly && scene?.lore ? { term: scene.lore.term, explanation: scene.lore.explanation || null, stamp: ru ? `с ${timecode(scene.lore.originMs)}` : `since ${timecode(scene.lore.originMs)}` } : null;
+  const lore = !welcomeOnly && scene?.lore ? { term: scene.lore.term, explanation: scene.lore.explanation || null, stamp: timecode(scene.lore.originMs) } : null;
   const nowText = welcomeOnly ? (streamTitle ?? nowBeat?.text ?? null) : scene ? scene.now?.text ?? null : nowBeat?.text ?? null;
   const nowMedia = welcomeOnly ? null : scene?.now?.mediaId && plan.media.some(m => m.id === scene.now!.mediaId) ? scene.now.mediaId : null;
   return {

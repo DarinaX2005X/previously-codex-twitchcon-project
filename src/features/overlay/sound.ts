@@ -119,7 +119,7 @@ export function scheduleSfx(ctx: Ctx, dest: AudioNode, event: SceneSoundEvent, w
       // Low felt tone under the merge: a soft fifth that swells and settles.
       const length = (event.durationMs ?? 1100) / 1000;
       const lp = filter('lowpass', 520, .4), g = gainNode(); lp.connect(g); g.connect(dest);
-      g.gain.setValueAtTime(.0001, t); g.gain.linearRampToValueAtTime(level * .75, t + .12); g.gain.exponentialRampToValueAtTime(.0001, t + length + .25);
+      g.gain.setValueAtTime(.0001, t); g.gain.linearRampToValueAtTime(level * .5, t + .12); g.gain.exponentialRampToValueAtTime(.0001, t + length + .25);
       tone('triangle', t, length + .3, 98 * v, null, lp); tone('sine', t, length + .3, 147 * v, null, lp);
       break;
     }
@@ -142,11 +142,17 @@ function stopVoice(voice: Voice, at?: number) {
   for (const s of voice.sources) { s.onended = null; try { if (at === undefined) s.stop(); else s.stop(at); } catch { /* already stopped */ } if (at === undefined) s.disconnect(); }
   if (at === undefined) for (const n of voice.nodes) n.disconnect();
 }
-function masterChain(ctx: Ctx, volume: number): GainNode {
+function masterChain(ctx: Ctx, volume: number, makeup = 0): GainNode {
   const limiter = ctx.createDynamicsCompressor();
   limiter.threshold.value = -9; limiter.knee.value = 4; limiter.ratio.value = 20; limiter.attack.value = .002; limiter.release.value = .12;
   const output = ctx.createGain(); output.gain.value = Math.max(0, Math.min(.6, volume));
-  output.connect(limiter); limiter.connect(ctx.destination);
+  if (!makeup) { output.connect(limiter); limiter.connect(ctx.destination); return output; }
+  // Mastered for the video edit: a gentle glue compressor, make-up gain, then a brick-wall style limiter.
+  const glue = ctx.createDynamicsCompressor();
+  glue.threshold.value = -26; glue.knee.value = 10; glue.ratio.value = 4; glue.attack.value = .004; glue.release.value = .2;
+  const gain = ctx.createGain(); gain.gain.value = makeup;
+  limiter.threshold.value = -3; limiter.knee.value = 0; limiter.attack.value = .001; limiter.release.value = .08;
+  output.connect(glue); glue.connect(gain); gain.connect(limiter); limiter.connect(ctx.destination);
   return output;
 }
 
@@ -191,9 +197,11 @@ export class SceneSound {
  * Renders the scene's sound events offline with the same synthesis, voice limit and limiter as the
  * broadcast, and returns a 16-bit stereo WAV. Runs in a browser (OfflineAudioContext).
  */
-export async function renderSceneSfxWav(events: SceneSoundEvent[], durationMs: number, sampleRate = 48000, volume = .5): Promise<ArrayBuffer> {
+/** Make-up gain of the offline master, tuned so the 12 s scene measures about -16 LUFS integrated. */
+export const SFX_MASTER_MAKEUP = 2.6;
+export async function renderSceneSfxWav(events: SceneSoundEvent[], durationMs: number, sampleRate = 48000, volume = .5, makeup = SFX_MASTER_MAKEUP): Promise<ArrayBuffer> {
   const ctx = new OfflineAudioContext(2, Math.ceil(sampleRate * (durationMs / 1000 + .6)), sampleRate);
-  const output = masterChain(ctx, volume);
+  const output = masterChain(ctx, volume, makeup);
   const ordered = [...events].sort((a, b) => a.atMs - b.atMs);
   const tonal: Voice[] = [];
   for (const event of ordered) {
@@ -206,6 +214,11 @@ export async function renderSceneSfxWav(events: SceneSoundEvent[], durationMs: n
     if (!voice.granular) tonal.push(voice);
   }
   const buffer = await ctx.startRendering();
+  // Never clip: keep sample peaks at or below -1 dBFS.
+  let peak = 0;
+  for (let c = 0; c < buffer.numberOfChannels; c++) for (const v of buffer.getChannelData(c)) peak = Math.max(peak, Math.abs(v));
+  const ceiling = Math.pow(10, -1 / 20);
+  if (peak > ceiling) for (let c = 0; c < buffer.numberOfChannels; c++) { const data = buffer.getChannelData(c); for (let i = 0; i < data.length; i++) data[i]! *= ceiling / peak; }
   return encodeWav(buffer);
 }
 

@@ -73,7 +73,7 @@ describe('everything shown comes from the plan', () => {
   it('shows the raid, chapters with timecodes, real chat lines, the counter, lore and the now statement', () => {
     const { plan, frames } = sweep();
     const seen = frames.map(texts).join(' ');
-    for (const value of ['Welcome,', 'pixelmoth raiders', '37 viewers', 'Previously', 'on Foxlight Dev', '0:05', '1:40', '3:30', 'Fox learns to', 'moon', '45 messages', 'in 10 seconds', 'since 2:05', 'Right now', 'lantern', '!previously'])
+    for (const value of ['Welcome,', 'pixelmoth raiders', '37 viewers', 'Previously', 'on Foxlight Dev', '0:05', '1:40', '3:30', 'Fox learns to', 'moon', '45 messages', 'in 10 seconds', '2:05', 'Right now', 'lantern', '!previously'])
       expect(seen, value).toContain(value);
     for (const message of plan.scene!.moment!.messages) expect(seen).toContain(message);
     expect(frames.some(f => f.phase === 'chat')).toBe(true);
