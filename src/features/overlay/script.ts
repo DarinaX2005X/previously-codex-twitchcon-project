@@ -1,9 +1,10 @@
-import type { RecapPlan } from '../../shared/contracts/index.js';
+import type { RecapLanguage, RecapPlan } from '../../shared/contracts/index.js';
+import { countText, fill, messagesFor } from '../../i18n/index.js';
 import { timecode } from './motion.js';
 
 /** Everything the scene shows, taken from the captured plan. Missing material shortens the scene honestly. */
 export type SceneScript = {
-  language: 'en' | 'ru';
+  language: RecapLanguage;
   welcomeOnly: boolean;
   greeting: string;           // first word group, on the vermilion plate
   guests: string | null;      // second word group (raiders, or the stream title for a manual show)
@@ -12,7 +13,8 @@ export type SceneScript = {
   titleLead: string;          // "Previously"
   titleRest: string | null;   // "on Foxlight Dev"
   chapters: { id: string; title: string; timecode: string; mediaId: string | null }[];
-  moment: { chapterIndex: number; count: number; windowSeconds: number; messages: string[]; mediaId: string | null } | null;
+  /** `clipOffsetMs`: where the moment begins after the clip's in-point, from the plan's capture range; null when unknown. */
+  moment: { chapterIndex: number; count: number; windowSeconds: number; messages: string[]; mediaId: string | null; clipOffsetMs: number | null } | null;
   lore: { term: string; explanation: string | null; stamp: string } | null;
   now: { label: string; text: string; mediaId: string | null } | null;
   command: { before: string; command: string; after: string } | null;
@@ -21,13 +23,10 @@ export type SceneScript = {
 
 /** A single closing full stop reads as punctuation noise on a broadcast plate; keep everything else. */
 const plate = (text: string) => text.trim().replace(/(?<![.])\.$/u, '');
-const plural = (n: number, one: string, few: string, many: string) => {
-  const m10 = n % 10, m100 = n % 100;
-  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
-};
 
 export function sceneScript(plan: RecapPlan, extra: { channel?: string; title?: string } = {}): SceneScript {
-  const ru = plan.language === 'ru';
+  // Fixed labels come from the recap language's catalog (English when it has none); story text is already in that language.
+  const language = plan.language, t = messagesFor(language).scene;
   const scene = plan.scene;
   const channel = (scene?.channelName || extra.channel || '').trim();
   const streamTitle = (scene?.streamTitle ?? extra.title ?? '').trim() || null;
@@ -37,9 +36,9 @@ export function sceneScript(plan: RecapPlan, extra: { channel?: string; title?: 
   let guests: string | null;
   if (arrivals.length) {
     const [first, second] = arrivals.map(a => a.fromLogin);
-    if (raids > 2) guests = ru ? `рейдеры ${first} и ещё ${raids - 1}` : `${first} and ${raids - 1} more raids`;
-    else if (second) guests = ru ? `рейдеры ${first} и ${second}` : `${first} and ${second} raiders`;
-    else guests = ru ? `рейдеры ${first}` : `${first} raiders`;
+    if (raids > 2) guests = countText(language, raids - 1, t.raidMore, { first: first! });
+    else if (second) guests = fill(t.raidTwo, { first: first!, second });
+    else guests = fill(t.raidOne, { first: first! });
   } else guests = streamTitle ? plate(streamTitle) : null;
   const welcomeOnly = plan.variant === 'welcome';
   const nowBeat = plan.beats.find(beat => beat.kind === 'now');
@@ -50,24 +49,26 @@ export function sceneScript(plan: RecapPlan, extra: { channel?: string; title?: 
   let moment: SceneScript['moment'] = null;
   if (!welcomeOnly && scene?.moment) {
     const chapterIndex = scene.moment.chapterId ? chapters.findIndex(c => c.id === scene.moment!.chapterId) : -1;
-    if (chapterIndex >= 0) moment = { chapterIndex, count: scene.moment.count, windowSeconds: scene.moment.windowSeconds, messages: scene.moment.messages.slice(0, 14), mediaId: scene.moment.mediaId };
+    // The clip's in-point is measured from its capture start, so the moment's own start inside the clip follows from the plan.
+    const clip = scene.moment.mediaId ? plan.media.find(m => m.id === scene.moment!.mediaId) : undefined;
+    const offset = clip && !clip.previousSession ? scene.moment.startMs - clip.captureStartMs - clip.inMs : null;
+    const clipOffsetMs = clip && offset !== null && offset >= 0 && offset <= clip.outMs - clip.inMs ? offset : null;
+    if (chapterIndex >= 0) moment = { chapterIndex, count: scene.moment.count, windowSeconds: scene.moment.windowSeconds, messages: scene.moment.messages.slice(0, 14), mediaId: scene.moment.mediaId, clipOffsetMs };
   }
   const lore = !welcomeOnly && scene?.lore ? { term: scene.lore.term, explanation: scene.lore.explanation || null, stamp: timecode(scene.lore.originMs) } : null;
   const nowText = welcomeOnly ? (streamTitle ?? nowBeat?.text ?? null) : scene ? scene.now?.text ?? null : nowBeat?.text ?? null;
   const nowMedia = welcomeOnly ? null : scene?.now?.mediaId && plan.media.some(m => m.id === scene.now!.mediaId) ? scene.now.mediaId : null;
   return {
-    language: ru ? 'ru' : 'en', welcomeOnly,
-    greeting: arrivals.length ? (ru ? 'Добро пожаловать,' : 'Welcome,') : (ru ? 'Добро пожаловать' : 'Welcome in'),
+    language, welcomeOnly,
+    greeting: arrivals.length ? t.welcomeRaid : t.welcomeIn,
     guests: welcomeOnly && !arrivals.length ? null : guests,
     viewers,
-    viewersLabel: n => ru ? `${n} ${plural(n, 'зритель', 'зрителя', 'зрителей')}` : `${n} ${n === 1 ? 'viewer' : 'viewers'}`,
-    titleLead: ru ? 'Ранее' : 'Previously',
-    titleRest: channel ? (ru ? `на канале ${channel}` : `on ${channel}`) : null,
+    viewersLabel: n => countText(language, n, t.viewers),
+    titleLead: t.titleLead,
+    titleRest: channel ? fill(t.titleRest, { channel }) : null,
     chapters, moment, lore,
-    now: nowText ? { label: ru ? 'Сейчас' : 'Right now', text: plate(nowText), mediaId: nowMedia } : null,
-    command: scene?.command ? (ru ? { before: 'Напишите', command: scene.command, after: 'в чат' } : { before: 'Type', command: scene.command, after: 'in chat' }) : null,
-    countLine: n => ru
-      ? { big: `${n} ${plural(n, 'сообщение', 'сообщения', 'сообщений')}`, small: `за ${moment?.windowSeconds ?? 0} ${plural(moment?.windowSeconds ?? 0, 'секунду', 'секунды', 'секунд')}` }
-      : { big: `${n} ${n === 1 ? 'message' : 'messages'}`, small: `in ${moment?.windowSeconds ?? 0} seconds` },
+    now: nowText ? { label: t.now, text: plate(nowText), mediaId: nowMedia } : null,
+    command: scene?.command ? { before: t.commandBefore, command: scene.command, after: t.commandAfter } : null,
+    countLine: n => ({ big: countText(language, n, t.messages), small: countText(language, moment?.windowSeconds ?? 0, t.window) }),
   };
 }

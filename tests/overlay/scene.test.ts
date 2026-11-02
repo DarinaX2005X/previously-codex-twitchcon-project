@@ -55,7 +55,14 @@ describe('deterministic scene', () => {
     expect(renderAt(-1, plan, layout).visible).toBe(false);
     expect(renderAt(12000, plan, layout).visible).toBe(false);
     expect(renderAt(11999, plan, layout).objects).toHaveLength(0);
-    expect(renderAt(6000, plan, layout).objects.length).toBeGreaterThan(5);
+    expect(renderAt(6000, plan, layout).objects.length).toBeGreaterThanOrEqual(3);
+  });
+  it('keeps one focus at a time: few objects share the screen in the middle', () => {
+    const { frames } = sweep();
+    for (const f of frames) if (f.phase === 'chapters' || f.phase === 'chat') {
+      const solid = f.objects.filter(o => o.tone !== 'clear' && o.kind !== 'tab' && o.opacity > .3);
+      expect(solid.length, `${f.timeMs}`).toBeLessThanOrEqual(f.phase === 'chapters' ? 8 : 5);
+    }
   });
   it('is mid-change in nearly every frame of the active passages (the pause test)', () => {
     const plan = labPlan('full'), layout = resolveSceneLayout(plan.layout)!;
@@ -75,8 +82,10 @@ describe('everything shown comes from the plan', () => {
     const seen = frames.map(texts).join(' ');
     for (const value of ['Welcome,', 'pixelmoth raiders', '37 viewers', 'Previously', 'on Foxlight Dev', '0:05', '1:40', '3:30', 'Fox learns to', 'moon', '45 messages', 'in 10 seconds', '2:05', 'Right now', 'lantern', '!previously'])
       expect(seen, value).toContain(value);
-    for (const message of plan.scene!.moment!.messages) expect(seen).toContain(message);
+    // Chat reacts as a counted number over a short feed of real lines, never a pile.
+    for (const message of plan.scene!.moment!.messages.slice(0, 2)) expect(seen).toContain(message);
     expect(frames.some(f => f.phase === 'chat')).toBe(true);
+    for (const f of frames) expect(f.objects.filter(o => o.kind === 'slip').length).toBe(0);
   });
   it('without a moment there is no chat beat, no slips and no counter', () => {
     const { frames } = sweep(labPlan('nochat'));
@@ -158,7 +167,7 @@ describe('fitting and reduced motion', () => {
     const a = renderAt(3000, plan, layout, { ...allMedia, reducedMotion: true }), b = renderAt(8000, plan, layout, { ...allMedia, reducedMotion: true });
     expect(a.objects.map(o => [o.key, o.x, o.y, o.w, o.h])).toEqual(b.objects.map(o => [o.key, o.x, o.y, o.w, o.h]));
     expect(a.objects.some(o => o.media)).toBe(false);
-    expect(texts(a)).toContain('lantern'); expect(texts(a)).toContain('Spring');
+    expect(texts(a)).toContain('lantern'); expect(texts(a)).toContain('moon jump');
   });
 });
 
@@ -168,7 +177,8 @@ describe('sound cues share the picture timeline', () => {
     const cues = sceneSoundEvents(plan, layout, allMedia);
     expect(new Set(cues.map(c => c.kind)).size).toBeGreaterThanOrEqual(9);
     expect(cues.every((c, i) => c.atMs >= 0 && c.atMs < plan.durationMs && (i === 0 || c.atMs >= cues[i - 1]!.atMs))).toBe(true);
-    expect(cues.filter(c => c.kind === 'latch')).toHaveLength(3);
+    expect(cues.filter(c => c.kind === 'latch')).toHaveLength(1);
+    expect(cues.filter(c => c.kind === 'flick')).toHaveLength(3);
   });
   it('has no chatter or ceramic taps without a moment, and keeps every 10 s cue inside 10 s', () => {
     const nochat = sceneSoundEvents(labPlan('nochat'));

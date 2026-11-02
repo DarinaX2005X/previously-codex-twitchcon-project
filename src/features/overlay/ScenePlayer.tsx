@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { RecapPlan } from '../../shared/contracts/index.js';
+import { messagesFor } from '../../i18n/index.js';
 import { resolveSceneLayout, type MeasureText } from './geometry.js';
 import { renderAt, sceneSoundEvents, sceneTextFits, type SceneObject } from './scene.js';
 import { prepareMedia, syncMedia, type PreparedMedia, type MediaResolver } from './media.js';
@@ -130,6 +131,7 @@ export function ScenePlayer(props:ScenePlayerProps) {
 export function SceneSummary({plan,className=''}:{plan:RecapPlan|null;className?:string}) {
   if(!plan)return null;
   const focalId=plan.beats.find(beat=>beat.kind==='now')?.id??plan.beats.at(-1)?.id;
-  return <section className={`scene-summary ${className}`} aria-label={plan.language==='ru'?'Кратко об эфире':'Stream recap'}>{plan.beats.map(beat=><p key={beat.id} className={beat.id===focalId?'scene-summary-current':undefined}><span>{plan.language==='ru'?({attempt:'Цель',change:'Что изменилось',origin:'Источник',now:'Сейчас',context:'Контекст эфира'}[beat.kind]):({attempt:'The goal',change:'What changed',origin:'Where it started',now:'What matters now',context:'Stream context'}[beat.kind])}</span>{beat.text}</p>)}</section>;
+  const labels=messagesFor(plan.language).scene;
+  return <section className={`scene-summary ${className}`} aria-label={labels.summaryLabel}>{plan.beats.map(beat=><p key={beat.id} className={beat.id===focalId?'scene-summary-current':undefined}><span>{labels.beat[beat.kind]}</span>{beat.text}</p>)}</section>;
 }
 export function ScenePreview(props:ScenePlayerProps){return <ScenePlayer {...props} cropToLayout={props.cropToLayout??true}/>;}
