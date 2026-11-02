@@ -13,8 +13,8 @@ export type SceneScript = {
   titleLead: string;          // "Previously"
   titleRest: string | null;   // "on Foxlight Dev"
   chapters: { id: string; title: string; timecode: string; mediaId: string | null }[];
-  /** `clipOffsetMs`: where the moment begins after the clip's in-point, from the plan's capture range; null when unknown. */
-  moment: { chapterIndex: number; count: number; windowSeconds: number; messages: string[]; mediaId: string | null; clipOffsetMs: number | null } | null;
+  /** `reactionMs`: where chat peaked, in ms after the clip's in-point (from the plan's burst and capture range); null when unknown. */
+  moment: { chapterIndex: number; count: number; windowSeconds: number; messages: string[]; mediaId: string | null; reactionMs: number | null } | null;
   lore: { term: string; explanation: string | null; stamp: string } | null;
   now: { label: string; text: string; mediaId: string | null } | null;
   command: { before: string; command: string; after: string } | null;
@@ -49,11 +49,11 @@ export function sceneScript(plan: RecapPlan, extra: { channel?: string; title?: 
   let moment: SceneScript['moment'] = null;
   if (!welcomeOnly && scene?.moment) {
     const chapterIndex = scene.moment.chapterId ? chapters.findIndex(c => c.id === scene.moment!.chapterId) : -1;
-    // The clip's in-point is measured from its capture start, so the moment's own start inside the clip follows from the plan.
+    // The clip's in-point is measured from its capture start, so chat's real peak inside the clip follows from the plan.
     const clip = scene.moment.mediaId ? plan.media.find(m => m.id === scene.moment!.mediaId) : undefined;
-    const offset = clip && !clip.previousSession ? scene.moment.startMs - clip.captureStartMs - clip.inMs : null;
-    const clipOffsetMs = clip && offset !== null && offset >= 0 && offset <= clip.outMs - clip.inMs ? offset : null;
-    if (chapterIndex >= 0) moment = { chapterIndex, count: scene.moment.count, windowSeconds: scene.moment.windowSeconds, messages: scene.moment.messages.slice(0, 14), mediaId: scene.moment.mediaId, clipOffsetMs };
+    const offset = clip && !clip.previousSession && scene.moment.burstMs !== undefined ? scene.moment.burstMs - clip.captureStartMs - clip.inMs : null;
+    const reactionMs = clip && offset !== null && offset >= 0 && offset <= clip.outMs - clip.inMs ? offset : null;
+    if (chapterIndex >= 0) moment = { chapterIndex, count: scene.moment.count, windowSeconds: scene.moment.windowSeconds, messages: scene.moment.messages.slice(0, 14), mediaId: scene.moment.mediaId, reactionMs };
   }
   const lore = !welcomeOnly && scene?.lore ? { term: scene.lore.term, explanation: scene.lore.explanation || null, stamp: timecode(scene.lore.originMs) } : null;
   const nowText = welcomeOnly ? (streamTitle ?? nowBeat?.text ?? null) : scene ? scene.now?.text ?? null : nowBeat?.text ?? null;

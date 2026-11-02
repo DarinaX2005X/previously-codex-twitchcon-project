@@ -5,6 +5,7 @@ import {ScenePlayer,ScenePreview} from '../overlay/index.js';
 import type {OwnerSnapshot,PublicChapter,RecapPlan,Source} from '../../shared/contracts/index.js';
 import {englishLanguageName} from '../../shared/languages.js';
 import {useRecording,type RecordedChat} from './useRecording.js';
+import {visibleChat} from '../../replay/chat.js';
 import {correctionTarget} from './correction.js';
 import {useFootage} from './footage.js';
 import './replay.css';
@@ -24,7 +25,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
   const [dock,setDock]=useState(false),[evidence,setEvidence]=useState<Source[]|null>(null),[actionError,setActionError]=useState<string|null>(null),[preview,setPreview]=useState<RecapPlan|null>(null),[busy,setBusy]=useState(false);
   const dockRegion=useRef<HTMLElement|null>(null),dockTrigger=useRef<HTMLButtonElement|null>(null);
   const closeDock=()=>{setDock(false);dockTrigger.current?.focus({preventScroll:true});};
-  useEffect(()=>{if(dock){dockRegion.current?.focus({preventScroll:true});dockRegion.current?.scrollIntoView({block:'start',behavior:'smooth'});}},[dock]);
+  useEffect(()=>{if(dock){dockRegion.current?.focus({preventScroll:true});dockRegion.current?.scrollIntoView({block:'start',behavior:typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}},[dock]);
   const s=view?.snapshot,t=view?.transport,published=s?.published,chapter=published?.chapters.at(-1),active=s?.playback.find(p=>p.status==='playing'&&p.plan);
   const publishMilestone=t?.milestones.find(m=>m.id==='published');
   const raidMilestone=t?.milestones.find(m=>m.id==='raid');
@@ -65,7 +66,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
   useEffect(()=>{publicationSeen.current={sessionId:s?.session?.id??null,atMs:t?.atMs??0,seen:hasContext||sameTimeline&&publicationSeen.current.seen};},[s?.session?.id,t?.atMs,hasContext,sameTimeline]);
   const held=!!s?.held.length;
   const incoming=!activePlan&&t?.latestSource&&t.latestSource.kind!=='chat'?t.latestSource:null;
-  const visibleChat=useVisibleChat(client,s,chat,t?.atMs??0);
+  const shownChat=useVisibleChat(chat,t?.atMs??0,t?.hiddenChat);
   // Jumping to a moment plays it at normal speed so the raid scene can be watched.
   const seek=(milestone:string,play=true)=>void run(async()=>{await client!.controlReplay({action:'seek',milestone});if(play)await client!.controlReplay({action:'play',speed:1});});
 
@@ -101,7 +102,7 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
             <TextButton disabled={busy} onClick={()=>void run(()=>client.controlReplay({action:'reset'}))}>Restart</TextButton>
           </div>
         </section>
-        <ChatColumn messages={visibleChat} atMs={t.atMs}/>
+        <ChatColumn messages={shownChat} atMs={t.atMs}/>
       </div>
       {(actionError||t.error==='fixture_missing')&&<p role="status" className="rp-error">{actionError??'This recording has no safety check for this edit. The edit stays held.'}</p>}
 
@@ -235,18 +236,8 @@ function chapterMedia(chapter:PublicChapter,snapshot:OwnerSnapshot,ranges:{id:st
   return range?resolve(range.id):undefined;
 }
 
-/** Chat shown in recording time, without messages the streamer has forgotten. */
-function useVisibleChat(client:ReturnType<typeof useRecording>['client'],snapshot:OwnerSnapshot|undefined,chat:RecordedChat[],atMs:number){
-  const [allowed,setAllowed]=useState<{epoch:number;ids:Set<string>;asOfMs:number}|null>(null);
-  const epoch=snapshot?.session?.privacyEpoch??0,sessionId=snapshot?.session?.id;
-  useEffect(()=>{
-    if(!client||!sessionId||epoch===0){setAllowed(null);return;}
-    let active=true;
-    void (async()=>{const ids=new Set<string>();let cursor:string|undefined;const asOfMs=atMs;
-      do{const page=await client.listSources({sessionId,limit:50,cursor});for(const item of page.items)if(item.kind==='chat')ids.add(item.id);cursor=page.nextCursor??undefined;}while(cursor&&active);
-      if(active)setAllowed({epoch,ids,asOfMs});})().catch(()=>undefined);
-    return()=>{active=false;};
-  },[client,sessionId,epoch]);
-  return useMemo(()=>chat.filter(c=>c.atMs<=atMs&&(!allowed||c.atMs>allowed.asOfMs||allowed.ids.has(c.id))),[chat,atMs,allowed]);
+/** Chat shown in recording time, without the lines the run has removed (Forget, ban, chat clear). */
+function useVisibleChat(chat:RecordedChat[],atMs:number,hidden:string[]|undefined){
+  return useMemo(()=>visibleChat(chat,atMs,hidden??[]),[chat,atMs,hidden]);
 }
 

@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {normalizeTermText} from '../../shared/text.js';
 import {Router} from 'express';
 import type {DomainEffect,DomainMedia,DomainState} from '../../core/types.js';
 import type {Channel,Clock,EventEnvelope,Moment,PublicSnapshot,Scope,Session,VersionRef} from '../../shared/contracts/index.js';
@@ -42,7 +43,9 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
   const inFlightIngest=new Set<string>();
   const retryableChatIngest=new Set<string>();
   let connection:{state:ConnectionState;quotesReady:boolean;reason?:string;privacyBlocked:boolean}={state:'disconnected',quotesReady:false,privacyBlocked:false};
-  let lastFailure:string|null=null;
+  // The latest failure, kept only until the same kind of work succeeds again, so a recovered problem leaves the dock.
+  let failure:{kind:'connection'|'recovery'|'task'|'external'|'previous'|'attach';message:string}|null=null;
+  const fail=(kind:NonNullable<typeof failure>['kind'],message:string)=>{failure={kind,message};};
   const publicUrl=options.publicUrl??config.publicOrigin;
   const permissionId=(clipId:string)=>`previous:${digest(clipId).slice(0,32)}`;
   const permissionKey=(id:string)=>`twitch:previous-permission:${id}`;
@@ -58,7 +61,9 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     for(;;){const rows=repository.listSessions(scope,{limit:50,cursor});for(const row of rows)yield row;if(rows.length<50)return;const last=rows.at(-1)!;cursor={startedAt:last.startedAt,id:last.id};}
   };
   const liveId=()=>{let found:Session|null=null;for(const session of sessionPages())if(session.status==='live'&&(!found||session.startedAt>found.startedAt))found=session;return found?.id??null;};
-  const setFailure=(message:string)=>{lastFailure=message;engine.setStatus('chat',{state:'error',lastObservedAt:clock.iso(),message,action:'Reconnect Twitch'});};
+  const setFailure=(kind:'connection'|'task',message:string)=>{fail(kind,message);engine.setStatus('chat',{state:'error',lastObservedAt:clock.iso(),message,action:'Reconnect Twitch'});};
+  const chatStatus=()=>{const {state,quotesReady}=connection;engine.setStatus('chat',{state:state==='active'&&quotesReady?'ready':state==='gap'?'delayed':state==='revoked'?'error':state==='disconnected'?'disconnected':'connecting',lastObservedAt:clock.iso(),message:state==='gap'?'Chat coverage has a gap. Reconnecting and checking bans.':state==='revoked'?'Twitch permissions changed. Reconnect Twitch.':state==='disconnected'?'Twitch is disconnected.':state==='active'?null:'Connecting Twitch and checking channel restrictions.',action:state==='revoked'||state==='disconnected'?'Reconnect Twitch':null});};
+  const recovered=(kind:NonNullable<typeof failure>['kind'])=>{if(failure?.kind!==kind)return;failure=null;if(kind==='task')chatStatus();};
   const mutateAcrossSessions=async(actorId:string,throughAt:string|null)=>{
     for(const session of sessionPages()){
       if(throughAt&&Date.parse(session.startedAt)>Date.parse(throughAt))continue;
@@ -118,7 +123,7 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     if(networkStarting)return networkStarting;
     networkStarting=eventSub.start().finally(()=>{networkStarting=null;});await networkStarting;
   };
-  const authService=(options.authFactory??createTwitchAuth)({scope,clientId:config.twitch.clientId,clientSecret:config.twitch.clientSecret,redirectUri:config.twitch.redirectUri,origin:config.origin,sessionSecret:config.sessionSecret,tokenVault:storage.tokenVault,sessions:storage.sessions,control,now:clock.now.bind(clock),fetch:options.fetch,markerEnabled:options.markerEnabled,onAuthorized:connect,onDisconnect:()=>{void stopNetwork().catch(()=>setFailure('Twitch is disconnected. Reconnect to continue.'));updates.revoke(principal=>principal.channelId===scope.channelId&&principal.runId===scope.runId);},onOverlayRotated:()=>updates.revoke(principal=>principal.channelId===scope.channelId&&principal.runId===scope.runId&&principal.role==='overlay')});
+  const authService=(options.authFactory??createTwitchAuth)({scope,clientId:config.twitch.clientId,clientSecret:config.twitch.clientSecret,redirectUri:config.twitch.redirectUri,origin:config.origin,sessionSecret:config.sessionSecret,tokenVault:storage.tokenVault,sessions:storage.sessions,control,now:clock.now.bind(clock),fetch:options.fetch,markerEnabled:options.markerEnabled,onAuthorized:connect,onDisconnect:()=>{void stopNetwork().catch(()=>setFailure('connection','Twitch is disconnected. Reconnect to continue.'));updates.revoke(principal=>principal.channelId===scope.channelId&&principal.runId===scope.runId);},onOverlayRotated:()=>updates.revoke(principal=>principal.channelId===scope.channelId&&principal.runId===scope.runId&&principal.role==='overlay')});
   const helix=options.helix??new TwitchHelix(channel.id,authService.tokens);
   const onMarker=(input:MarkerContext,result:MarkerResult)=>{
     control.put(`twitch:marker:${input.sessionId}:${input.momentId}`,{...result,at:clock.iso(),expiresAtMs:input.expiresAtMs},clock.now()+7*86400000);
@@ -133,7 +138,7 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
   const effects=new TwitchEffects({scope,helix,repository,control,now:clock.now.bind(clock),allowed,
     prepareMedia:async input=>{if(!options.media)throw new Error('private_media_unavailable');const extended=input as ClipContext&typeof input;const clipId=input.id.startsWith('clip:')?input.id.slice(5):undefined;const id=mediaId(extended,clipId);const result=await options.media.prepare({...input,id});control.put(`twitch:media:${id}`,{durationMs:result.durationMs});return result;},
     onClip,onMarker,previousPermitted:clip=>clip.broadcaster_id===channel.id&&!control.get(`twitch:clip-block:${clip.id}`),
-    onResult:(_id,result)=>{if(result.status==='unknown_outcome')lastFailure='Twitch did not confirm an external action. It will not be sent again automatically.';},
+    onResult:(_id,result)=>{if(result.status==='unknown_outcome')fail('external','Twitch did not confirm an external action. It will not be sent again automatically.');else if(result.status==='sent')recovered('external');},
   });
   const refreshPrevious=async()=>{
     if(previousBusy||!running||!authService.status().connected)return;previousBusy=true;
@@ -141,8 +146,8 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
       if(!running)return;
       if(candidate){if(current?.clip.id!==candidate.id||current.status==='candidate')control.put('twitch:previous',{clip:candidate,status:'candidate',sessionId:null} satisfies PreviousSelection);}
       else if(!current||current.status==='candidate')control.delete('twitch:previous');
-      control.put('twitch:previous-checked',clock.now());
-    }catch{lastFailure='Previous clips could not be checked. Retry from Twitch setup.';}finally{previousBusy=false;}
+      control.put('twitch:previous-checked',clock.now());recovered('previous');
+    }catch{fail('previous','Previous clips could not be checked. Retry from Twitch setup.');}finally{previousBusy=false;}
   };
   const observeStream=async(stream:TwitchStream|null,occurredAt:string,streamId?:string)=>{
     if(!running)return;
@@ -164,16 +169,18 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
       else if(state==='active'&&running)bans.start();
       if(state==='gap')control.put('twitch:gap',{since:control.get<Gap>('twitch:gap')?.since??Date.parse(detail.gapSince??clock.iso()),until:null} satisfies Gap);
       if(state==='active'){const gap=control.get<Gap>('twitch:gap');if(gap&&gap.until===null)control.put('twitch:gap',{...gap,until:clock.now()});}
-    }catch{lastFailure='Twitch safety recovery is waiting for local storage.';}
-    engine.setStatus('chat',{state:state==='active'&&detail.quotesReady?'ready':state==='gap'?'delayed':state==='revoked'?'error':state==='disconnected'?'disconnected':'connecting',lastObservedAt:clock.iso(),message:state==='gap'?'Chat coverage has a gap. Reconnecting and checking bans.':state==='revoked'?'Twitch permissions changed. Reconnect Twitch.':state==='disconnected'?'Twitch is disconnected.':state==='active'?null:'Connecting Twitch and checking channel restrictions.',action:state==='revoked'||state==='disconnected'?'Reconnect Twitch':null});
-    if(state==='revoked')lastFailure='Twitch permissions changed. Reconnect Twitch.';
+      recovered('recovery');
+    }catch{fail('recovery','Twitch safety recovery is waiting for local storage.');}
+    chatStatus();
+    if(state==='revoked')fail('connection','Twitch permissions changed. Reconnect Twitch.');
+    else if(state==='active'&&detail.quotesReady)recovered('connection');
     if(state==='revoked'&&detail.reason==='authorization_revoked')authService.tokens.disconnect();
   };
   const safeReply=(state:DomainState,command:ChatCommand):{snapshot:PublicSnapshot|null;refs:VersionRef[];blocked:boolean}=>{
     const snapshot=state.published?structuredClone(state.published):null;if(!snapshot)return {snapshot:null,refs:[],blocked:false};
     const refs:VersionRef[]=[];const blocked=command.kind==='lore'&&repository.isTermBlocked(scope,state.session.id,command.term);
     if(command.kind==='lore'){
-      const wanted=snapshot.lore.find(lore=>lore.term.normalize('NFKC').toLowerCase()===command.term.toLowerCase());const owned=wanted&&state.lore.find(lore=>lore.id===wanted.id);
+      const wanted=snapshot.lore.find(lore=>normalizeTermText(lore.term)===normalizeTermText(command.term));const owned=wanted&&state.lore.find(lore=>lore.id===wanted.id);
       if(owned&&!blocked)refs.push({id:owned.id,revision:owned.revision});else snapshot.lore=[];
     }else{
       snapshot.chapters=snapshot.chapters.slice(-2).filter(chapter=>{
@@ -292,14 +299,14 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     return safeRefs(state,input.dependencyRefs);
   };
   const attachApproved=async(sessionId:string)=>{
-    if(!options.media)return;
+    if(!options.media)return;let capped=false;
     for(const id of permissions()){
       const permission=control.get<PreviousPermission>(permissionKey(id));if(!permission||permission.state!=='ready')continue;
       const state=engine.state(sessionId);
       if(!permission.approved){const prior=state.media.find(media=>media.previousSession&&media.clipId===permission.clip.id&&media.ownerApproved);if(prior)await engine.dispatch(sessionId,{type:'media',media:{...prior,ownerApproved:false,state:'unavailable'},privacyEpoch:state.session.privacyEpoch});continue;}
       if(state.media.some(media=>media.previousSession&&media.clipId===permission.clip.id&&media.state==='ready'&&media.ownerApproved))continue;
       if(control.get(`twitch:clip-block:${permission.clip.id}`)||Date.parse(permission.clip.created_at)>=Date.parse(state.session.startedAt))continue;
-      if(permission.attachments.length>=50&&!permission.attachments.some(item=>item.sessionId===sessionId)){lastFailure='Choose another previous clip before reusing this asset in more sessions.';continue;}
+      if(permission.attachments.length>=50&&!permission.attachments.some(item=>item.sessionId===sessionId)){capped=true;fail('attach','Choose another previous clip before reusing this asset in more sessions.');continue;}
       const aliasId=`previous-scene:${digest([sessionId,permission.id]).slice(0,32)}`;
       await options.media.alias(permission.mediaId,aliasId);
       const latest=control.get<PreviousPermission>(permissionKey(id));if(!latest||latest.state!=='ready'||!latest.approved||latest.revision!==permission.revision){await options.media.revoke(aliasId);continue;}
@@ -309,6 +316,7 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
       await engine.dispatch(sessionId,{type:'media',media,privacyEpoch:state.session.privacyEpoch},{idempotencyKey:`previous-attach:${digest([sessionId,id,permission.revision,permission.selectionRevision])}`,requestBody:{sessionId,approvalId:id,revision:permission.revision,selectionRevision:permission.selectionRevision}});
       const after=control.get<PreviousPermission>(permissionKey(id));if(after?.revision===permission.revision&&after.state!=='revoked')control.put(permissionKey(id),{...after,attachments:[...after.attachments.filter(item=>item.sessionId!==sessionId),{sessionId,mediaId:aliasId}].slice(-50)});
     }
+    if(!capped)recovered('attach');
   };
   const prepareChannelPrevious=async()=>{
     for(const id of permissions()){
@@ -365,8 +373,8 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
           const id=repository.runIdempotentControl(scope,`twitch-clip-convert:${intent.id}`,{momentId:moment.id,privacyEpoch:intent.privacyEpoch},()=>{const result=effects.enqueueClip(context);repository.finishJob(scope,intent.id,intent.leaseToken,result?'done':'failed');return result;});if(!id)await onClip({...context,clip:null,status:'unavailable',reason:'clip_not_eligible_or_cooldown'});
         }
       }
-      await effects.tick();
-    }catch{setFailure('A Twitch task could not be completed. Saved context remains available.');}finally{tickBusy=false;}
+      await effects.tick();recovered('task');
+    }catch{setFailure('task','A Twitch task could not be completed. Saved context remains available.');}finally{tickBusy=false;}
   };
   const tick=()=>{if(tickFlight)return tickFlight;tickFlight=runTick().finally(()=>{tickFlight=null;});return tickFlight;};
   const preparePrevious=async(clipId:string,sessionId:string|null,approved:boolean,idempotencyKey?:string)=>{
@@ -395,9 +403,9 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     auth:authService.auth,authRouter:authService.router,ownerRouter,routers:{auth:authService.router,owner:ownerRouter},ingest,onEffects,tick,allowsMedia,isOwnEcho:(id:string)=>effects.isOwnEcho(id),
     permitsOverlayMedia(id:string){const active=liveId();if(!active)return false;const state=engine.state(active),media=state.media.find(media=>media.id===id);if(!media||media.state!=='ready'||!media.ownerApproved||!state.playbacks.some(playback=>['queued','preparing','playing'].includes(playback.status)&&playback.plan?.media.some(item=>item.id===id)))return false;if(media.previousSession&&media.clipId){const permission=control.get<PreviousPermission>(permissionKey(permissionId(media.clipId)));if(!permission?.approved||permission.state!=='ready')return false;}return engine.allowed({sessionId:active,privacyEpoch:state.session.privacyEpoch,dependencyRefs:[{id:media.id,revision:media.revision}]});},
     privacyBlocked:()=>connection.privacyBlocked,
-    status:()=>({...authService.status(),connection:{...connection},lastFailure,previousClip:control.get<PreviousSelection>('twitch:previous')?.status??'none'}),
+    status:()=>({...authService.status(),connection:{...connection},lastFailure:failure?.message??null,previousClip:control.get<PreviousSelection>('twitch:previous')?.status??'none'}),
     previousCandidate:()=>control.get<PreviousSelection>('twitch:previous'),refreshPrevious,preparePrevious,markerStatus,
-    async start(){if(running)return;running=true;try{await authService.start();await connect();}catch{setFailure('Reconnect Twitch to continue.');}},
+    async start(){if(running)return;running=true;try{await authService.start();await connect();}catch{setFailure('connection','Reconnect Twitch to continue.');}},
     async stop(){running=false;authService.stop();await stopNetwork();await tickFlight;},
   };
 }

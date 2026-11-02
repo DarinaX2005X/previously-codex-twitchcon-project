@@ -39,6 +39,14 @@ export const RESERVATION = {text:2000,transcription:10000,narration:50000} as co
 // `$schema` is not part of the documented Structured Outputs subset; omit the meta keyword rather than rely on it being ignored.
 const strictSchema=(schema:z.ZodType)=>{const {$schema:_meta,...rest}=z.toJSONSchema(schema) as Record<string,unknown>;return rest;};
 export function structuredRequest<T>(name:string,schema:z.ZodType<T>,instructions:string,data:unknown) {return {model:MODEL,service_tier:'default',prompt_cache_options:{mode:'explicit',ttl:'30m'},store:false,reasoning:{effort:'none'},max_output_tokens:1024,tools:[],input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(data)}],text:{format:{type:'json_schema',name,strict:true,schema:strictSchema(schema)}}};}
+/** Reads a response body only up to `limit` bytes, then cancels the rest. Null when the body is larger. */
+async function boundedText(response:Response,limit:number):Promise<string|null>{
+  if(Number(response.headers.get('content-length'))>limit){await response.body?.cancel().catch(()=>{});return null;}
+  if(!response.body)return '';
+  const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;
+  for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>limit){await reader.cancel().catch(()=>{});return null;}chunks.push(value);}
+  return Buffer.concat(chunks).toString('utf8');
+}
 /** The same persistent BudgetStore is shared by every provider. No implicit enable, refund or retry. */
 export class ProviderTransport {
   readonly fetch:typeof fetch;
@@ -66,7 +74,7 @@ export class ProviderTransport {
     if(!response.ok) {
       const retry=response.headers.get('retry-after');const retryAfterMs=retry?(/^\d+(\.\d+)?$/.test(retry)?Number(retry)*1000:Date.parse(retry)-(this.options.now??Date.now)()):undefined;
       // Read only OpenAI's machine-readable error code/type; the message text is never retained or logged.
-      let code:string|undefined;try{const raw=await response.text();if(raw.length<=16384){const error=(JSON.parse(raw) as {error?:{code?:unknown;type?:unknown}}).error;const value=typeof error?.code==='string'?error.code:typeof error?.type==='string'?error.type:undefined;if(value&&/^[a-z0-9_.-]{1,64}$/i.test(value))code=value;}}catch{/* Unparseable error bodies keep only the HTTP status. */}
+      let code:string|undefined;try{const raw=await boundedText(response,16384);if(raw!==null){const error=(JSON.parse(raw) as {error?:{code?:unknown;type?:unknown}}).error;const value=typeof error?.code==='string'?error.code:typeof error?.type==='string'?error.type:undefined;if(value&&/^[a-z0-9_.-]{1,64}$/i.test(value))code=value;}}catch{/* Unparseable error bodies keep only the HTTP status. */}
       const accountLimit=response.status===429&&!!code&&ACCOUNT_LIMIT_CODES.has(code);
       let model:string|undefined;try{model=typeof body==='string'?String(JSON.parse(body).model??''):String(body.get('model')??'');}catch{/* Model name is optional context. */}
       this.report(`http:${response.status}:${code??''}`,describeOpenAIFailure(response.status,code,model||undefined));

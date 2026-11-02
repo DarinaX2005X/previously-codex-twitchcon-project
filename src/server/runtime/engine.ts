@@ -374,34 +374,39 @@ export class StoryEngine {
    * cannot be prepared keeps the switch held, as before.
    */
   async prepareLanguage(sessionId: string, language: RecapLanguage, signal?: AbortSignal): Promise<void> {
-    const state = this.state(sessionId), published = state.published;
+    const state = this.state(sessionId), published = state.published, epoch = state.session.privacyEpoch;
     if (!published || language === state.settings.recapLanguage) return;
-    const active = (refs: readonly {id: string; revision: number}[]) => this.allowed({sessionId, privacyEpoch: state.session.privacyEpoch, dependencyRefs: [...refs]});
     const present = this.options.story.present?.bind(this.options.story);
-    const jobs = present ? published.chapters.flatMap(visible => {
-      const ready = state.candidates.some(c => c.entityId === visible.id && c.revision === visible.revision && c.language === language && safetyAllowsPublication(c.safety) && (c.status === 'published' || c.privacyEpoch === state.session.privacyEpoch));
-      const base = state.candidates.find(c => c.entityId === visible.id && c.revision === visible.revision && c.status === 'published' && c.language === state.settings.recapLanguage);
-      const chapter = state.chapters.find(c => c.id === visible.id);
-      return ready || !base || !chapter || !active(base.chapter.dependencyRefs) ? [] : [{visible, base, ownerRevision: chapter.ownerEditRevision}];
-    }) : [];
+    // Re-read before every model call: a privacy event (Forget, a deleted message, a ban) in the meantime stops
+    // the preparation, and nothing that became inactive is sent.
+    const current = (): DomainState | null => {signal?.throwIfAborted(); const fresh = this.state(sessionId); return fresh.session.privacyEpoch === epoch ? fresh : null;};
+    const queue = present ? published.chapters.map(visible => ({id: visible.id, revision: visible.revision})) : [];
     // A few chapters at a time: each one is a generation, a safety check and a faithfulness review.
-    const queue = [...jobs];
     const worker = async () => {
-      for (let job = queue.shift(); job; job = queue.shift()) {
-        const {visible, base, ownerRevision} = job;
+      for (let visible = queue.shift(); visible; visible = queue.shift()) {
         try {
-          const owner = base.chapter.edited ? base.chapter.dependencyRefs.map(ref => state.sources.find(value => value.id === ref.id && value.revision === ref.revision)).find(value => value?.kind === 'owner_statement') : undefined;
+          const fresh = current();
+          if (!fresh) return;
+          const ready = fresh.candidates.some(c => c.entityId === visible.id && c.revision === visible.revision && c.language === language && safetyAllowsPublication(c.safety) && (c.status === 'published' || c.privacyEpoch === epoch));
+          const base = fresh.candidates.find(c => c.entityId === visible.id && c.revision === visible.revision && c.status === 'published' && c.language === fresh.settings.recapLanguage);
+          const chapter = fresh.chapters.find(c => c.id === visible.id);
+          if (ready || !base || !chapter) continue;
+          const owner = base.chapter.edited ? base.chapter.dependencyRefs.map(ref => fresh.sources.find(value => value.id === ref.id && value.revision === ref.revision)).find(value => value?.kind === 'owner_statement') : undefined;
           const ownerClaim = owner?.text && owner.status === 'active' ? owner : undefined;
-          const claims: StoryPatch['claims'] = ownerClaim ? [{id: ownerClaim.id, text: ownerClaim.text!, role: 'state', support: [{id: ownerClaim.id, revision: ownerClaim.revision}], attribution: 'owner', epistemic: 'explicit'}] : base.chapter.claimIds.map(id => GroundedClaimSchema.parse(state.nodes[id]?.body));
-          const claimRefs = ownerClaim ? [{id: ownerClaim.id, revision: ownerClaim.revision}] : base.chapter.claimIds.map(id => ({id, revision: state.nodes[id]!.revision}));
+          const claimRefs = ownerClaim ? [{id: ownerClaim.id, revision: ownerClaim.revision}] : base.chapter.claimIds.flatMap(id => fresh.nodes[id] ? [{id, revision: fresh.nodes[id]!.revision}] : []);
+          if (!ownerClaim && claimRefs.length !== base.chapter.claimIds.length) continue;
+          if (!this.allowed({sessionId, privacyEpoch: epoch, dependencyRefs: [...base.chapter.dependencyRefs, ...claimRefs]})) continue;
+          const claims: StoryPatch['claims'] = ownerClaim ? [{id: ownerClaim.id, text: ownerClaim.text!, role: 'state', support: [{id: ownerClaim.id, revision: ownerClaim.revision}], attribution: 'owner', epistemic: 'explicit'}] : base.chapter.claimIds.map(id => GroundedClaimSchema.parse(fresh.nodes[id]?.body));
           const value = (await present!(claims, {entityId: visible.id, revision: visible.revision, eligibleAt: base.chapter.eligibleAt, claimRefs}, this.safety, signal, [language]))[language];
-          if (value) await this.dispatch(sessionId, {type: 'presentation', entityId: visible.id, baseRevision: visible.revision, ownerRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: base.chapter.dependencyRefs, current: {...value.current, sourceTimeMs: base.chapter.maxDependencyEndMs, maxDependencyEndMs: base.chapter.maxDependencyEndMs}});
+          if (value && current()) await this.dispatch(sessionId, {type: 'presentation', entityId: visible.id, baseRevision: visible.revision, ownerRevision: chapter.ownerEditRevision, language, title: value.title, summary: value.summary, safety: value.safety, inputRefs: base.chapter.dependencyRefs, current: {...value.current, sourceTimeMs: base.chapter.maxDependencyEndMs, maxDependencyEndMs: base.chapter.maxDependencyEndMs}});
         } catch {signal?.throwIfAborted(); /* This chapter stays unready; the switch is refused with a clear reason. */}
       }
     };
-    await Promise.all(Array.from({length: Math.min(3, jobs.length)}, worker));
+    await Promise.all(Array.from({length: Math.min(3, queue.length)}, worker));
     if (this.options.story.presentLore) for (const visible of published.lore) {
-      const fresh = this.state(sessionId), lore = fresh.lore.find(item => item.id === visible.id);
+      const fresh = current();
+      if (!fresh) return;
+      const lore = fresh.lore.find(item => item.id === visible.id);
       // Same gate as presentOwnerLore: only publishable, privacy-current lore is sent for a new language.
       if (!lore || !['confirmed', 'published'].includes(lore.status) || !safetyAllowsPublication(lore.safety)
         || !this.allowed({sessionId, privacyEpoch: fresh.session.privacyEpoch, dependencyRefs: lore.dependencyRefs})
@@ -409,7 +414,7 @@ export class StoryEngine {
       try {
         const originRefs = fresh.nodes[lore.id]?.supports ?? [];
         const value = (await this.options.story.presentLore({term: lore.term, explanation: lore.explanation, originRefs}, this.safety, signal, [language]))[language];
-        if (value) await this.dispatch(sessionId, {type: 'lore.presentation', id: lore.id, baseRevision: lore.revision, privacyEpoch: fresh.session.privacyEpoch, language, term: value.term, explanation: value.explanation, safety: value.safety, inputRefs: [{id: lore.id, revision: lore.revision}, ...lore.dependencyRefs]});
+        if (value && current()) await this.dispatch(sessionId, {type: 'lore.presentation', id: lore.id, baseRevision: lore.revision, privacyEpoch: fresh.session.privacyEpoch, language, term: value.term, explanation: value.explanation, safety: value.safety, inputRefs: [{id: lore.id, revision: lore.revision}, ...lore.dependencyRefs]});
       } catch {signal?.throwIfAborted();}
     }
   }

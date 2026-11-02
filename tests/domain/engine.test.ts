@@ -193,6 +193,15 @@ describe('integration-facing editorial and recovery contracts',()=>{
     h.send({type:'privacy',target:{kind:'session',sessionId:h.state.session.id}});expect(h.state.published!.chapters).toHaveLength(0);expect(h.state.published!.current).toBeNull();
     expect(h.state.candidates.filter(candidate=>candidate.language==='es'&&candidate.status==='published'&&candidate.privacyEpoch===h.state.session.privacyEpoch)).toHaveLength(0);
   });
+  it('keeps the current language’s newer pending draft when a language switch presentation needs room',()=>{
+    const h=published(),chapter=h.state.chapters[0]!,base=h.state.candidates.find(c=>c.entityId===chapter.id&&c.status==='published')!;
+    const draft=(language:string,id:string)=>({...structuredClone(base),id,language,revision:chapter.revision+1,status:'pending' as const});
+    const others=h.state.candidates.filter(c=>c.entityId!==chapter.id);
+    h.state.candidates=[...others,base,{...structuredClone(base),id:'published-es',language:'es'},draft('en','pending-en-r2'),draft('es','pending-es-r2')];
+    h.send({type:'presentation',entityId:chapter.id,baseRevision:chapter.revision,ownerRevision:0,language:'fr',title:'Sauvegarde des notes',summary:'L’autrice ajoute la sauvegarde des notes.',safety:allowed,inputRefs:chapter.dependencyRefs});
+    const ids=h.state.candidates.filter(c=>c.entityId===chapter.id).map(c=>c.id);
+    expect(ids).toContain('pending-en-r2');expect(ids).not.toContain('pending-es-r2');expect(ids.some(id=>id.endsWith(':fr'))).toBe(true);
+  });
   it('refuses a recap language that is not a canonical language tag',()=>{
     const h=published();
     for(const recapLanguage of ['pt-br','english','x-private','en-u-ca-gregory'])h.send({type:'settings',baseRevision:0,settings:{...h.state.settings,revision:1,recapLanguage}});

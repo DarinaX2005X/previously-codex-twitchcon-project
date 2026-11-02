@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDomainState, reduceDomain, recapLineage, sceneChatMessages, canDispatch, type DomainState } from '../../src/core/index.js';
+import { createDomainState, reduceDomain, recapLineage, sceneChatMessages, chatBurst, canDispatch, type DomainState } from '../../src/core/index.js';
 import { defaultSettings, type Clock, type Source } from '../../src/shared/contracts/index.js';
 
 // AUTHORED DEVELOPMENT FIXTURE. Exercises chat eligibility for the broadcast scene; no recorded stream.
@@ -23,6 +23,16 @@ const window = { startMs: 101000, endMs: 111000 };
 const texts = (s: DomainState) => sceneChatMessages(s, window).map(message => message.text);
 
 describe('scene chat eligibility', () => {
+  it('finds where chat actually peaked from eligible message times, and forgets with them', () => {
+    const s = state();
+    // Seven eligible messages fall in 102.0-104.0 s (pending, deleted and banned ones never count).
+    expect(chatBurst(s, window)).toMatchObject({ atMs: 102000 });
+    const dense = { ...s, sources: [...s.sources, ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => ({ ...s.sources[0]!, id: `peak-${i}`, startMs: 106000 + i * 100, endMs: 106000 + i * 100 }))] };
+    expect(chatBurst(dense, window)?.atMs).toBe(106000);
+    const forgotten = reduceDomain(dense, { type: 'privacy', target: { kind: 'interval', sessionId: 'session', fromMs: 105000, toMs: 108000 } }, clock).state;
+    expect(chatBurst(forgotten, window)?.atMs).toBe(102000);
+    expect(chatBurst(s, { startMs: 0, endMs: 95000 })).toBeUndefined();
+  });
   it('uses only short, allowed, active messages from the moment window and caps repeats', () => {
     expect(texts(state())).toEqual(['MOON JUMP', 'he is gone', 'MOON JUMP', 'fox to the moon']);
   });

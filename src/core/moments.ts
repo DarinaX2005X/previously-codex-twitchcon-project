@@ -1,4 +1,5 @@
 import type { Clock, Source, VersionRef } from '../shared/contracts/index.js';
+import { asksForClip, isLaughter } from './chat-signals.js';
 import { DOMAIN_LIMITS, type DomainState, type DomainEffect, type ReactionWindow } from './types.js';
 import { blockedPhrase, normalizeTerm, refOf, uniqueRefs } from './evidence.js';
 
@@ -38,7 +39,7 @@ export function observeChat(state:DomainState,source:Source,effects:DomainEffect
   if(prior>=2||!prior&&Object.keys(w.actors).length>=DOMAIN_LIMITS.actorsPerWindow)return;
   w.actors[actorKey]=prior+1;w.count++;
   // Count each actor once per signal; an actor cannot manufacture a crowd with repetition.
-  if(prior===0){if(signals?.emote)w.emotes++;if(signals?.laughter||/\b(lol|lmao|haha|хаха)\b/iu.test(source.text))w.laughter++;if(signals?.clipIt||/\bclip (?:it|that)\b/iu.test(source.text))w.clipIt++;}
+  if(prior===0){if(signals?.emote)w.emotes++;if(signals?.laughter||isLaughter(source.text))w.laughter++;if(signals?.clipIt||asksForClip(source.text))w.clipIt++;}
   if(w.refs.length<100)w.refs.push(refOf(source));state.openWindow=w;
   if(phrase)observePhrase(state,source,phrase);
 }

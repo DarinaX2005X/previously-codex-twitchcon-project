@@ -1,4 +1,5 @@
 import type {PublicSnapshot,RecapLanguage} from './contracts/index.js';
+import {normalizeTermText} from './text.js';
 import {messagesFor} from '../i18n/index.js';
 export type ChatCommand={kind:'previously'}|{kind:'lore';term:string};
 export function parseCommand(text:string):ChatCommand|null {
@@ -11,7 +12,7 @@ export function composeReply(command:ChatCommand,snapshot:PublicSnapshot|null,la
   const url=publicUrl?new URL(publicUrl):null;if(url&&(url.protocol!=='https:'||url.username||url.password||url.hash))throw new Error('Chat needs canonical HTTPS public URL');
   let text:string;
   if(command.kind==='lore'){
-    const match=!blocked&&snapshot?.lore.find(item=>item.term.normalize('NFKC').toLowerCase()===command.term.toLowerCase());
+    const match=!blocked&&snapshot?.lore.find(item=>normalizeTermText(item.term)===normalizeTermText(command.term));
     text=match&&match.originKind!=='unknown'?`${match.term}: ${match.explanation}`:messagesFor(language).bot.loreUnconfirmed;
   }else{
     const chapters=snapshot?.chapters.slice(-2)??[];

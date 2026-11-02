@@ -3,7 +3,7 @@ import type { Chapter, InvalidationReceipt, Lore, Moment, OwnerSnapshot, Privacy
 import { englishLanguageName, nativeLanguageName } from '../../shared/languages';
 import { ActionGroup, Brand, Button, ClipFrame, Dialog, DockLayout, Field, IconButton, InlineNotice, LanguageControl, QuietButton, SegmentedControl, Sheet, SourceDisclosure, Textarea, Timecode, formatTimecode } from '../../ui';
 import { SettingsSheet } from '../settings/SettingsSheet';
-import { dockClock, DockStore, errorCode, forgetWindow, hotkeyMatches, pauseListening, privacyAcknowledged, publicationLabel, recordingRecovery, saveChapterDraft, type DockClockMode } from './model';
+import { actionErrorMessage, dockClock, DockStore, forgetWindow, hotkeyMatches, pauseListening, privacyAcknowledged, publicationLabel, recordingRecovery, saveChapterDraft, type DockClockMode } from './model';
 import type { DockCapturePort, DockMarkerSnapshot, DockOwnerPort, DockPreviewRenderer } from './ports';
 import { SourceSheet, type SourceContext } from './SourceSheet';
 import { LoreRow } from './LoreRow';
@@ -79,6 +79,14 @@ function ChapterCard({ chapter, now, delaySeconds, media, pending, confirming, c
   const remaining = local ? Math.max(0, (Date.parse(local.eligibleAt) - now) / 1000) : 0;
   const fuse = waiting ? Math.min(1, remaining / Math.max(1, delaySeconds)) : 0;
   const titleId = useId();
+  // Keyboard focus follows the inline confirmation: into it on open (the safe choice), back to Delete on cancel.
+  const confirmGroup = useRef<HTMLDivElement>(null), deleteTrigger = useRef<HTMLButtonElement>(null), restoreFocus = useRef(false);
+  useEffect(() => {
+    if (confirming) confirmGroup.current?.querySelector<HTMLButtonElement>('[data-confirm-keep]')?.focus();
+    else if (restoreFocus.current) deleteTrigger.current?.focus();
+    restoreFocus.current = false;
+  }, [confirming]);
+  const cancelDelete = () => { restoreFocus.current = true; onDeleteCancel(); };
   return <article className="pv-card pv-card--ink pv-card--tabbed dk-chapter" data-state={blocked ? 'review' : waiting ? 'waiting' : 'published'} data-pinned={chapter.pinned || undefined} aria-labelledby={titleId}>
     <span className="pv-tab dk-chapter__tab">{formatTimecode(chapter.startMs)}</span>
     {chapter.pinned && <span className="dk-chapter__pin" title="Pinned for the next scene"><Icon name="pin" /><span className="pv-sr-only">Pinned for the next scene</span></span>}
@@ -93,14 +101,14 @@ function ChapterCard({ chapter, now, delaySeconds, media, pending, confirming, c
     </div>
     <p className="dk-chapter__summary">{chapter.summary}</p>
     {sourceFallback}
-    {confirming ? <div className="dk-confirm" role="group" aria-label={`Delete ${chapter.title}`}>
+    {confirming ? <div ref={confirmGroup} className="dk-confirm" role="group" aria-label={`Delete ${chapter.title}`} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelDelete(); } }}>
       <p>Remove this chapter from the recap and queued scenes? Its captured sources stay.</p>
-      <div className="dk-confirm__actions"><Button tone="danger" pending={pending.has(`delete:${chapter.id}`)} onClick={onDelete}>Delete chapter</Button><QuietButton onClick={onDeleteCancel}>Keep it</QuietButton></div>
+      <div className="dk-confirm__actions"><Button tone="danger" pending={pending.has(`delete:${chapter.id}`)} onClick={onDelete}>Delete chapter</Button><QuietButton data-confirm-keep onClick={cancelDelete}>Keep it</QuietButton></div>
     </div> : <div className="dk-actions">
       {canSource && <button type="button" className="dk-act" onClick={onSource}><Icon name="quote" />Source</button>}
       <button type="button" className="dk-act" onClick={onEdit}><Icon name="pencil" />Edit</button>
       <button type="button" className="dk-act" aria-pressed={chapter.pinned} aria-busy={pending.has(`pin:${chapter.id}`) || undefined} disabled={pending.has(`pin:${chapter.id}`)} onClick={onPin}><Icon name="pin" />{chapter.pinned ? 'Unpin' : 'Pin'}</button>
-      <button type="button" className="dk-act dk-act--danger" onClick={onDeleteAsk}><Icon name="trash" />Delete</button>
+      <button ref={deleteTrigger} type="button" className="dk-act dk-act--danger" onClick={onDeleteAsk}><Icon name="trash" />Delete</button>
     </div>}
   </article>;
 }
@@ -167,7 +175,7 @@ export function DockPage({ client, capture: providedCapture, owner, renderPrevie
     if (busy.current.has(key)) return;
     busy.current.add(key); setPending(new Set(busy.current)); setError('');
     try { await action(); }
-    catch (cause) { const code = errorCode(cause); setError(code === 'revision_conflict' ? 'This item changed in another dock. Refresh and compare before trying again.' : code === 'fixture_missing' ? 'This recording has no recorded result for that action.' : 'Could not complete this action. Your current edit is still here. Try again.'); }
+    catch (cause) { setError(actionErrorMessage(cause)); }
     finally { busy.current.delete(key); setPending(new Set(busy.current)); }
   }
   const refresh = () => { void store.refresh(); };

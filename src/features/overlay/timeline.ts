@@ -37,7 +37,7 @@ export type Timeline = {
   goneAt: number;
 };
 
-/** Time from the moment clip's start to chat's counted reaction (the footage shows the launch first). */
+/** Footage shown before chat's measured peak (plan.scene.moment.burstMs), so what chat reacted to plays first. */
 export const REACTION_LEAD_MS = 1000;
 const NOW_HOLD = 2500, END = 2000;
 
@@ -64,7 +64,8 @@ function middleFor(script: SceneScript, start: number, shape: Shape, hasMoment: 
   let counterAt: number | null = null;
   const messagesAt: number[] = [];
   if (hasMoment) {
-    counterAt = Math.max(openedAt + k(200), mediaStart + REACTION_LEAD_MS);
+    // The count lands on chat's measured peak in the footage (REACTION_LEAD_MS after the clip starts, sooner when the peak is earlier).
+    counterAt = Math.max(openedAt + k(200), mediaStart + Math.min(REACTION_LEAD_MS, script.moment?.reactionMs ?? REACTION_LEAD_MS));
     for (let i = 0; i < shape.messages; i++) messagesAt.push(counterAt + k(240) + i * k(260));
     t = (messagesAt.at(-1) ?? counterAt) + k(380);
   } else t = openedAt + (focusHasMedia ? k(1100) : k(800));

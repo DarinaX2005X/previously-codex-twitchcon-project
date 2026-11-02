@@ -8,7 +8,8 @@ import { messagesFor } from '../i18n/index.js';
 /** Every public consumer uses this projection; this selector never falls back to drafts. */
 export const selectPublicSnapshot = (state: DomainState): PublicSnapshot | null => state.published;
 
-export type MomentLineage = { count: number; messages: { ref: VersionRef; text: string }[] };
+/** `burst`: stream offset where chat peaked inside the moment's window, with the messages that establish it. */
+export type MomentLineage = { count: number; messages: { ref: VersionRef; text: string }[]; burst?: { atMs: number; refs: VersionRef[] } };
 export type RecapLineage = { currentRefs?: VersionRef[]; loreRefs?: Record<string, VersionRef[]>; moments?: Record<string, MomentLineage> };
 export type RecapCompileOptions = RecapLineage & {
   media?: DomainMedia[];
@@ -65,12 +66,31 @@ export function sceneChatMessages(state: DomainState, moment: { startMs: number;
   }
   return result;
 }
+/** Width of the sliding window that finds chat's peak. */
+export const CHAT_BURST_WINDOW_MS = 2000;
+/**
+ * Where chat actually reacted: the first message of the earliest busiest CHAT_BURST_WINDOW_MS stretch of the
+ * moment's window. Uses only messages that may still be shown (active, moderated, not forgotten, not banned).
+ */
+export function chatBurst(state: DomainState, moment: { startMs: number; endMs: number }): MomentLineage['burst'] | undefined {
+  const chat = state.sources.filter(source => source.kind === 'chat' && sourceAllowed(state, source) && source.startMs >= moment.startMs && source.startMs <= moment.endMs)
+    .sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id));
+  if (chat.length < 3) return undefined;
+  let best = 0, bestCount = 0;
+  for (let i = 0, j = 0; i < chat.length; i++) {
+    while (j < chat.length && chat[j]!.startMs < chat[i]!.startMs + CHAT_BURST_WINDOW_MS) j++;
+    if (j - i > bestCount) { best = i; bestCount = j - i; }
+  }
+  const peak = chat.slice(best, best + bestCount);
+  return { atMs: peak[0]!.startMs, refs: peak.slice(0, 10).map(source => ({ id: source.id, revision: source.revision })) };
+}
 function momentLineage(state: DomainState): Record<string, MomentLineage> {
   const result: Record<string, MomentLineage> = {};
   for (const item of state.published?.moments ?? []) {
     const moment = state.moments.find(moment => moment.id === item.id);
     if (!moment || !moment.dependencyRefs.every(ref => isRefActive(state, ref))) continue;
-    result[item.id] = { count: moment.count, messages: sceneChatMessages(state, item) };
+    const burst = chatBurst(state, item);
+    result[item.id] = { count: moment.count, messages: sceneChatMessages(state, item), ...(burst ? { burst } : {}) };
   }
   return result;
 }
@@ -246,6 +266,7 @@ function buildScene(snapshot: PublicSnapshot, options: RecapCompileOptions, welc
       id: moment.id, chapterId: chapter?.id ?? null, startMs: moment.startMs,
       windowSeconds: Math.max(1, Math.min(600, Math.round((moment.endMs - moment.startMs) / 1000))),
       count: Math.max(lineage.count, messages.length), mediaId: mediaFor([moment.id])?.id ?? null, messages: messages.length >= 3 ? messages : [],
+      ...(lineage.burst && take(lineage.burst.refs) ? { burstMs: lineage.burst.atMs } : {}),
     };
   }
   const lore = snapshot.lore.filter(item => item.originKind !== 'unknown' && item.originMs !== null && item.term.trim()

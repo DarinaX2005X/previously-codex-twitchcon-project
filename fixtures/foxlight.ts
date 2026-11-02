@@ -73,7 +73,8 @@ const SPARSE_CHAT: Chat[] = [
   { atMs: 335_800, actor: 26, text: 'so pretty' },
   { atMs: 344_500, actor: 10, text: 'where is the third one' },
 ];
-/** The moon jump reaction: 45 messages from 23 example chatters inside one 10 s window (1:40.8 to 1:49.6). */
+/** The moon jump reaction: 45 messages from 23 example chatters inside one 10 s window (1:43.3 to 1:49.9). Chat starts
+ * as the clip shows the fox launching (3.3 s into clip-moon, which is captured from 1:40), so the scene's reaction lands on it. */
 const BURST_TEXT = [
   'MOON JUMP', "he's gone", 'fox to the moon', 'LUL', 'o7 fox', 'the fox has left the cave', 'MOON JUMP MOON JUMP', 'clip it',
   'where did he go', 'LUL LUL', 'bye fox', 'lol', 'moon jump any%', 'o7', 'that spring is strong', 'the ceiling was a suggestion',
@@ -83,7 +84,7 @@ const BURST_TEXT = [
   'o7 fox', 'that was perfect', 'LUL', 'the fox has left the cave', 'clip it', 'fox to the moon', 'MOON JUMP',
 ];
 const EMOTES = /^(?:LUL(?: LUL)*|o7(?: fox)?)$/;
-const BURST: Chat[] = BURST_TEXT.map((text, i) => ({ atMs: 100_800 + i * 200, actor: i % 23 + 1, text, emote: EMOTES.test(text) }));
+const BURST: Chat[] = BURST_TEXT.map((text, i) => ({ atMs: 103_300 + i * 150, actor: i % 23 + 1, text, emote: EMOTES.test(text) }));
 
 /** The example recording was authored with English and Russian outcomes only. */
 type FoxlightLanguage = 'en' | 'ru';

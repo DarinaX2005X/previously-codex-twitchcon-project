@@ -226,6 +226,8 @@ export const RecapSceneSchema = z.object({
   moment: z.object({
     id: IdSchema, chapterId: IdSchema.nullable(), startMs: OffsetSchema, windowSeconds: z.number().int().min(1).max(600),
     count: z.number().int().min(0), mediaId: IdSchema.nullable(), messages: z.array(z.string().min(1).max(40)).max(14),
+    /** Stream offset where chat peaked (start of the busiest 2 s); the scene lands its reaction there. */
+    burstMs: OffsetSchema.optional(),
   }).strict().nullable(),
   lore: z.object({ term: z.string().min(1).max(120), explanation: z.string().max(300), originMs: OffsetSchema }).strict().nullable(),
   now: z.object({ text: z.string().min(1).max(300), mediaId: IdSchema.nullable() }).strict().nullable(),

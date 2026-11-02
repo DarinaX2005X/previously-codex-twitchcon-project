@@ -29,7 +29,7 @@ export interface OwnerEnginePort {
   issues?(): NonNullable<OwnerSnapshot['issues']>;
   presentOwnerChapter?(sessionId: string, entityId: string): Promise<void>;
   presentOwnerLore?(sessionId: string, entityId: string): Promise<void>;
-  prepareLanguage?(sessionId: string, language: string): Promise<void>;
+  prepareLanguage?(sessionId: string, language: string, signal?: AbortSignal): Promise<void>;
 }
 type ResultRef = {kind: 'chapter'|'lore'|'moment'|'playback'; sessionId: string; id: string} | {kind: 'settings'} | {kind: 'receipt'; value: InvalidationReceipt} | {kind: 'void'};
 type MutationRecord = {hash: string; result?: ResultRef};
@@ -45,9 +45,12 @@ function decode(value: string | undefined): Record<string, unknown> | undefined 
 const conflict = () => new ApiError(409, 'revision_conflict', 'This item changed. Your edits have not been applied; refresh its revision before trying again.');
 
 /** Owner-only projection and commands. Public consumers must use the published projection. */
+/** Upper bound for presenting the published recap in a new language before the switch gives up. */
+export const LANGUAGE_PREPARATION_LIMIT_MS = 120_000;
 export class RuntimeOwnerService implements OwnerService {
   private tail: Promise<unknown> = Promise.resolve();
   private requestBody: unknown;
+  private languagePreparation: AbortController | null = null;
   constructor(private readonly engine: OwnerEnginePort) {}
   private authorize(principal: Principal): void {
     const {scope, clock} = this.engine;
@@ -192,18 +195,50 @@ export class RuntimeOwnerService implements OwnerService {
     return {items,nextCursor:nextCursor?encode({...nextCursor,sessionId:session.id,kind:query.kind,filter,privacyEpoch:session.privacyEpoch,language:settings.recapLanguage}):null,privacyEpoch:session.privacyEpoch,language:settings.recapLanguage};
   }
   setSettings(context: OwnerRevisionMutation,patch: SettingsPatch): Promise<Settings> {
+    if(patch.listeningPaused===true)this.stopLanguagePreparation();
+    const current=this.engine.repository.getSettings(this.engine.scope),sessionId=this.engine.activeSessionId();
+    const switching=sessionId&&patch.recapLanguage!==undefined&&patch.recapLanguage!==current.recapLanguage?patch.recapLanguage:null;
+    const replay=this.engine.repository.controlGet(this.engine.scope,`owner-mutation:${context.idempotencyKey}`);
+    if(!sessionId||!switching||!this.engine.prepareLanguage||replay)return this.commitSettings(context,patch);
+    return this.prepareThenCommit(context,patch,sessionId,switching);
+  }
+  /**
+   * Model calls for a new recap language run outside the owner queue, so Forget, deletes and pause never wait
+   * behind them. Those actions abort the preparation; the switch commits only if it finished and the privacy
+   * epoch did not move meanwhile.
+   */
+  private async prepareThenCommit(context: OwnerRevisionMutation,patch: SettingsPatch,sessionId: string,language: string): Promise<Settings> {
+    this.authorize(context.principal);
+    const current=this.engine.repository.getSettings(this.engine.scope);if(current.revision!==context.baseRevision)throw conflict();
+    SettingsSchema.parse({...current,...patch,revision:current.revision+1});
+    this.stopLanguagePreparation();
+    const controller=new AbortController();this.languagePreparation=controller;
+    const epoch=this.state(sessionId).session.privacyEpoch;
+    try {await this.engine.prepareLanguage!(sessionId,language,AbortSignal.any([controller.signal,AbortSignal.timeout(LANGUAGE_PREPARATION_LIMIT_MS)]));}
+    catch { /* Aborted, timed out or failed: the checks below and the domain's readiness check decide. */ }
+    finally {if(this.languagePreparation===controller)this.languagePreparation=null;}
+    if(controller.signal.aborted||this.state(sessionId).session.privacyEpoch!==epoch)throw new ApiError(409,'language_not_ready',`The switch to ${englishLanguageName(language)} stopped because a privacy action changed the recap. The current language stays published. Choose the language again.`,true);
+    return this.commitSettings(context,patch);
+  }
+  private commitSettings(context: OwnerRevisionMutation,patch: SettingsPatch): Promise<Settings> {
     return this.mutate(context,'settings',patch,async()=>{
       const current=this.engine.repository.getSettings(this.engine.scope);if(current.revision!==context.baseRevision)throw conflict();
       SettingsSchema.parse({...current,...patch,revision:current.revision+1});const sessionId=this.engine.activeSessionId();
       const switching=sessionId&&patch.recapLanguage!==undefined&&patch.recapLanguage!==current.recapLanguage?patch.recapLanguage:null;
-      // Published chapters need checked wording in the new language first; the model presents the same claims again.
-      if(sessionId&&switching)await this.engine.prepareLanguage?.(sessionId,switching);
       if(sessionId)try{await this.engine.dispatch(sessionId,{type:'tick'},{...this.options(context,{operation:'settings',patch,baseRevision:context.baseRevision}),settingsPatch:{baseRevision:context.baseRevision,patch}});}
-      catch(error){if(switching&&error instanceof ApiError&&error.code==='settings_not_ready')throw new ApiError(409,'language_not_ready',`Some published chapters are not ready in ${englishLanguageName(switching)} yet. The current language stays published. Try again in a minute.`,true);throw error;}
+      catch(error){if(switching&&error instanceof ApiError&&error.code==='settings_not_ready')throw this.languageNotReady(switching);throw error;}
       else this.engine.repository.updateSettings(this.engine.scope,context.baseRevision,patch,{idempotencyKey:context.idempotencyKey,requestBody:this.requestBody});
       return {kind:'settings'};
     });
   }
+  private languageNotReady(language: string): ApiError {
+    const name=englishLanguageName(language);
+    // Without paid OpenAI calls nothing can be presented in a new language, so say that rather than "try again".
+    if(!this.engine.storage.budget.status().enabled)return new ApiError(409,'language_not_ready',`Switching to ${name} needs OpenAI: the published chapters are written again in ${name}. Paid OpenAI calls are off, so the current language stays published.`,false);
+    return new ApiError(409,'language_not_ready',`Some published chapters are not ready in ${name} yet. The current language stays published. Try again in a minute.`,true);
+  }
+  /** Privacy and pause actions stop an in-flight language preparation so nothing more is sent to the model. */
+  private stopLanguagePreparation(){this.languagePreparation?.abort();this.languagePreparation=null;}
   editChapter(context: OwnerRevisionMutation,id: string,patch: ChapterPatch): Promise<Chapter> {
     return this.mutate(context,'chapter.edit',{id,patch},async()=>{
       const {state}=this.entity(id,'chapter'),chapter=state.chapters.find(c=>c.id===id);if(!chapter||chapter.revision!==context.baseRevision)throw conflict();
@@ -219,9 +254,11 @@ export class RuntimeOwnerService implements OwnerService {
   deleteChapter(context: OwnerRevisionMutation,id: string): Promise<InvalidationReceipt> {return this.remove(context,id,'chapter');}
   deleteLore(context: OwnerRevisionMutation,id: string): Promise<InvalidationReceipt> {return this.remove(context,id,'lore');}
   private remove(context: OwnerRevisionMutation,id: string,kind: 'chapter'|'lore'): Promise<InvalidationReceipt> {
+    this.stopLanguagePreparation();
     return this.mutate(context,`${kind}.delete`,{id},async()=>{const {row,state}=this.entity(id,kind);if(row.revision!==context.baseRevision)throw conflict();const target={kind:'entity' as const,sessionId:state.session.id,id};const next=await this.engine.dispatch(state.session.id,{type:'privacy',target,reason:'owner_delete'},{...this.options(context,{operation:`${kind}.delete`,id,baseRevision:context.baseRevision}),expectedEntity:{id,revision:context.baseRevision}});if(!next.lastReceipt)throw new ApiError(503,'save_failed','The deletion could not be saved.');return {kind:'receipt',value:next.lastReceipt};});
   }
   privacy(context: OwnerMutation,input: Parameters<OwnerService['privacy']>[1]): Promise<InvalidationReceipt> {
+    this.stopLanguagePreparation();
     return this.mutate(context,'privacy',input,async()=>{this.state(input.target.sessionId);const next=await this.engine.dispatch(input.target.sessionId,{type:'privacy',...input},this.options(context,{operation:'privacy',...input}));if(!next.lastReceipt)throw new ApiError(503,'save_failed','The privacy change could not be saved.');return {kind:'receipt',value:next.lastReceipt};});
   }
   editLore(context: OwnerRevisionMutation,id: string,patch: LorePatch): Promise<Lore> {return this.changeLore(context,id,patch,'lore.edit');}
@@ -235,6 +272,7 @@ export class RuntimeOwnerService implements OwnerService {
     });
   }
   blockLore(context: OwnerRevisionMutation,id: string,blocked: boolean): Promise<Lore> {
+    if(blocked)this.stopLanguagePreparation();
     return this.mutate(context,'lore.block',{id,blocked},async()=>{
       const row=this.engine.repository.getEntity(this.engine.scope,id);if(!row||row.kind!=='lore')throw new ApiError(404,'not_found','This item is unavailable.');
       const state=this.entityState(row.sessionId,id),lore=state.lore.find(l=>l.id===id);if(!lore||lore.revision!==context.baseRevision)throw conflict();

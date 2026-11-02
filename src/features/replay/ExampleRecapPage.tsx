@@ -3,7 +3,7 @@ import {PublicSnapshotSchema,filterSnapshotAt,type PublicSnapshot} from '../../s
 import {PublicRecapPage,type PublicRecapClient} from '../public/index.js';
 import {useRecording} from './useRecording.js';
 
-/** The public recap of the example recording, opened at /c/<example login>. */
+/** The public recap of the example recording, opened at /example (never at /c/<login>, which belongs to real channels). */
 export const EXAMPLE_LOGIN='foxlight_dev';
 const EXAMPLE_RECORDING='/api/public/replays/foxlight';
 export const EXAMPLE_NOTICE='This is an example recording of a game development stream. It shows the public recap a viewer can read when the raid arrives.';

@@ -198,6 +198,34 @@ describe('owner service integration',()=>{
     await expect(h.service.setSettings(h.context('language-key-0002',seeded.settings.revision),{recapLanguage:'fr'})).rejects.toMatchObject({status:409,code:'language_not_ready'});
     expect(h.engine.state('session').published?.language).toBe('en');expect(h.engine.state('session').settings.recapLanguage).toBe('en');
   });
+  it('says plainly that a language switch needs OpenAI when paid calls are off',async()=>{
+    const h=harness({present:async()=>{throw new Error('Fixture provider disabled');}});const seeded=await h.seed();
+    h.storage.budget.setPaidEnabled(false);
+    await expect(h.service.setSettings(h.context('language-key-0003',seeded.settings.revision),{recapLanguage:'ja'})).rejects.toMatchObject({code:'language_not_ready',message:expect.stringContaining('needs OpenAI')});
+  });
+  it('lets Forget run while a language is being prepared, stops the preparation and refuses the switch',async()=>{
+    let started!:()=>void,aborted=false;const begun=new Promise<void>(resolve=>{started=resolve;});
+    const present:OpenAIStoryProvider['present']=(_claims,_input,_safety,signal)=>new Promise((_resolve,reject)=>{started();signal?.addEventListener('abort',()=>{aborted=true;reject(signal.reason);},{once:true});});
+    const h=harness({present});const seeded=await h.seed();
+    const switching=h.service.setSettings(h.context('language-key-0004',seeded.settings.revision),{recapLanguage:'es'});
+    await begun;
+    // Forget is not queued behind the model call: it completes while the preparation is still pending.
+    const receipt=await h.service.privacy(h.context('forget-during-language'),{target:{kind:'session',sessionId:'session'},reason:'Forget everything'});
+    expect(receipt.hiddenEntityIds.length).toBeGreaterThan(0);expect(aborted).toBe(true);
+    await expect(switching).rejects.toMatchObject({code:'language_not_ready',message:expect.stringContaining('privacy action')});
+    expect(h.engine.state('session').settings.recapLanguage).toBe('en');
+  });
+  it('does not publish wording prepared from material that a privacy event removed meanwhile',async()=>{
+    let h!:ReturnType<typeof harness>;
+    const present:OpenAIStoryProvider['present']=async(claims,input,_safety,_signal,languages=['en'])=>{
+      // A Twitch-side deletion arrives while the model is working; it does not go through the owner queue.
+      await h.engine.dispatch('session',{type:'privacy',target:{kind:'source',sessionId:'session',id:'speech'}});
+      return Object.fromEntries(languages.map(language=>[language,{id:`${input.entityId}:${language}`,entityId:input.entityId,revision:input.revision,language,title:'Título',summary:`Resumen (${claims.length}).`,current:{goal:null,change:null,now:null},claimRefs:input.claimRefs!,eligibleAt:input.eligibleAt,safety:allowed}]));
+    };
+    h=harness({present});const seeded=await h.seed();
+    await expect(h.service.setSettings(h.context('language-key-0005',seeded.settings.revision),{recapLanguage:'es'})).rejects.toMatchObject({code:'language_not_ready'});
+    expect(h.engine.state('session').candidates.some(candidate=>candidate.language==='es')).toBe(false);
+  });
   it('atomically applies active-session pause settings and advances capture epoch',async()=>{
     const h=harness();const before=h.engine.state('session').captureEpoch;
     const settings=await h.service.setSettings(h.context('pause-key-0001',1),{listeningPaused:true});

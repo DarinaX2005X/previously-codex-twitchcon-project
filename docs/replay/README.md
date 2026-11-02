@@ -16,7 +16,7 @@ Run the [local keyless path](../setup/local.md#install-and-try-replay), then ope
 4. English and Russian select separately checked recorded presentations at any point of the recording. The language control offers only the languages a recording holds outcomes for; a replay never asks a model, so a live channel's other recap languages are not available here. An arbitrary edit from **Open the streamer dock** stays held when the bundle has no matching safety outcome.
 5. **Restart** creates a fresh run. Changes in one replay tab do not edit the broadcaster's live database or another visitor's run.
 
-`/c/foxlight_dev` opens the real public recap page with the snapshot this recording publishes at the raid, says once that it is an example, and plays the example clips from the same gated recording. `scripts/export-foxlight-raid.mts` writes the exact raid plan and snapshot as JSON for scene and video work.
+`/example` opens the real public recap page with the snapshot this recording publishes at the raid, says once that it is an example, and plays the example clips from the same gated recording. It lives outside `/c/<login>`, so a real channel named `foxlight_dev` keeps its own page. `scripts/export-foxlight-raid.mts` writes the exact raid plan and snapshot as JSON for scene and video work.
 
 Speed settings change virtual time. A 4× run demonstrates the same timing rules sooner; it is not a measurement of live transcription or model latency. The older text-only [`authored-notes`](../../fixtures/authored-notes.ts) example remains for tests.
 

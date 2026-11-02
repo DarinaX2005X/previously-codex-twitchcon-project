@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { normalizeTermText } from '../../shared/text.js';
 import type { Scope, Source, Session, Settings, EventEnvelope, VersionRef, GenerationTicket, StoryPatch, PrivacyTarget, InvalidationReceipt, CommitResult } from '../../shared/contracts/index.js';
 import { SourceSchema, EventEnvelopeSchema, GenerationTicketSchema, StoryPatchSchema, PrivacyTargetSchema } from '../../shared/contracts/index.js';
 import { StorageDatabase, StorageError, integer, json } from './database.js';
@@ -15,7 +16,7 @@ export type PublicationWorkStatus={id:string;sessionId:string;kind:string;state:
 export type EntityInput = {id: string; sessionId: string; kind: 'claim'|'relation'|'chapter'|'current_state'|'presentation'|'lore'|'moment'|'media'|'playback'|'provider_cache'|'export'; body: unknown; refs: VersionRef[]; startMs?: number; endMs?: number};
 export type PrivacyOptions = {idempotencyKey: string; reason: string};
 export type AcceptedAudio={sessionId:string;actorId:string;leaseEpoch:number;captureEpoch:number;sequence:number;sha256:string;startMs:number;endMs:number;sampleRate:number;rawPath:string;receivedAtMs:number;privacyEpoch:number};
-export const normalizeBlockedTerm=(term:string):string=>term.normalize('NFKC').toLowerCase().replace(/\s+/gu,' ').trim();
+export const normalizeBlockedTerm=(term:string):string=>normalizeTermText(term);
 const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);

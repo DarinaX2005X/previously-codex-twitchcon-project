@@ -146,3 +146,14 @@ describe('dock publication and interactions', () => {
     expect(writeText).toHaveBeenCalledWith('url');
   });
 });
+
+describe('dock action errors', () => {
+  it('shows the server reason for a refused language switch and keeps the other messages', async () => {
+    const { actionErrorMessage } = await import('../../src/features/dock/model');
+    const { ClientError } = await import('../../src/shared/http-client');
+    expect(actionErrorMessage(new ClientError(409, 'language_not_ready', 'Switching to Spanish needs OpenAI: the published chapters are written again in Spanish.'))).toContain('needs OpenAI');
+    expect(actionErrorMessage({ code: 'language_not_ready' })).toMatch(/not ready in that language/);
+    expect(actionErrorMessage({ status: 409 })).toMatch(/changed in another dock/);
+    expect(actionErrorMessage(new Error('boom'))).toMatch(/Could not complete/);
+  });
+});

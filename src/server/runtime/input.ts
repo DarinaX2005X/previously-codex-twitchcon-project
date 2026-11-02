@@ -1,4 +1,5 @@
 import type { DomainEvent } from '../../core/types.js';
+import { asksForClip, isLaughter } from '../../core/chat-signals.js';
 import type { EventEnvelope, Session, Source } from '../../shared/contracts/index.js';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -26,8 +27,8 @@ export function normalizeInput(envelope: EventEnvelope, session: Session, option
       };
       return {event: {...event, payload: {source}}, domain: {type: 'source', source, signals: {
         emote: fragments.some(fragment => fragment.type === 'emote'),
-        laughter: /(?:\b(?:lol|lmao|rofl|haha|ahaha)\b|[хxаa]{4,}|😂|🤣)/iu.test(content),
-        clipIt: /\bclip\s+(?:it|that)\b|сделай\s+клип/iu.test(content),
+        laughter: isLaughter(content),
+        clipIt: asksForClip(content),
       }, ...(content.length <= 80 && !content.trim().startsWith('!') ? {phrase: content} : {})}};
     }
     case 'channel.chat.message_delete':

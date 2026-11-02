@@ -6,7 +6,9 @@ import { useFootage, type Footage } from '../replay/footage';
 import type { LandingStory } from './useLandingStory';
 import './landing.css';
 
-const PUBLIC_ORIGIN = 'https://previously-seven.vercel.app';
+/** The example recording's public recap on whichever deployment serves this page. Chat replies always carry an HTTPS link. */
+const EXAMPLE_PATH = '/example';
+const exampleRecapUrl = () => typeof location === 'undefined' ? `https://localhost${EXAMPLE_PATH}` : `${location.protocol === 'https:' ? location.origin : `https://${location.host}`}${EXAMPLE_PATH}`;
 const REPOSITORY = 'https://github.com/DarinaX2005X/previously-codex-twitchcon-project';
 
 export interface LandingPageProps {
@@ -72,7 +74,10 @@ function HeroEnsemble({ story, footage, unavailable }: { story: LandingStory | n
   const video = useRef<HTMLVideoElement>(null);
   const plan = story?.plan ?? null;
   useEffect(() => { if (!video.current) return; if (paused || reduced) video.current.pause(); else void video.current.play().catch(() => undefined); }, [paused, reduced, footage.src]);
-  const restartLater = () => { window.setTimeout(() => setCycle(value => value + 1), 2600); };
+  // One pending restart at a time, cleared on unmount so it never fires into an unmounted player.
+  const restartTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(restartTimer.current), []);
+  const restartLater = () => { window.clearTimeout(restartTimer.current); restartTimer.current = window.setTimeout(() => setCycle(value => value + 1), 2600); };
   const chapters = story ? [...story.published.chapters].sort((a, b) => a.startMs - b.startMs) : [];
   const now = story?.published.current?.now;
   const lore = story?.published.lore.find(l => l.originKind !== 'unknown');
@@ -110,7 +115,8 @@ function StoryScroll({ story, poster }: { story: LandingStory; poster?: string }
     refs.current.forEach(node => node && observer.observe(node));
     return () => observer.disconnect();
   }, [steps]);
-  const goTo = (i: number) => refs.current[i]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const reduced = useReducedMotion();
+  const goTo = (i: number) => refs.current[i]?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
   const raid = !!story.raider && active >= chapters.length;
   const top = chapters[Math.min(active, chapters.length - 1)];
   const earlier = chapters.slice(0, Math.min(active, chapters.length - 1) + (raid ? 1 : 0)).filter(c => raid || c.id !== top.id);
@@ -142,7 +148,7 @@ function StoryScroll({ story, poster }: { story: LandingStory; poster?: string }
             <p className="lp-story__label">{raid ? 'What the raiders see' : 'What viewers can read now'}</p>
             {raid && story.published.current?.now
               ? <article key="now" className="pv-card pv-card--now lp-story__now"><p className="lp-story__now-label">Right now</p><p className="lp-story__now-text">{story.published.current.now}</p></article>
-              : <TitleCard key={top.id} className="lp-story__card" title={top.title} atMs={top.startMs} ground="var(--lp-cave-deep)"><p>{top.summary}</p>{clip && <ClipFrame className="lp-story__clip" src={clip} label={`Clip from ${top.title}`} autoPlay />}</TitleCard>}
+              : <TitleCard key={top.id} className="lp-story__card" title={top.title} atMs={top.startMs} ground="var(--lp-cave-deep)"><p>{top.summary}</p>{clip && <ClipFrame className="lp-story__clip" src={clip} label={`Clip from ${top.title}`} autoPlay={!reduced} />}</TitleCard>}
             <div className="lp-story__after">
               {earlier.length > 0 && <ol className="lp-story__earlier" aria-label="Earlier chapters">{earlier.map(c => <li key={c.id}><span>{formatTimecode(c.startMs)}</span>{c.title}</li>)}</ol>}
               {loreVisible && lore && <LorePlate key={lore.id} className="lp-story__lore" term={lore.term} explanation={lore.explanation} originMs={lore.originMs ?? lore.firstSeenMs} />}
@@ -171,7 +177,7 @@ function StoryScroll({ story, poster }: { story: LandingStory; poster?: string }
 
 function ChatCommand({ story }: { story: LandingStory }) {
   const [ref, seen] = useSeen<HTMLDivElement>();
-  const url = `${PUBLIC_ORIGIN}/c/${story.channel.login}`;
+  const url = exampleRecapUrl();
   let reply = '', loreReply = '';
   try { reply = composeReply({ kind: 'previously' }, story.published, story.published.language, url); } catch { reply = ''; }
   const lore = story.published.lore.find(l => l.originKind !== 'unknown');
@@ -209,7 +215,7 @@ function FixOnce({ story, poster }: { story: LandingStory; poster?: string }) {
   if (!base) return null;
   const card = story.correction ? { ...base, title: story.correction.title, summary: story.correction.summary } : base;
   const snapshot = { ...story.published, chapters: story.published.chapters.map(c => c.id === base.id ? { ...c, title: card.title, summary: card.summary } : c) };
-  const url = `${PUBLIC_ORIGIN}/c/${story.channel.login}`;
+  const url = exampleRecapUrl();
   let reply = ''; try { reply = composeReply({ kind: 'previously' }, snapshot, snapshot.language, url); } catch { reply = ''; }
   const at = reply.indexOf(card.summary);
   const answer: ReactNode = at < 0 ? linkify(reply, url) : <>{reply.slice(0, at)}<mark className="lp-fix__mark">{card.summary}</mark>{linkify(reply.slice(at + card.summary.length), url)}</>;
@@ -279,7 +285,7 @@ function chatterName(actor: string | null): string | null {
 }
 function linkify(text: string, url: string): ReactNode {
   const at = text.lastIndexOf(url);
-  return at < 0 ? text : <>{text.slice(0, at)}<a href={url.replace(PUBLIC_ORIGIN, '')} tabIndex={-1}>{url.replace(/^https:\/\//, '')}</a></>;
+  return at < 0 ? text : <>{text.slice(0, at)}<a href={new URL(url).pathname} tabIndex={-1}>{url.replace(/^https:\/\//, '')}</a></>;
 }
 
 export interface LocalSetupInstructionsProps { replayHref?: string; localSetupHref?: string }

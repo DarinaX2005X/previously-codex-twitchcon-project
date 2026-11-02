@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { normalizeTermText } from '../../shared/text.js';
+import { looksLikeInstruction } from '../../core/chat-signals.js';
 import { VersionRefSchema,safetyAllowsPublication,type EvidencePacket,type ProviderResult,type Safety,type VersionRef } from '../../shared/contracts/index.js';
 import type { GroundingReview } from './story.js';
 import type { SafetyService } from './safety.js';
@@ -16,10 +18,10 @@ const LoreTextSchema=z.object({term:z.string().min(1).max(120),explanation:z.str
 const ProposalSchema=z.object({candidates:z.array(z.object({id:z.string().min(1).max(160),term:z.string().min(1).max(120),explanation:z.string().min(1).max(700),originRefs:z.array(VersionRefSchema).max(12)}).strict()).max(5),heldIds:z.array(z.string().min(1).max(160)).max(5)}).strict();
 const ReviewSchema=z.object({channelSpecific:z.boolean(),explicitOrigin:z.boolean(),unambiguous:z.boolean(),notInstructions:z.boolean(),faithful:z.boolean(),issues:z.array(z.string().max(160)).max(8)}).strict();
 const ObservationReviewSchema=z.object({channelSpecific:z.boolean(),unambiguous:z.boolean(),notInstructions:z.boolean(),evidenceRefs:z.array(VersionRefSchema).max(12),issues:z.array(z.string().max(160)).max(8)}).strict();
-const normalized=(value:string)=>value.normalize('NFKC').toLocaleLowerCase('en').replace(/\s+/gu,' ').trim();
+const normalized=normalizeTermText;
 const escape=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const mentioned=(text:string,term:string)=>new RegExp(`(?<![\\p{L}\\p{N}])${escape(normalized(term))}(?![\\p{L}\\p{N}])`,'u').test(normalized(text));
-const plausible=(term:string)=>/\p{L}/u.test(term)&&!/^\s*[!\/]/u.test(term)&&!/(?:ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|system\s*prompt|игнорируй\s+инструкции)/iu.test(term);
+const plausible=(term:string)=>/\p{L}/u.test(term)&&!/^\s*[!\/]/u.test(term)&&!looksLikeInstruction(term);
 
 /** Automatic lore requires explicit origin evidence; repeated/first-observed text alone stays held. */
 export async function proposeReviewedLore(transport:ProviderTransport,packet:EvidencePacket,phrases:readonly LorePhrase[],safety:SafetyService,signal?:AbortSignal):Promise<ProviderResult<LoreProposalBatch>> {

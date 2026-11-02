@@ -14,8 +14,8 @@ const jobs = [
   // slide 03: the chat answers on the landing page, composed by the same code the chat bot uses
   { name: 'landing-chat.png', url: '/', w: 1440, h: 900, dpr: 2, el: '.lp-chat__window', scrollTo: '.lp-chat', settle: 3500 },
   // slide 04 and 06: the public recap page on a phone, top and the chapter run further down
-  { name: 'public-phone.png', url: '/c/foxlight_dev', w: 390, h: 844, dpr: 3 },
-  { name: 'public-phone-chapters.png', url: '/c/foxlight_dev', w: 390, h: 844, dpr: 3, full: true, clip: { x: 0, y: 1470, width: 390, height: 844 } },
+  { name: 'public-phone.png', url: '/example', w: 390, h: 844, dpr: 3 },
+  { name: 'public-phone-chapters.png', url: '/example', w: 390, h: 844, dpr: 3, full: true, clip: { x: 0, y: 1470, width: 390, height: 844 } },
   // slide 09: the example recording after Jump to the raid
   { name: 'replay-raid.jpg', url: '/replay', w: 1440, h: 900, dpr: 2, act: async p => { await p.getByRole('button', { name: 'Jump to the raid' }).click(); await wait(9000); } },
   // slide 05 and 07: the streamer dock and its Edit and Forget dialogs

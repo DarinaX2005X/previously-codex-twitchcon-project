@@ -6,6 +6,7 @@ import {RevisionStream} from '../../src/server/runtime/updates.js';
 import {SafetyService} from '../../src/server/providers/safety.js';
 import {HelixError} from '../../src/server/twitch/index.js';
 import {TWITCH_SCOPES} from '../../src/server/auth/index.js';
+import {twitchIssues} from '../../src/server/runtime/issues.js';
 import type {BannedUser,EventSubOptions,TwitchClip,TwitchHelix,TwitchStream} from '../../src/server/twitch/index.js';
 import type {EventEnvelope,Source,StoryProvider} from '../../src/shared/contracts/index.js';
 import type {MediaInput,MediaRecord} from '../../src/server/media/cache.js';
@@ -142,6 +143,21 @@ describe('Twitch runtime composition with isolated adapters',()=>{
     const f=fixture();await f.runtime.start();const owner=f.storage.sessions.issue(scope,'123','owner');const gapStart=f.clock.iso();f.transport().status?.('gap',{quotesReady:false,gapSince:gapStart,reason:'socket_closed'});
     await f.runtime.ingest(f.event('channel.chat.message','gap-chat',{message_id:'gap-chat',chatter_user_id:'456',message:{text:'must not enter unknown coverage'},quotesReady:false}));expect(f.storage.repository.getSource(scope,'chat:gap-chat')).toBeNull();f.advance(3000);await f.transport().bans.begin('recovered');await f.transport().bans.finish('recovered');f.transport().status?.('active',{quotesReady:true,gapSince:gapStart});await f.runtime.tick();expect(f.engine.state('stream_one').gaps).toEqual([{startMs:20000,endMs:23000}]);await f.runtime.tick();expect(f.engine.state('stream_one').gaps).toHaveLength(1);
     f.transport().status?.('revoked',{quotesReady:false,gapSince:gapStart,reason:'authorization_revoked'});expect(f.storage.sessions.verify(scope,owner,'owner')).toBeNull();expect(f.runtime.status().connected).toBe(false);expect(f.engine.statuses().mic.state).toBe('paused');expect(f.sendChat).not.toHaveBeenCalled();
+  });
+  it('clears a Twitch failure card once the same work succeeds again',async()=>{
+    const f=fixture({markers:true});await f.runtime.start();const failed=()=>twitchIssues(f.runtime.status()).filter(issue=>issue.code==='twitch_action_failed');
+    f.transport().status?.('revoked',{quotesReady:false,gapSince:null,reason:'subscription_revoked'});expect(f.runtime.status().lastFailure).toBe('Twitch permissions changed. Reconnect Twitch.');
+    f.transport().status?.('active',{quotesReady:true,gapSince:null});expect(f.runtime.status().lastFailure).toBeNull();expect(twitchIssues(f.runtime.status())).toEqual([]);
+    const claim=vi.spyOn(f.storage.repository,'claimJob').mockImplementationOnce(()=>{throw new Error('disk busy');});
+    await f.runtime.tick();expect(f.runtime.status().lastFailure).toBe('A Twitch task could not be completed. Saved context remains available.');expect(f.engine.statuses().chat.state).toBe('error');
+    claim.mockRestore();await f.runtime.tick();expect(f.runtime.status().lastFailure).toBeNull();expect(f.engine.statuses().chat.state).toBe('ready');
+  });
+  it('clears an unconfirmed Twitch action card after the next confirmed action',async()=>{
+    const f=fixture({markers:true});await f.runtime.start();const failed=()=>twitchIssues(f.runtime.status()).filter(issue=>issue.code==='twitch_action_failed');
+    f.marker.mockRejectedValueOnce(new Error('network timeout'));await f.engine.dispatch('stream_one',{type:'moment.save',id:'unknown-marker',atMs:20000});await f.runtime.tick();await f.runtime.tick();
+    expect(f.runtime.markerStatus().items[0]).toMatchObject({status:'unknown_outcome'});expect(failed()).toHaveLength(1);
+    f.advance(60000);await f.engine.dispatch('stream_one',{type:'moment.save',id:'sent-marker',atMs:80000});await f.runtime.tick();await f.runtime.tick();
+    expect(f.runtime.markerStatus().items[1]).toMatchObject({status:'sent'});expect(failed()).toEqual([]);
   });
   it('uses the transactional media tombstone even before post-commit permission cleanup runs',async()=>{
     const f=fixture({previous:true});await f.runtime.start();await f.runtime.preparePrevious('ownclip',null,true,'privacy-fence-fixture');await f.runtime.tick();const media=f.engine.state('stream_one').media[0];const descriptor=f.prepare.mock.calls[0][0];expect(f.runtime.allowsMedia(descriptor)).toBe(true);

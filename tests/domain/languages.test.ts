@@ -66,12 +66,13 @@ describe('fixed wording catalogs', () => {
     const swahili = sceneScript({ ...labPlan('full'), language: 'sw' });
     expect(swahili.titleLead).toBe('Previously');
   });
-  it('places the chat reaction from the plan’s capture range, not a fixed lead', () => {
+  it('places the chat reaction at the plan’s measured burst inside the clip', () => {
     const plan = labPlan('full');
-    const moment = plan.scene?.moment;
-    const clip = moment?.mediaId ? plan.media.find(media => media.id === moment.mediaId) : undefined;
-    const script = sceneScript(plan);
-    if (!moment || !clip || !script.moment) return expect(script.moment?.clipOffsetMs ?? null).toBeNull();
-    expect(script.moment.clipOffsetMs).toBe(moment.startMs - clip.captureStartMs - clip.inMs);
+    const moment = plan.scene!.moment!, clip = plan.media.find(media => media.id === moment.mediaId)!;
+    expect(sceneScript(plan).moment?.reactionMs).toBeNull();
+    const timed = { ...plan, scene: { ...plan.scene!, moment: { ...moment, burstMs: clip.captureStartMs + clip.inMs + 3300 } } };
+    expect(sceneScript(timed).moment?.reactionMs).toBe(3300);
+    const outside = { ...plan, scene: { ...plan.scene!, moment: { ...moment, burstMs: clip.captureStartMs + clip.outMs + 1 } } };
+    expect(sceneScript(outside).moment?.reactionMs).toBeNull();
   });
 });

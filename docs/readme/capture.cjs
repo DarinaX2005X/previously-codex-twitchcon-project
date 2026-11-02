@@ -78,7 +78,7 @@ async function app(b) {
     // the replay page after Jump to the raid, scene on screen
     ['shot-replay', async q => { await jump(q); await wait(9000); await q.evaluate(() => window.scrollTo(0, 0)); }],
     // the public recap page
-    ['shot-recap-page', async q => { await q.goto(APP + '/c/foxlight_dev', { waitUntil: 'load' }); await wait(3000); }],
+    ['shot-recap-page', async q => { await q.goto(APP + '/example', { waitUntil: 'load' }); await wait(3000); }],
     // the recording at 1:49, in the middle of chat's moon jump burst
     ['shot-replay-burst', async q => { await q.goto(APP + '/replay', { waitUntil: 'load' }); await wait(2500); await q.getByRole('button', { name: /First recap/ }).click(); await wait(600);
       await q.getByRole('slider', { name: 'Recording position' }).focus(); await q.keyboard.press('ArrowLeft'); await wait(900); }],

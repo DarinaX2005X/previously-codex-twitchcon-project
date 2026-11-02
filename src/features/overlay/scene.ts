@@ -1,9 +1,8 @@
 import type { RecapPlan, Rect } from '../../shared/contracts/index.js';
-import { MOMENT_CLIP_LEAD_MS } from '../../shared/contracts/index.js';
 import { FRAME, conservativeMeasure, intersects, protectedBounds, wrapCaption, type MeasureText, type SceneLayout } from './geometry.js';
 import { clamp, enter, exitIn, expoOut, glide, mix, pulse, quadIn, rand, seg, springAt } from './motion.js';
 import { sceneScript, type SceneScript } from './script.js';
-import { buildTimeline, type Timeline } from './timeline.js';
+import { buildTimeline, REACTION_LEAD_MS, type Timeline } from './timeline.js';
 
 /** Brand material: ink stage, paper cards, vermilion for the present and the mark, lime only for chat. */
 export const COLORS = { ink: '#14171B', raised: '#1E232A', high: '#272D35', deep: '#0C0E11', paper: '#F4EFE6', paperShade: '#E4DDD0', paperSide: '#CFC5B3', vermilion: '#FF5A36', vermilionSide: '#C93F22', vermilionBack: '#8F2F1C', lime: '#C8F560', limeSide: '#86A833', mutedInk: '#A9B1BC', mutedPaper: '#4A4F57' } as const;
@@ -55,8 +54,6 @@ type Geo = {
 };
 
 const PAD = 0.3;
-/** The moment clip starts this far in, so the launch plays as the frame finishes opening (within canonical bounds). */
-export const MOMENT_CLIP_PREROLL_MS = 2300;
 const CHIP_H = 58, CHIP_SIZE = 40;
 const lineH = (size: number) => Math.round(size * 1.04);
 const NOTCH = 48;
@@ -198,10 +195,9 @@ function geometry(plan: RecapPlan, layout: SceneLayout, options: RenderOptions):
   }
   const frame = { x: x0, y: Math.round((H - fh) / 2), w: fw, h: fh };
   const spec = focusMedia ? plan.media.find(m => m.id === focusMedia) : undefined;
-  // MOMENT_CLIP_PREROLL_MS was tuned for an in-point MOMENT_CLIP_LEAD_MS before the moment; when the capture clamps the
-  // in-point, the plan's real offset keeps the reaction on the same point of the moment.
-  const momentShift = (script.moment?.clipOffsetMs ?? MOMENT_CLIP_LEAD_MS) - MOMENT_CLIP_LEAD_MS;
-  const preroll = script.moment && spec ? Math.max(0, Math.min(MOMENT_CLIP_PREROLL_MS + momentShift, spec.outMs - spec.inMs - 6000)) : 0;
+  // The clip starts REACTION_LEAD_MS of footage before chat's measured peak, so what chat reacted to plays first
+  // (within canonical bounds). Without a measured peak it plays from its in-point.
+  const preroll = script.moment && spec ? Math.max(0, Math.min((script.moment.reactionMs ?? 0) - REACTION_LEAD_MS, spec.outMs - spec.inMs - 6000)) : 0;
   // Reaction column to the right of the frame: the counted number over a short chat feed, later the lore plate.
   const rx = x0 + fw + 44, rw = W - rx - 10;
   let counter: Geo['counter'] = null, panel: Geo['panel'] = null;

@@ -8,6 +8,17 @@ export function errorCode(error: unknown): string {
   const value = error as { code?: string; status?: number; error?: { code?: string } };
   return value.code ?? value.error?.code ?? (value.status === 409 ? 'revision_conflict' : '');
 }
+/** What the dock says when an action fails. A refused language switch keeps the server's own reason (which language, and whether OpenAI is off). */
+export function actionErrorMessage(error: unknown): string {
+  const code = errorCode(error);
+  if (code === 'revision_conflict') return 'This item changed in another dock. Refresh and compare before trying again.';
+  if (code === 'fixture_missing') return 'This recording has no recorded result for that action.';
+  if (code === 'language_not_ready') {
+    const message = error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string' ? (error as { message: string }).message.trim() : '';
+    return message || 'The recap is not ready in that language yet. The current language stays published. Try again in a minute.';
+  }
+  return 'Could not complete this action. Your current edit is still here. Try again.';
+}
 export function publicationLabel(chapter: Chapter, serverNowMs: number): string {
   if (!safetyAllowsPublication(chapter.safety)) {
     if (chapter.safety.reason === 'fixture_missing') return 'This recording has no safety check for this edit';

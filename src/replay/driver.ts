@@ -5,12 +5,13 @@ import {isRecapLanguage} from '../shared/languages.js';
 import { validateBundle, storyInput, type CaptureBundle, type StoryOutcome, type WordingOutcome } from './contracts.js';
 import { LogicalIds, RecordedProviders, FixtureMissing } from './providers.js';
 import { SimulationSink } from './simulation.js';
+import { recordedChat, type RecordedChat } from './chat.js';
 
 export class ReplayDriver {
   state:DomainState;atMs=0;playing=false;speed:1|2|4=1;error:string|null=null;
   readonly sink=new SimulationSink();readonly ids:LogicalIds;readonly providers:RecordedProviders;
   private eventIndex=0;private nextTick=0;private queue:{atMs:number;event:DomainEvent}[]=[];private serial=0;
-  private bundle:CaptureBundle;private epoch:number;private revoked=false;private replayingRecorded=false;private correctedOwners=new Map<string,number>();
+  private bundle:CaptureBundle;private epoch:number;private revoked=false;private replayingRecorded=false;private correctedOwners=new Map<string,number>();private chat:RecordedChat[];
   readonly clock:Clock;
   /** Runtime scope of this run. Every run uses the same length, so byte-bounded evidence packets select the same sources. */
   readonly runId:string;
@@ -18,7 +19,7 @@ export class ReplayDriver {
     const runId=this.runId=stateHash(`replay-run:${run}`);
     this.bundle=validateBundle(bundle);this.epoch=Date.parse(bundle.initial.session.startedAt);
     const identities=[bundle.initial.session.id,...bundle.media.map(m=>m.id),...bundle.events.flatMap(({event})=>'source' in event&&typeof event.source==='object'?[event.source.id,...event.source.actorId?[event.source.actorId]:[]]:[])];
-    this.ids=new LogicalIds(runId,identities);this.providers=new RecordedProviders(bundle.providers);
+    this.ids=new LogicalIds(runId,identities);this.chat=recordedChat(this.bundle);this.providers=new RecordedProviders(bundle.providers);
     this.ids.register(stateHash(bundle.initial.session.id),stateHash(this.ids.map(bundle.initial.session.id,'runtime')));
     if(bundle.tickMode==='recorded')this.nextTick=Infinity;
     const initial=this.ids.map(bundle.initial,'runtime');initial.session.runId=runId;
@@ -53,6 +54,11 @@ export class ReplayDriver {
       const c=this.state.chapters.find(x=>x.id===p.id),published=this.state.candidates.find(x=>x.entityId===p.id&&x.revision===p.revision&&x.status==='published'&&x.language===this.state.settings.recapLanguage);
       return c&&published&&c.revision!==p.revision?[{...published.chapter,revision:p.revision,ownerEditRevision:c.ownerEditRevision}]:[];
     });
+  }
+  /** Logical ids of recorded chat lines up to now that this run no longer shows: forgotten, banned, cleared or never accepted. */
+  get hiddenChat():string[]{
+    const shown=new Set(this.state.sources.filter(s=>s.kind==='chat'&&s.status==='active'&&!!s.text&&s.moderation==='allowed').map(s=>s.id));
+    return this.chat.filter(c=>c.atMs<=this.atMs&&!shown.has(this.ids.map(c.id,'runtime'))).map(c=>c.id);
   }
   get latestSource(){const source=[...this.state.sources].reverse().find(s=>s.status==='active'&&['allowed','redacted'].includes(s.moderation)&&!!s.text);return source?{id:source.id,text:source.text!.slice(0,500),truncated:source.text!.length>500,kind:source.kind,startMs:source.startMs,endMs:source.endMs}:null;}
   send(event:DomainEvent){
@@ -164,5 +170,5 @@ export class ReplayDriver {
   }
   evidence(id:string){const c=this.state.chapters.find(x=>x.id===id);return c?this.state.sources.filter(s=>s.text&&c.dependencyRefs.some(r=>r.id===s.id)):[];}
   normalizedHash(){const projected=this.ids.map({published:this.state.published,chapters:this.state.chapters,tombstones:this.state.tombstones,settings:this.state.settings},'logical');return stateHash(projected);}
-  revoke(){this.playing=false;this.revoked=true;this.queue=[];this.providers.clear();this.sink.clear();this.bundle={...this.bundle,events:[],providers:[],media:[],correction:null};this.state=createDomainState({channel:{id:'revoked',login:'recording',displayName:'Recording unavailable'},session:{...this.state.session,title:'',category:''}});}
+  revoke(){this.playing=false;this.revoked=true;this.queue=[];this.chat=[];this.providers.clear();this.sink.clear();this.bundle={...this.bundle,events:[],providers:[],media:[],correction:null};this.state=createDomainState({channel:{id:'revoked',login:'recording',displayName:'Recording unavailable'},session:{...this.state.session,title:'',category:''}});}
 }

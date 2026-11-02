@@ -29,6 +29,16 @@ describe('OpenAI failure reporting for a first live run',()=>{
     const log=vi.fn();await failure(failing(404,{message:'The model does not exist',type:'invalid_request_error',code:'model_not_found'}),log);
     expect(log.mock.calls[0][0]).toContain('gpt-6-luna');expect(log.mock.calls[0][0]).toContain('model_not_found');
   });
+  it('reads at most 16 KB of an error body and cancels the rest',async()=>{
+    let pulled=0,cancelled=false;const chunk=new Uint8Array(4096).fill(0x20);
+    const endless=()=>new ReadableStream<Uint8Array>({pull(controller){pulled+=chunk.byteLength;controller.enqueue(chunk);},cancel(){cancelled=true;}});
+    const error=await failure(vi.fn().mockImplementation(async()=>new Response(endless(),{status:502})),vi.fn());
+    expect(error.httpStatus).toBe(502);expect(error.providerCode).toBeUndefined();expect(cancelled).toBe(true);expect(pulled).toBeLessThanOrEqual(16384+3*chunk.byteLength);
+    pulled=0;cancelled=false;
+    const declared=await failure(vi.fn().mockImplementation(async()=>new Response(endless(),{status:503,headers:{'content-length':String(50_000_000)}})),vi.fn());
+    expect(declared.httpStatus).toBe(503);expect(cancelled).toBe(true);expect(pulled).toBeLessThanOrEqual(2*chunk.byteLength);
+    const small=await failure(failing(429,{type:'requests',code:'rate_limit_exceeded'}),vi.fn());expect(small.providerCode).toBe('rate_limit_exceeded');
+  });
   it('keeps unparseable error bodies to the status code',()=>{expect(describeOpenAIFailure(503)).toContain('OpenAI 503');expect(describeOpenAIFailure(403,'unsupported_country_region_territory')).toContain('region');});
   it('omits the $schema meta keyword from strict Structured Outputs schemas',()=>{
     const request=structuredRequest('probe',z.object({a:z.string()}).strict(),'x',{});

@@ -1,9 +1,11 @@
 import { StoryPatchSchema } from '../shared/contracts/index.js';
+import { normalizeTermText } from '../shared/text.js';
+import { looksLikeInstruction, marksSarcasm, startsWithBarePronoun } from './chat-signals.js';
 import type { EvidencePacket, Source, GenerationTicket, StoryPatch, VersionRef } from '../shared/contracts/index.js';
 import { DOMAIN_LIMITS, type DomainState, type GroundingReview } from './types.js';
 import { EVIDENCE_HORIZON_MS, compareSourceIds } from './source-retention.js';
 
-export const normalizeTerm = (text: string): string => text.normalize('NFKC').toLocaleLowerCase('en').replace(/\s+/gu, ' ').trim();
+export const normalizeTerm = (text: string): string => normalizeTermText(text);
 export const uniqueRefs = (refs: VersionRef[]): VersionRef[] => [...new Map(refs.map(ref => [`${ref.id}:${ref.revision}`, ref])).values()];
 export const refOf = (value: {id:string;revision:number}): VersionRef => ({id:value.id,revision:value.revision});
 export const overlaps = (a: number,b: number,c: number,d: number): boolean => a===b ? a>=c&&a<=d : c===d ? c>=a&&c<=b : a<d&&c<b;
@@ -77,8 +79,6 @@ export function packetRefs(state:DomainState,packet:EvidencePacket):VersionRef[]
   return uniqueRefs([...packet.sources.map(refOf),...packet.memory.flatMap(m=>[...m.refs,...state.nodes[m.id]?[refOf(state.nodes[m.id]!)]:[]]),...packet.chapters.map(refOf),...packet.lore.map(refOf)]).slice(0,100);
 }
 export const relationKey=(r:StoryPatch['relations'][number]):string=>`${r.from}:${r.kind}:${r.to}`;
-const instruction=/(?:ignore (?:all |previous |the )*instructions|system prompt|developer message|игнорируй .*инструкц|publish this|reveal .*secret)/iu;
-const ambiguous=/^(?:it|he|she|they|this|that|он|она|это|они)\s/iu;
 export function validateStoryPatch(state:DomainState,ticket:GenerationTicket,patch:StoryPatch,grounding?:GroundingReview):{valid:boolean;reason?:string} {
   const reject=(reason:string)=>({valid:false,reason});
   if(!StoryPatchSchema.safeParse(patch).success)return reject('invalid_contract');
@@ -100,11 +100,11 @@ export function validateStoryPatch(state:DomainState,ticket:GenerationTicket,pat
     if(claim.support.some(r=>allowed.get(r.id)!==r.revision))return reject('unknown_support');
     const leaves=leafRefs(state,claim.support).map(r=>state.sources.find(s=>s.id===r.id)??(state.nodes[r.id]?.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata).filter((s):s is Source=>!!s);
     if(!leaves.length||leaves.some(s=>!isRefActive(state,refOf(s))))return reject('inactive_support');
-    if(leaves.some(s=>instruction.test(s.text??''))||instruction.test(claim.text))return reject('quoted_instruction');
+    if(leaves.some(s=>looksLikeInstruction(s.text??''))||looksLikeInstruction(claim.text))return reject('quoted_instruction');
     if(leaves.every(s=>s.kind==='chat')&&(claim.attribution!=='chat_report'||['outcome','goal','attempt','change','state','lore_origin'].includes(claim.role)))return reject('chat_is_not_outcome_evidence');
     if(claim.attribution==='owner'&&!leaves.some(s=>s.kind==='owner_statement'))return reject('false_attribution');
-    if(ambiguous.test(claim.text))return reject('unresolved_antecedent');
-    const exact=leaves.some(s=>normalizeTerm(s.text??'')===normalizeTerm(claim.text))&&claim.epistemic==='explicit'&&!leaves.some(s=>/\bsarcasm\b|\/s\b|ага[,.]? конечно/iu.test(s.text??''));
+    if(startsWithBarePronoun(claim.text,ticket.recapLanguage))return reject('unresolved_antecedent');
+    const exact=leaves.some(s=>normalizeTerm(s.text??'')===normalizeTerm(claim.text))&&claim.epistemic==='explicit'&&!leaves.some(s=>marksSarcasm(s.text??''));
     if(!grounding?.acceptedClaimIds.includes(claim.id)&&!exact)return reject('grounding_review_required');
   }
   for(const relation of patch.relations){

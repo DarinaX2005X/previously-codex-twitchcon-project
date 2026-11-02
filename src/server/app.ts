@@ -67,7 +67,7 @@ export function createApp(options: AppOptions) {
   if (options.routers?.media) app.use('/api/media', options.routers.media);
   const staticDirectory = resolve(options.staticDirectory ?? 'dist');
   app.use(express.static(staticDirectory, {index: false, dotfiles: 'deny', redirect: false, maxAge: 0}));
-  for (const route of ['/', '/setup', '/setup/local', '/foundation', '/dock', '/overlay', '/replay', '/c/:login', '/c/:login/episodes/:id']) {
+  for (const route of ['/', '/setup', '/setup/local', '/foundation', '/dock', '/overlay', '/replay', '/example', '/c/:login', '/c/:login/episodes/:id']) {
     app.get(route, (_req, res, next) => {
       if (!existsSync(resolve(staticDirectory, 'index.html'))) {next(new ApiError(503, 'build_required', 'Build the local application before starting it.')); return;}
       res.sendFile(resolve(staticDirectory, 'index.html'));

@@ -1,19 +1,8 @@
 import {useCallback,useEffect,useState} from 'react';
 import {ReplayClient,type ReplayView} from '../../replay/client.js';
 import {ReplayGate} from '../../replay/gate.js';
-import type {CaptureBundle} from '../../replay/contracts.js';
-/** One chat line of the recording, in recording time. Only active, moderation-allowed chat with text. */
-export type RecordedChat={id:string;atMs:number;text:string;actor:string|null};
-function recordedChat(bundle:CaptureBundle):RecordedChat[]{
-  const out:RecordedChat[]=[];
-  for(const {atMs,event} of bundle.events){
-    if(event.type!=='source')continue;
-    const source=(event as {source?:{id:string;kind:string;text:string|null;status:string;moderation?:string;actorId:string|null;startMs:number}}).source;
-    if(!source||source.kind!=='chat'||!source.text||source.status!=='active'||(source.moderation&&source.moderation!=='allowed'))continue;
-    out.push({id:source.id,atMs:Math.max(atMs,source.startMs),text:source.text,actor:source.actorId});
-  }
-  return out;
-}
+import {recordedChat,type RecordedChat} from '../../replay/chat.js';
+export type {RecordedChat};
 export function useRecording(manifestUrl?:string){
   const [client,setClient]=useState<ReplayClient|null>(null),[view,setView]=useState<ReplayView|null>(null),[error,setError]=useState<string|null>(null),[origin,setOrigin]=useState<'authored'|'own-stream'|null>(null),[media,setMedia]=useState<{id:string;url:string}[]>([]),[chat,setChat]=useState<RecordedChat[]>([]),[mediaRanges,setMediaRanges]=useState<{id:string;startMs:number;endMs:number}[]>([]);
   const resolveMedia=useCallback((id:string)=>media.find(m=>id===m.id||id.endsWith(`~${m.id}`))?.url,[media]);
