@@ -14,14 +14,8 @@ Previously follows a Twitch stream while it happens. It listens to the streamer'
 
 <!-- MEDIA: submission video. Upload the web MP4 to this repository as a GitHub attachment and put the returned https://github.com/user-attachments/assets/... URL on its own line here, with a blank line above and below. -->
 
-<!-- MEDIA: docs/readme/scene-loop.webp
-     Animated WebP, 720 px wide, a seamless 8 to 12 s loop, under 3 MB, 12 fps.
-     The real raid scene from the example recording (/replay, Jump to the raid) playing over Foxlight gameplay at 1920x1080, captured from the running app.
-     First frame: the opening "Previously" title over gameplay, never a blank or half-faded frame.
-     Ready markup, uncomment when the file exists:
 <p align="center"><img src="docs/readme/scene-loop.webp" width="720" alt="The Previously raid scene playing over Foxlight gameplay: chapter cards with real clips, chat's moon jump burst folding into the term, and the card saying what is happening now"></p>
 <p align="center"><sub>The raid scene from the example recording, captured from the app</sub></p>
--->
 
 <p align="center">
   <img src="docs/readme/chips/node.svg" height="32" alt="Node.js 22">
@@ -43,15 +37,8 @@ A raid brings a group of people who have no idea what the stream is about. Regul
 
 In the example recording, Foxlight Dev is building a small cave platformer. At 1:40 a spring pad launches the fox through the ceiling and chat floods with "MOON JUMP". At 3:30 the spring gets a speed limit, and the moon jump stays in the game as a secret cheat. When pixelmoth raids with 37 viewers at 7:10, the scene walks them through the chapters with the real gameplay clips, shows chat's burst turning into the term "moon jump" and what it means, and ends on what is happening now: making the lantern behind the waterfall reachable. Then the overlay clears the screen.
 
-<!-- MEDIA: three frames of the same raid scene, one row, identical framing.
-     docs/readme/shot-scene-chapters.jpg  chapter cards with the moon jump clip open
-     docs/readme/shot-scene-chat.jpg      the chat burst folding into the "moon jump" term
-     docs/readme/shot-scene-now.jpg       the final card with what is happening now
-     Each exactly 960x540 JPEG (a 1920x1080 frame scaled by half), quality 85, scene over gameplay.
-     Ready markup, uncomment when the files exist:
-<p align="center"><img src="docs/readme/shot-scene-chapters.jpg" width="32%" alt="Raid scene: chapter cards over gameplay with the moon jump clip playing in one of them"> <img src="docs/readme/shot-scene-chat.jpg" width="32%" alt="Raid scene: real chat lines saying MOON JUMP piling up and folding into a card that explains the term"> <img src="docs/readme/shot-scene-now.jpg" width="32%" alt="Raid scene: the final card saying the streamer is making the lantern behind the waterfall reachable"></p>
-<p align="center"><sub>The chapters so far, chat's moon jump turning into a term, and what is happening now</sub></p>
--->
+<p align="center"><img src="docs/readme/shot-scene-chapters.jpg" width="32%" alt="Raid scene: chapter cards over gameplay with the moon jump clip playing in one of them"> <img src="docs/readme/shot-scene-chat.jpg" width="32%" alt="Raid scene: real chat lines saying MOON JUMP piling up next to the moon jump clip, 45 messages in ten seconds"> <img src="docs/readme/shot-scene-now.jpg" width="32%" alt="Raid scene: the final card saying the streamer is making the lantern behind the waterfall reachable"></p>
+<p align="center"><sub>The chapters so far, chat's moon jump burst, and what is happening now</sub></p>
 
 The same story answers `!previously` in chat and fills the channel's public page, where a late viewer can open the source behind any chapter. Every sentence is held back for 75 seconds after its last source and checked before anyone sees it, so the streamer has time to fix or remove it first.
 
@@ -64,14 +51,8 @@ The [hosted example](https://previously-seven.vercel.app/replay) needs no accoun
 3. In **Change the recap**, choose **Apply my wording** to rename the third chapter to "Moon jump becomes a cheat code", then **Preview the next raid scene** to see the correction in the scene.
 4. Switch the recap between English and Russian, or **Open the streamer dock** and type your own wording. The recording only contains safety checks for its own wording, so yours stays held, the same way a live edit waits when a check is unavailable. **Restart** gives you a fresh run, and nothing you change leaves your tab.
 
-<!-- MEDIA: two screenshots in one row, identical size.
-     docs/readme/shot-replay.jpg       the /replay page at 1440x900 after Jump to the raid, scene on screen, chapters and chat visible
-     docs/readme/shot-recap-page.jpg   the public recap page /c/foxlight_dev at 1440x900 with the current state and chapters
-     Both exactly 1440x900 JPEG, quality 85.
-     Ready markup, uncomment when the files exist:
 <p align="center"><img src="docs/readme/shot-replay.jpg" width="49%" alt="The example replay page with the raid scene over gameplay, the published chapters and the stream chat"> <img src="docs/readme/shot-recap-page.jpg" width="49%" alt="The public recap page for Foxlight Dev with what is happening now and the chapters with their clips"></p>
 <p align="center"><sub>The example replay after the raid, and the public recap page a late viewer opens from chat</sub></p>
--->
 
 To run the same example on your own computer (Windows, Node.js 22.13 or newer, npm), open PowerShell in the folder with `package.json`:
 
@@ -152,15 +133,8 @@ Nothing is shown until it has passed its checks and the hold, and the streamer c
 
 If you run a public page and the collector is offline, a removal waits until the cloud acknowledges it. Downloaded ZIP files, copied footage or screenshots, Git copies and other people's recordings cannot be recalled by Previously.
 
-<!-- MEDIA: three dock screenshots in one row, identical size, from the streamer dock at OBS dock width.
-     docs/readme/shot-dock-live.jpg     the dock while listening, with published chapters
-     docs/readme/shot-dock-edit.jpg     editing a chapter's wording, old wording withdrawn
-     docs/readme/shot-dock-forget.jpg   the Forget last 2 min confirmation
-     Each exactly 480x860 JPEG, quality 85.
-     Ready markup, uncomment when the files exist:
-<p align="center"><img src="docs/readme/shot-dock-live.jpg" width="32%" alt="Streamer dock while listening, with the published chapters and the Pause and Forget controls"> <img src="docs/readme/shot-dock-edit.jpg" width="32%" alt="Streamer dock editing a chapter, with the old wording withdrawn while the new wording is checked"> <img src="docs/readme/shot-dock-forget.jpg" width="32%" alt="Streamer dock asking to confirm forgetting the last two minutes"></p>
-<p align="center"><sub>Listening, correcting a chapter, and forgetting the last two minutes in the streamer dock</sub></p>
--->
+<p align="center"><img src="docs/readme/shot-dock-live.jpg" width="32%" alt="Streamer dock from the example recording, with the published chapters and the Pause and Forget controls"> <img src="docs/readme/shot-dock-edit.jpg" width="32%" alt="Streamer dock editing a chapter's title and summary, with publication still waiting for its safety check"> <img src="docs/readme/shot-dock-forget.jpg" width="32%" alt="Streamer dock asking to confirm forgetting the last two minutes"></p>
+<p align="center"><sub>The streamer dock with its published chapters, correcting a chapter, and forgetting the last two minutes</sub></p>
 
 ## Recordings and your viewer page
 
