@@ -15,7 +15,8 @@ export function composeReply(command:ChatCommand,snapshot:PublicSnapshot|null,la
   }else{
     const chapters=snapshot?.chapters.slice(-2)??[];
     text=chapters.length?chapters.map(chapter=>chapter.summary).join(' '):(language==='ru'?'Подтверждённый пересказ ещё готовится.':'A confirmed recap is still being prepared.');
-    if(snapshot?.current?.now)text+=` ${snapshot.current.now}`;
+    const now=snapshot?.current?.now?.trim();
+    if(now&&!text.replace(/\s+/gu,' ').includes(now.replace(/\s+/gu,' ')))text+=` ${now}`;
   }
   text=text.replace(/\s+/gu,' ').trim();const budget=url?maxLength-[...url.href].length-1:maxLength;
   if(budget<20)throw new Error('Canonical URL is too long');
