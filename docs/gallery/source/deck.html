@@ -139,6 +139,35 @@ img { display: block; }
   linear-gradient(160deg, #1D252B 0%, #14191E 55%, #0F1317 100%); }
 .ctl.p { background: var(--paper); color: var(--ink); box-shadow: 0 5px 0 var(--paper-side); }
 .mlabel { transform: translateX(-50%); font-size: 26px; white-space: nowrap; }
+
+.cw { background: #0B1C1F; color: var(--paper); }
+.cw .bg { position: absolute; left: 0; top: 0; width: 1800px; height: 1200px; object-fit: cover; }
+.cw .shade { position: absolute; inset: 0; }
+.pv, .pc, .pl, .pk { display: inline-block; font-weight: 800; letter-spacing: -.035em; line-height: .98; padding: .02em .2em .1em; border-radius: .1em; }
+.pv { background: var(--verm); color: var(--ink); box-shadow: 0 .06em 0 var(--verm-side); }
+.pc { background: var(--paper); color: var(--ink); box-shadow: 0 .06em 0 var(--paper-side); }
+.pl { background: var(--lime); color: var(--ink); box-shadow: 0 .06em 0 var(--lime-side); }
+.pk { background: var(--paper); color: var(--ink); font-size: 40px; margin-right: 14px; box-shadow: 0 .1em 0 var(--paper-side); }
+.lead.w { color: #FFFFFF; font-size: 44px; line-height: 1.25; font-weight: 500; }
+.foot { color: #C9D6D8; font-size: 28px; font-weight: 450; }
+.chatl { list-style: none; margin-top: 22px; display: grid; gap: 12px; font-size: 40px; font-weight: 650; line-height: 1.1; color: var(--ink); }
+.you { display: inline-block; background: #20262D; color: #C9D0D8; font-size: 36px; padding: 12px 22px 14px; border-radius: 14px; }
+.you b { color: var(--lime); }
+.wall { display: flex; flex-wrap: wrap; gap: 26px 22px; }
+.wall span { display: inline-block; background: var(--paper); color: var(--ink); font-weight: 800; font-size: 76px; letter-spacing: -.03em; line-height: 1; padding: 8px 20px 14px; border-radius: 12px; box-shadow: 0 6px 0 var(--paper-side); }
+.wall span[lang="ja"] { font-family: 'Yu Gothic', sans-serif; font-weight: 700; letter-spacing: 0; }
+.wall span[lang="ko"] { font-family: 'Malgun Gothic', sans-serif; font-weight: 700; letter-spacing: 0; }
+.wall span[lang="zh"] { font-family: 'Microsoft YaHei', sans-serif; font-weight: 700; letter-spacing: 0; }
+.strow { background: linear-gradient(180deg,#2A2F36,#1F242A); border-radius: 18px; padding: 22px 30px 26px; font-size: 52px; font-weight: 750; letter-spacing: -.02em; color: #F4EFE6; text-decoration: line-through; text-decoration-color: var(--verm); text-decoration-thickness: 8px; box-shadow: 0 7px 0 #07080A; }
+.tc { background: var(--ink); color: var(--paper); font-weight: 800; font-size: 40px; padding: 6px 16px 10px; border-radius: 10px; z-index: 3; }
+.num { font-variant-numeric: tabular-nums; }
+.tl { position: absolute; top: 40px; height: 120px; border-radius: 14px; display: flex; align-items: center; padding: 0 16px; overflow: hidden; box-shadow: 0 7px 0 rgba(0,0,0,.25); }
+.tl span { font-size: 30px; font-weight: 750; letter-spacing: -.01em; line-height: 1.05; }
+.tl-k { background: var(--ink); color: var(--paper); }
+.tl-v { background: var(--verm); color: var(--ink); }
+.tl-p { background: #FFFFFF; color: var(--ink); box-shadow: 0 7px 0 var(--paper-side); }
+.tl-l { background: var(--lime); color: var(--ink); }
+.tlt { position: absolute; top: 172px; font-size: 26px; font-weight: 650; color: var(--muted-paper); font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -162,33 +191,24 @@ img { display: block; }
 </section>
 
 <!-- ============ 01 LATE ARRIVALS ============ -->
-<section class="slide cv-teal" id="late-arrivals" data-out="01-late-arrivals">
-  <img class="abs obj" src="assets/art/bubble.png" style="left:860px; top:50px; width:960px;">
-  <div class="abs h1" style="left:96px; top:96px; width:900px; font-size:128px; color:#FFFFFF;">What did I&nbsp;miss?</div>
-  <div class="abs lead" style="left:100px; top:440px; width:640px; color:#FFFFFF; font-weight:500;">A raid drops a whole audience into the middle of a stream. They missed the jokes, the bugs and why chat keeps typing MOON JUMP.</div>
-  <div class="abs body" style="left:100px; top:760px; width:600px; color:#E3F3EF;">The streamer can stop to explain or keep playing and leave them lost. Previously answers for them: on stream, in chat and on a page.</div>
-  <div class="card" style="left:900px; top:640px; width:540px; padding:28px 30px 24px; transform: rotate(-2deg); box-shadow: 0 9px 0 var(--paper-side), 0 60px 90px -24px rgba(3,24,26,.7);">
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:16px;">
-      <span style="font-size:28px; font-weight:700; color:var(--ink);">Chat at 1:40</span>
-      <span class="plate l" style="font-size:26px; font-weight:800; padding:6px 12px 8px; border-radius:9px;">45 messages in 10 s</span>
-    </div>
-    <ol style="list-style:none; margin-top:20px; display:grid; gap:11px; font-size:30px; line-height:1.15; font-weight:550; color:var(--ink);">
-      <li>MOON JUMP</li><li>he's gone</li><li>fox to the moon</li><li>the fox has left the cave</li><li>MOON JUMP MOON JUMP</li><li>where did he go</li>
-      <li style="color:var(--muted-paper);">and 39 more</li>
-    </ol>
+<section class="slide cw" id="late-arrivals" data-out="01-late-arrivals">
+  <img class="bg" src="../../../public/demo/foxlight/clip-moon.jpg" style="left:300px; width:1700px; height:1200px;">
+  <div class="shade" style="background: linear-gradient(90deg, rgba(6,18,20,.96) 0%, rgba(8,24,27,.85) 38%, rgba(8,24,27,.15) 66%, rgba(8,24,27,0) 80%), linear-gradient(0deg, rgba(6,18,20,.6), transparent 30%);"></div>
+  <div class="abs" style="left:96px; top:110px;"><span class="pv" style="font-size:180px;">What did</span><br><span class="pc" style="font-size:180px; margin-top:22px;">I miss?</span></div>
+  <div class="abs lead w" style="left:104px; top:640px; width:720px;">A raid drops a whole audience into the middle of the stream. Chat is typing a joke they were not there for.</div>
+  <div class="card" style="left:1130px; top:330px; width:600px; padding:30px 34px 26px; transform: rotate(3deg);">
+    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:32px; font-weight:800;">Chat at 1:40</span><span class="pl" style="font-size:30px;">45 in 10 s</span></div>
+    <ol class="chatl"><li>MOON JUMP</li><li>he's gone</li><li>fox to the moon</li><li>MOON JUMP MOON JUMP</li><li>where did he go</li></ol>
   </div>
-  <div class="frame" style="left:1440px; top:880px; width:400px; height:225px; transform: rotate(3deg);"><img src="../../../public/demo/foxlight/clip-moon.jpg"></div>
-  <div class="abs small" style="left:100px; top:1090px; width:700px; color:#E3F3EF;">The moon jump in our example recording of Foxlight, a small game we made</div>
+  <div class="abs foot" style="left:104px; top:1100px;">The example recording, written around Foxlight, a small game we made</div>
 </section>
 
 <!-- ============ 02 RAID SCENE ============ -->
-<section class="slide cv-lime" id="raid-scene" data-out="02-raid-scene">
-  <div class="abs h1" style="left:96px; top:84px; width:1000px; font-size:100px;">Every raid gets its own <span class="plate k">Previously&nbsp;on</span></div>
-  <img class="abs obj" src="assets/art/megaphone.png" style="left:1250px; top:40px; width:520px; filter: drop-shadow(0 40px 50px rgba(40,60,0,.45));">
-  <div class="frame" style="left:96px; top:390px; width:1180px; height:664px; transform: rotate(-1.5deg); box-shadow: 0 14px 0 #07080A, 0 80px 120px -40px rgba(40,60,0,.7);"><img src="assets/scene/moon.jpg"></div>
-  <div class="icard" style="left:1330px; top:560px; width:374px; padding:34px 28px 26px; transform: rotate(2deg);"><span class="stab" style="background:var(--lime);">Raid at 7:10</span><p style="font-size:44px; font-weight:800; letter-spacing:-.02em; line-height:1.05;">pixelmoth</p><p style="font-size:30px; margin-top:8px; color:#C9D0D8;">37 viewers arrive</p></div>
-  <div class="abs body" style="left:1334px; top:800px; width:380px; color:var(--ink);">The scene starts the moment the raid lands, built from chapters already published, with the stream's own clips.</div>
-  <div class="abs small" style="left:100px; top:1100px; width:1180px; color:#2E3A12;">The example recording's raid scene. Its chat and raid are written for the demo; the clips are real footage of Foxlight, our small game.</div>
+<section class="slide cw" id="raid-scene" data-out="02-raid-scene">
+  <img class="bg" src="assets/scene/moon.jpg" style="left:0; top:120px; width:1800px; height:1013px;">
+  <div class="shade" style="background: linear-gradient(180deg, rgba(6,18,20,.97) 0%, rgba(6,18,20,.85) 22%, rgba(6,18,20,0) 46%), linear-gradient(0deg, rgba(6,18,20,.9), transparent 12%);"></div>
+  <div class="abs" style="left:96px; top:70px;"><span class="pc" style="font-size:132px;">Every raid gets its own</span><br><span class="pv" style="font-size:132px; margin-top:18px;">Previously on</span></div>
+  <div class="abs foot" style="left:104px; top:1140px;">The real raid scene from the example recording: the moon jump clip, its caption and chat's reaction</div>
 </section>
 
 <!-- ============ 03 SCENE SEQUENCE ============ -->
@@ -204,168 +224,117 @@ img { display: block; }
     </div>
     <div class="holes b"></div>
   </div>
-  <div class="abs small muted-paper" style="left:100px; top:1030px; width:1600px;">Hard cuts between the chapter clips, each with its caption. The example's recap runs 44 seconds; streamers choose up to 30 seconds, 1 minute or 2 minutes.</div>
+  
+
+  <div class="abs" style="left:0; top:900px; width:1800px; height:240px;"><div class="tl tl-v" style="left:114px; width:104px;"><span>Intro</span></div><div class="tl tl-p" style="left:224px; width:341px;"><span>Fox learns to jump</span></div><div class="tl tl-p" style="left:571px; width:378px;"><span>The moon jump</span></div><div class="tl tl-p" style="left:955px; width:341px;"><span>Spring gets a speed limit</span></div><div class="tl tl-v" style="left:1302px; width:323px;"><span>Right now</span></div><div class="tl tl-l" style="left:1631px; width:67px;"><span></span></div><span class="abs" style="left:1481px; top:0; font-size:28px; font-weight:750; color:var(--ink);">!previously</span><span class="tlt" style="left:96px;">0:00</span><span class="tlt" style="left:461px;">0:10</span><span class="tlt" style="left:827px;">0:20</span><span class="tlt" style="left:1192px;">0:30</span><span class="tlt" style="left:1558px;">0:40</span></div>
+  <div class="abs small muted-paper" style="left:100px; top:1140px; width:1600px;">The example's whole recap, 44 seconds. Streamers choose up to 30 seconds, 1 minute or 2 minutes.</div>
 </section>
 
 <!-- ============ 04 CHAT COMMAND ============ -->
-<section class="slide cv-night" id="chat-command" data-out="04-chat-command">
-  <img class="abs obj" src="assets/art/keycap.png" style="left:20px; top:640px; width:600px;">
-  <div class="abs h1" style="left:96px; top:96px; width:820px; font-size:96px;">Anyone who joins late can type <span class="plate l">!previously</span></div>
-  <div class="abs lead" style="left:100px; top:430px; width:740px; color:#E6EBF0;">Chat gets the latest chapters, what is happening now and a link to the recap page.</div>
-  <div class="frame" style="left:930px; top:110px; width:770px; height:853px; border-radius:34px; transform: rotate(2deg); box-shadow: 0 14px 0 #07080A, 0 60px 90px -30px rgba(0,0,0,.7), 0 0 0 2px rgba(255,255,255,.06);"><img src="assets/app/landing-chat.png" style="object-fit:cover; object-position: top;"></div>
-  <div class="abs body" style="left:940px; top:1010px; width:760px; color:#E6EBF0;"><b style="color:var(--lime);">!lore moon jump</b> explains a joke only when its origin is in the sources.</div>
+<section class="slide cw" id="chat-command" data-out="04-chat-command">
+  <img class="bg" src="assets/game/game-jump.jpg">
+  <div class="shade" style="background: linear-gradient(90deg, rgba(6,18,20,.95) 0%, rgba(6,18,20,.8) 50%, rgba(6,18,20,.55) 100%);"></div>
+  <div class="abs" style="left:96px; top:110px;"><span class="pc" style="font-size:120px;">Late? Type</span><br><span class="pl" style="font-size:180px; margin-top:20px;">!previously</span></div>
+  <div class="abs lead w" style="left:104px; top:640px; width:780px;">The bot answers in chat with the latest chapters, what is happening now and a link to the recap.</div>
+  <div class="abs" style="left:960px; top:560px; width:750px;">
+    <div class="you">you <b>!lore moon jump</b></div>
+    <div class="card" style="position:relative; padding:30px 34px; margin-top:20px;"><p style="margin:0; font-size:38px; line-height:1.3; color:var(--ink);"><b style="color:var(--verm-side);">Foxlight Dev</b> moon jump: When the spring had no speed limit, it launched the fox through the ceiling, and chat named it the moon jump.</p></div>
+  </div>
+  <div class="abs foot" style="left:104px; top:1100px;">A real reply from the example recording, written by the chat bot's own code</div>
 </section>
 
 <!-- ============ 05 RECAP PAGE ============ -->
-<section class="slide cv-teal" id="recap-page" data-out="05-recap-page">
-  <div class="abs h1" style="left:96px; top:96px; width:820px; font-size:96px; color:#FFFFFF;">The story so far, on a page anyone can open</div>
-  <div class="abs" style="left:100px; top:430px; width:640px; display:grid; gap:22px; color:#FFFFFF;">
-    <p class="body"><b>Right now first,</b> then the chapters with their clips.</p>
-    <p class="body"><b>Read up to here</b> stops the story where you are, so nothing gets spoiled.</p>
-    <p class="body"><b>No account.</b> Only published chapters leave the streamer's computer.</p>
-  </div>
-  <img class="abs obj" src="assets/art/bookmark.png" style="left:110px; top:860px; width:600px; filter: drop-shadow(0 40px 50px rgba(3,24,26,.5));">
-  <div class="phone" style="left:830px; top:290px; transform: rotate(-5deg) scale(.92); transform-origin: top left;"><div class="scr"><img src="assets/app/public-phone-chapters.png" style="top:0;"></div></div>
-  <div class="phone" style="left:1240px; top:140px; transform: rotate(4deg);"><div class="scr"><img src="assets/app/public-phone.png" style="top:0;"></div></div>
+<section class="slide cw" id="recap-page" data-out="05-recap-page">
+  <img class="bg" src="assets/game/game-waterfall.jpg" style="left:-300px; width:2134px; height:1200px;">
+  <div class="shade" style="background: linear-gradient(90deg, rgba(6,18,20,.96) 0%, rgba(8,24,27,.86) 45%, rgba(8,24,27,.3) 100%);"></div>
+  <div class="abs" style="left:96px; top:110px;"><span class="pc" style="font-size:132px;">The story</span><br><span class="pv" style="font-size:132px; margin-top:18px;">so far</span></div>
+  <div class="abs lead w" style="left:104px; top:560px; width:740px;">A page anyone can open without an account. Right now first, then the chapters with their clips. Read up to here stops spoilers.</div>
+  <div class="phone" style="left:1020px; top:110px; transform: scale(1.32) rotate(3deg); transform-origin: top left;"><div class="scr"><img src="assets/app/public-phone.png" style="top:0;"></div></div>
 </section>
 
 <!-- ============ 06 ANY LANGUAGE ============ -->
-<section class="slide cv-paper" id="any-language" data-out="06-any-language">
-  <img class="abs obj" src="assets/art/bubbles-stack.png" style="left:150px; top:470px; height:820px; filter: drop-shadow(0 40px 50px rgba(120,60,20,.25));">
-  <div class="abs h1" style="left:96px; top:90px; width:720px; font-size:88px;">Recaps in your stream's language</div>
-  <div class="abs body" style="left:100px; top:310px; width:640px;">Pick any language. The model writes the chapters in it, and the scene and chat bot labels come in 14 languages.</div>
-  <div class="abs small muted-paper" style="left:860px; top:110px; width:844px;">How the raid scene opens in each built-in language</div>
-  <div class="abs langs" style="left:860px; top:180px; width:844px;">
-    <div><b>Previously</b><i>English</i></div>
-    <div><b>Ранее</b><i>Русский</i></div>
-    <div><b>Anteriormente</b><i>Español</i></div>
-    <div><b>Раніше</b><i>Українська</i></div>
-    <div><b>Anteriormente</b><i>Português</i></div>
-    <div><b>Bisher</b><i>Deutsch</i></div>
-    <div><b>Précédemment</b><i>Français</i></div>
-    <div><b>In precedenza</b><i>Italiano</i></div>
-    <div><b>Wcześniej</b><i>Polski</i></div>
-    <div><b>Daha önce</b><i>Türkçe</i></div>
-    <div><b lang="ja">これまでの配信</b><i>日本語</i></div>
-    <div><b lang="ko">지난 이야기</b><i>한국어</i></div>
-    <div><b lang="zh-Hans">前情提要</b><i>简体中文</i></div>
-    <div><b lang="zh-Hant">前情提要</b><i>繁體中文</i></div>
+<section class="slide cw" id="any-language" data-out="06-any-language">
+  <img class="bg" src="../../../public/demo/foxlight/clip-lanterns.jpg">
+  <div class="shade" style="background: rgba(6,18,20,.84);"></div>
+  <div class="abs" style="left:96px; top:90px;"><span class="pv" style="font-size:150px;">Previously</span><br><span class="pc" style="font-size:96px; margin-top:16px;">in your stream's language</span></div>
+  <div class="abs wall" style="left:96px; top:480px; width:1620px;">
+    <span>Ранее</span><span>Anteriormente</span><span>Bisher</span><span>Précédemment</span><span>In precedenza</span><span>Wcześniej</span><span>Daha önce</span><span>Раніше</span><span lang="ja">これまでの配信</span><span lang="ko">지난 이야기</span><span lang="zh">前情提要</span>
   </div>
-  <div class="abs small muted-paper" style="left:860px; top:1100px; width:844px;">English is the default. The example recording holds English and Russian wording.</div>
+  <div class="abs lead w" style="left:104px; top:1010px; width:1600px;">Any language for the chapters. Scene and bot labels are built in for 14. English is the default.</div>
 </section>
 
 <!-- ============ 07 STREAMER DOCK ============ -->
-<section class="slide cv-lime" id="streamer-dock" data-out="07-streamer-dock">
-  <div class="abs h1" style="left:96px; top:84px; width:1640px; font-size:88px; white-space:nowrap;">The streamer stays in control from&nbsp;OBS</div>
-  <div class="frame" style="left:480px; top:250px; width:640px; height:620px; border-radius:28px; box-shadow: 0 14px 0 #07080A, 0 80px 120px -40px rgba(60,30,10,.6);"><img src="assets/app/dock.png" style="height:auto; margin-top:-59px;"></div>
-  <div class="frame" style="left:1180px; top:290px; width:524px; height:573px; transform: rotate(2.5deg); box-shadow: 0 12px 0 var(--paper-side), 0 70px 100px -36px rgba(60,30,10,.55);"><img src="assets/app/dock-edit.png"></div>
-  <svg class="abs" style="left:0; top:0; z-index:2;" width="1800" height="1200" viewBox="0 0 1800 1200" fill="none" stroke="#14171B" stroke-width="3" stroke-linecap="round">
-    <path d="M440 560 C 470 560, 480 591, 504 591"/>
-    <path d="M440 790 C 470 790, 480 737, 504 737"/>
-    <path d="M953 770 L 953 930"/>
-  </svg>
-  <span class="dot" style="left:504px; top:591px;"></span>
-  <span class="dot" style="left:504px; top:737px;"></span>
-  <span class="dot" style="left:953px; top:770px;"></span>
-  <div class="co" style="left:96px; top:470px; width:340px;"><span class="ctl k">Show recap</span><p>Plays the raid scene in OBS on demand.</p></div>
-  <div class="co" style="left:96px; top:716px; width:340px;"><span class="ctl k">Pause listening</span><p>Stops the microphone and chat collection at once.</p></div>
-  <div class="co" style="left:760px; top:940px; width:380px;"><span class="ctl v">Forget last 2 min</span><p>Erases that window and everything built from it.</p></div>
-  <div class="co" style="left:1240px; top:925px; width:464px;"><span class="ctl k">Edit</span><p>Your wording replaces the chapter everywhere. Later rewrites leave it alone.</p></div>
+<section class="slide cw" id="streamer-dock" data-out="07-streamer-dock">
+  <img class="bg" src="assets/game/game-jump.jpg">
+  <div class="shade" style="background: linear-gradient(90deg, rgba(6,18,20,.96) 0%, rgba(6,18,20,.85) 55%, rgba(6,18,20,.6) 100%);"></div>
+  <div class="abs" style="left:96px; top:110px;"><span class="pc" style="font-size:132px;">The streamer</span><br><span class="pv" style="font-size:132px; margin-top:18px;">stays in control</span></div>
+  <div class="abs" style="left:104px; top:560px; width:780px; display:grid; gap:30px;">
+    <p class="lead w"><span class="pk">Edit</span> your wording replaces the chapter everywhere</p>
+    <p class="lead w"><span class="pk">Pause</span> stops the microphone and chat at once</p>
+    <p class="lead w"><span class="pv" style="font-size:40px;">Forget</span> erases the last 2 minutes</p>
+  </div>
+  <div class="frame" style="left:1100px; top:120px; width:610px; height:1160px; border-radius:30px; transform: rotate(2deg);"><img src="assets/app/dock.png" style="height:auto; margin-top:-56px;"></div>
 </section>
 
 <!-- ============ 08 FIX ONCE ============ -->
-<section class="slide cv-night" id="fix-once" data-out="08-fix-once">
-  <div class="abs h1" style="left:96px; top:84px; width:960px; font-size:88px;">Fix a chapter once, and every place uses your wording</div>
-  <div class="card" style="left:96px; top:470px; width:420px; padding:34px 28px 26px; transform: rotate(-2deg);"><span class="tab">3:30</span><h3><span class="strike">Spring gets a speed limit</span></h3><p style="color:var(--muted-paper);">Replaced</p></div>
-  <svg class="abs" style="left:0; top:0;" width="1800" height="1200" viewBox="0 0 1800 1200" fill="none" stroke="#14171B" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path stroke="#F4EFE6" d="M530 570 C 565 570, 570 610, 604 612"/><path stroke="#F4EFE6" d="M588 598 L 606 612 L 588 626"/></svg>
-  <div class="card" style="left:620px; top:520px; width:440px; padding:34px 28px 26px; transform: rotate(1.5deg);"><span class="tab">3:30</span><h3>Moon jump becomes a cheat code</h3><p style="color:var(--verm-side); font-weight:700;">Applied</p></div>
-  <div class="icard" style="left:96px; top:830px; width:964px; padding:26px 30px;"><p style="font-size:32px; font-weight:650; line-height:1.3;"><span style="color:var(--lime);">Published.</span> The recap page, the chat answer and the next raid scene use your wording.</p></div>
-  <div class="abs body" style="left:100px; top:1030px; width:960px; color:#E6EBF0;">The old wording is withdrawn everywhere at once.</div>
-  <div class="frame" style="left:1160px; top:470px; width:520px; height:470px; transform: rotate(3deg); background:#1B4A4A;"><img src="assets/app/recap-corrected.png" style="position:absolute; width:1300px; height:auto; left:-870px; top:-80px; object-fit:fill;"></div>
-  <img class="abs obj" src="assets/art/stamp.png" style="left:1320px; top:20px; width:430px; filter: drop-shadow(0 40px 50px rgba(0,0,0,.55));">
-  <div class="abs small" style="left:1164px; top:990px; width:540px; color:#C9D0D8;">The example's recap right after Apply my wording, marked as edited by the streamer.</div>
+<section class="slide cw" id="fix-once" data-out="08-fix-once">
+  <img class="bg" src="../../../public/demo/foxlight/clip-fixed.jpg">
+  <div class="shade" style="background: linear-gradient(90deg, rgba(6,18,20,.96) 0%, rgba(6,18,20,.85) 50%, rgba(6,18,20,.55) 100%);"></div>
+  <div class="abs" style="left:96px; top:110px;"><span class="pv" style="font-size:150px;">Fix it once</span><br><span class="pc" style="font-size:110px; margin-top:18px;">every place updates</span></div>
+  <div class="card" style="left:96px; top:560px; width:600px; padding:40px 36px 32px; transform: rotate(-2deg);"><span class="tab" style="font-size:30px;">3:30</span><h3 style="font-size:52px;">Moon jump becomes a cheat code</h3><p style="font-size:30px; color:var(--verm-side); font-weight:700;">Edited by the streamer</p></div>
+  <div class="abs" style="left:820px; top:560px; display:grid; gap:26px;">
+    <span class="pc" style="font-size:64px;">Recap page</span>
+    <span class="pc" style="font-size:64px;">Chat answer</span>
+    <span class="pc" style="font-size:64px;">Next raid scene</span>
+  </div>
+  <div class="abs lead w" style="left:104px; top:1010px; width:1500px;">The old wording is withdrawn everywhere at once.</div>
 </section>
 
 <!-- ============ 09 HOW IT WORKS ============ -->
-<section class="slide cv-paper" id="how-it-works" data-out="09-how-it-works">
-  <img class="abs obj" src="assets/art/hourglass.png" style="left:610px; top:270px; height:840px; filter: drop-shadow(0 50px 60px rgba(120,50,20,.25));">
-  <div class="abs h1" style="left:96px; top:90px; width:1500px; font-size:104px; white-space:nowrap;">Every sentence waits <span class="plate v">75 seconds</span></div>
-  <div class="abs body" style="left:100px; top:300px; width:520px;">The model only proposes. Code on the streaming computer checks each sentence against its sources, holds it, then publishes one version that every output reads.</div>
-  <div class="abs body" style="left:100px; top:760px; width:500px;"><b>During the hold</b> the streamer can edit it or forget it before anyone sees it.</div>
-  <div class="abs tag muted-paper" style="left:1236px; top:270px;">What it heard</div>
-  <div class="icard" style="left:1236px; top:330px; width:468px; padding:32px 26px 22px;"><span class="stab" style="background:var(--verm);">Heard at 5:40</span><p style="font-size:29px; line-height:1.3;">Two lanterns work. The third one is behind the waterfall.</p></div>
-  <div class="icard" style="left:1236px; top:500px; width:468px; padding:32px 26px 22px;"><span class="stab" style="background:var(--lime);">Chat at 5:44</span><p style="font-size:29px;">where is the third one</p></div>
-  <div class="abs" style="left:1236px; top:650px; display:flex; flex-wrap:wrap; gap:14px; width:468px;">
-    <span class="ctl k">Grounded in sources</span><span class="ctl k">Moderation</span><span class="ctl k">Privacy</span>
-  </div>
-  <div class="abs tag muted-paper" style="left:1236px; top:790px;">What the scene, chat and page show</div>
-  <div class="card" style="left:1236px; top:860px; width:468px;"><span class="tab">5:20</span><h3>Lanterns light the cave</h3><p>Two lanterns work, and the third one is behind the waterfall.</p></div>
-  
+<section class="slide cw" id="how-it-works" data-out="09-how-it-works">
+  <img class="bg" src="assets/game/game-leap.jpg">
+  <div class="shade" style="background: linear-gradient(90deg, rgba(6,18,20,.96) 0%, rgba(6,18,20,.86) 55%, rgba(6,18,20,.6) 100%);"></div>
+  <div class="abs" style="left:96px; top:90px;"><span class="pc" style="font-size:110px;">Every sentence waits</span></div>
+  <div class="abs" style="left:96px; top:270px;"><span class="pv" style="font-size:330px; letter-spacing:-.05em;">75 s</span></div>
+  <div class="abs lead w" style="left:104px; top:720px; width:760px;">The model only proposes. Code checks each sentence against what was said or typed, then holds it so the streamer can fix or forget it first.</div>
+  <div class="icard" style="left:1000px; top:330px; width:704px; padding:38px 32px 28px;"><span class="stab" style="background:var(--verm); font-size:28px;">Heard at 5:40</span><p style="font-size:38px; line-height:1.3;">Two lanterns work. The third one is behind the waterfall.</p></div>
+  <div class="card" style="left:1000px; top:660px; width:704px; padding:40px 34px 30px;"><span class="tab" style="font-size:28px;">Published</span><h3 style="font-size:50px;">Lanterns light the cave</h3><p style="font-size:32px;">Two lanterns work, and the third one is behind the waterfall.</p></div>
 </section>
 
 <!-- ============ 10 FORGET ============ -->
-<section class="slide cv-ember" id="forget" data-out="10-forget">
-  <div class="abs h1" style="left:96px; top:90px; width:880px; font-size:76px;">Forget follows the sources into everything built from them</div>
-  <div class="frame" style="left:96px; top:470px; width:720px; height:473px; transform: rotate(-2deg); box-shadow: 0 12px 0 var(--paper-side), 0 60px 90px -30px rgba(0,0,0,.8);"><img src="assets/app/dock-forget.png"></div>
-  <div class="abs body" style="left:100px; top:1010px; width:840px; color:#F6D9CF;">A model reply or a language switch that finishes later cannot bring the text back. Pins do not protect anything.</div>
-  <svg class="abs" style="left:0; top:0;" width="1800" height="1200" viewBox="0 0 1800 1200" fill="none" stroke="#FF8A6B" stroke-width="3" stroke-linecap="round" opacity=".7">
-    <path d="M1090 400 L 1090 1005"/>
-    <path d="M1090 485 L 1150 485"/><path d="M1090 589 L 1150 589"/><path d="M1090 693 L 1150 693"/><path d="M1090 797 L 1150 797"/><path d="M1090 901 L 1150 901"/><path d="M1090 1005 L 1150 1005"/>
-  </svg>
-  <div class="card" style="left:1000px; top:250px; width:704px; padding:34px 28px 26px;"><span class="tab v">Heard at 5:20</span><p style="margin:0; font-size:28px; color:var(--ink);"><span class="strike">Next, lanterns. The spring no longer launches the fox to the moon, so the fox can reach them.</span></p></div>
-  <img class="abs obj" src="assets/art/eraser.png" style="left:1440px; top:130px; width:440px; transform: rotate(-10deg); filter: drop-shadow(0 40px 50px rgba(20,4,2,.55));">
-  <div class="abs" style="left:1150px; top:450px; display:grid; gap:34px; width:554px;">
-    <div class="icard row"><span class="strike">The chapter built on it</span></div>
-    <div class="icard row"><span class="strike">Its translations</span></div>
-    <div class="icard row"><span class="strike">Channel terms it explained</span></div>
-    <div class="icard row"><span class="strike">Clips in the local cache</span></div>
-    <div class="icard row"><span class="strike">Queued raid scenes</span></div>
-    <div class="icard row"><span class="strike">Recordings and exports</span></div>
+<section class="slide cw" id="forget" data-out="10-forget">
+  <img class="bg" src="../../../public/demo/foxlight/clip-run.jpg">
+  <div class="shade" style="background: linear-gradient(90deg, rgba(20,6,4,.96) 0%, rgba(30,8,5,.88) 55%, rgba(30,8,5,.7) 100%);"></div>
+  <div class="abs" style="left:96px; top:110px;"><span class="pv" style="font-size:180px;">Forget</span><br><span class="pc" style="font-size:96px; margin-top:20px;">reaches everything</span></div>
+  <div class="abs lead w" style="left:104px; top:620px; width:700px;">Forget the last 2 minutes and every result built on them goes too. A late model reply cannot bring it back.</div>
+  <div class="abs" style="left:960px; top:150px; display:grid; gap:28px; width:744px;">
+    <div class="strow">The chapters</div><div class="strow">Translations</div><div class="strow">Channel terms</div><div class="strow">Clips in the cache</div><div class="strow">Queued raid scenes</div><div class="strow">Recordings and exports</div>
   </div>
-  <div class="abs small" style="left:1000px; top:1100px; width:704px; color:#F6D9CF;">A clip Twitch already made stays on Twitch; Previously hides it and links to the clip manager.</div>
+  <div class="abs foot" style="left:104px; top:1100px;">A clip Twitch already made stays on Twitch; Previously hides it and links to the clip manager.</div>
 </section>
 
 <!-- ============ 11 BUILT WITH CODEX ============ -->
-<section class="slide cv-ink" id="built-with-codex" data-out="11-built-with-codex">
-  <div class="abs h1" style="left:96px; top:90px; width:860px; font-size:76px;">Built in one Codex session, from research to tested code</div>
-  <div class="abs body" style="left:100px; top:350px; width:780px; color:#E6EBF0;">Codex researched the current Twitch and OpenAI contracts, planned the architecture and wrote the code and its tests. Parallel workers built the parts; the main session joined them.</div>
-  <img class="abs obj" src="assets/art/modules.png" style="left:96px; top:640px; width:800px; filter: drop-shadow(0 40px 50px rgba(0,0,0,.5));">
-  <svg class="abs" style="left:0; top:0;" width="1800" height="1200" viewBox="0 0 1800 1200" fill="none" stroke="#C9D0D8" stroke-width="3" stroke-linecap="round"><path d="M232 622 L 232 680"/><path d="M403 622 L 403 662"/><path d="M581 622 L 581 707"/><path d="M747 622 L 747 754"/></svg>
-  <span class="abs ctl p mlabel" style="left:232px; top:570px;">Runtime</span><span class="abs ctl p mlabel" style="left:403px; top:570px;">Storage</span><span class="abs ctl p mlabel" style="left:581px; top:570px;">Twitch</span><span class="abs ctl p mlabel" style="left:747px; top:570px;">Interface</span>
-  <div class="abs small" style="left:100px; top:1080px; width:860px; color:#C9D0D8;">Claude agents made the visual pass: mark, scene and pages.</div>
-  <div class="abs" style="left:1000px; top:96px; width:704px; display:grid; gap:30px;">
-    <div><span class="num plate p" style="font-size:92px;">1,000 of 1,000</span><p class="body" style="margin-top:18px; color:#E6EBF0;">chat messages committed through the real EventSub transport and SQLite at 20 per second, with no gaps.</p></div>
-    <div><span class="num plate l" style="font-size:92px;">577,200</span><p class="body" style="margin-top:18px; color:#E6EBF0;">messages through the story core over eight virtual hours, including a burst at 200 per second.</p></div>
-    <div class="icard" style="position:relative; padding:26px 28px;"><p style="font-size:30px; font-weight:700;">Reviews caught real bugs</p>
-      <ul style="margin-top:12px; padding-left:28px; font-size:27px; line-height:1.34; color:#E6EBF0; display:grid; gap:8px;">
-        <li>A full chat queue could drop a deletion that had arrived</li>
-        <li>A failed microphone pause reported success</li>
-        <li>A chat flood pushed speech out of the story after an outage</li>
-      </ul></div>
+<section class="slide cw" id="built-with-codex" data-out="11-built-with-codex">
+  <img class="bg" src="assets/game/game-waterfall.jpg">
+  <div class="shade" style="background: rgba(6,18,20,.88);"></div>
+  <div class="abs" style="left:96px; top:90px;"><span class="pc" style="font-size:120px;">Built with</span><br><span class="pv" style="font-size:180px; margin-top:16px;">Codex</span></div>
+  <div class="abs lead w" style="left:104px; top:620px; width:760px;">One session: research, architecture, code and tests, with parallel workers for runtime, storage, Twitch and interface.</div>
+  <div class="abs" style="left:960px; top:120px; width:744px; display:grid; gap:40px;">
+    <div><span class="pc num" style="font-size:100px; white-space:nowrap;">1,000 of 1,000</span><p class="lead w" style="margin-top:16px;">chat messages committed at 20 per second, no gaps</p></div>
+    <div><span class="pl num" style="font-size:100px;">577,200</span><p class="lead w" style="margin-top:16px;">messages through the story core over 8 virtual hours</p></div>
   </div>
-  <div class="abs small" style="left:1000px; top:1080px; width:704px; color:#C9D0D8;">Measured on one Windows machine with fixtures in place of Twitch sockets and the OpenAI API.</div>
+  <div class="abs foot" style="left:104px; top:1060px; width:1600px;">Measured on one machine with fixtures in place of Twitch and OpenAI. Claude agents made the visual pass.</div>
 </section>
 
 <!-- ============ 12 RUN IT ============ -->
-<section class="slide cv-cave" id="run-it" data-out="12-run-it">
-  <img class="abs" src="assets/game/game-jump.jpg" style="left:0; top:0; width:1800px; height:1200px; object-fit:cover; opacity:.7;">
-  <div class="abs" style="inset:0; background: linear-gradient(180deg, rgba(7,21,23,.72), rgba(7,21,23,.35) 45%, rgba(7,21,23,.8)), radial-gradient(700px 500px at 85% 15%, rgba(255,176,96,.18), transparent 70%);"></div>
-  <div class="abs h1" style="left:96px; top:90px; width:1200px; font-size:96px;">Try the example now, then run it on your&nbsp;channel</div>
-  <img class="abs obj" src="assets/art/play.png" style="left:1420px; top:24px; width:330px; filter: drop-shadow(0 40px 50px rgba(0,0,0,.5));">
-  <div class="card" style="left:96px; top:360px; width:780px; padding:40px 36px 36px;">
-    <h3 style="font-size:44px;">The example recording, no keys</h3>
-    <div style="margin-top:20px;"><span class="plate v" style="font-size:34px; font-weight:700;">previously-seven.vercel.app/replay</span></div>
-    <p style="font-size:28px; margin-top:24px;">Jump to the raid, open the sources behind a chapter, apply a correction and preview the next raid scene.</p>
-    <div class="frame" style="position:relative; margin-top:28px; height:390px; border-radius:18px; box-shadow: 0 8px 0 #0C0E11, 0 30px 40px -20px rgba(0,0,0,.5);"><img src="assets/app/replay-raid.jpg" style="object-position: 0 0;"></div>
-  </div>
-  <div class="icard" style="left:940px; top:360px; width:764px; padding:40px 36px 34px;">
-    <h3 style="font-size:44px; font-weight:800; letter-spacing:-.02em;">Your own channel</h3>
-    <p style="margin-top:14px; font-size:27px; line-height:1.38; color:#C9D0D8;">Windows, Node.js 22.13, OBS, your Twitch application and OpenAI key</p>
-    <div class="code" style="margin-top:24px;">npm ci<br>npm run setup:local<br><span style="color:#8D97A3;"># add the Twitch app and OpenAI key to .env</span><br>npm run build<br>npm start</div>
-    <p style="font-size:27px; line-height:1.38; margin-top:24px;">Setup checks each step, then the scene goes into OBS as a Browser Source.</p>
-    <p style="font-size:23px; line-height:1.38; margin-top:22px; color:var(--lime); font-weight:650; white-space:nowrap;">github.com/DarinaX2005X/previously-codex-twitchcon-project</p>
-  </div>
-  <div class="abs body" style="left:940px; top:1040px; width:764px; color:#E6EBF0; font-size:28px;">It has not run on a real broadcast yet, so your first stream is also its first live test.</div>
+<section class="slide cw" id="run-it" data-out="12-run-it">
+  <img class="bg" src="assets/game/game-leap.jpg" style="left:-200px; width:2134px; height:1200px;">
+  <div class="shade" style="background: linear-gradient(90deg, rgba(6,18,20,.96) 0%, rgba(8,24,27,.86) 45%, rgba(8,24,27,.2) 75%, rgba(8,24,27,.1) 100%), linear-gradient(0deg, rgba(6,18,20,.6), transparent 30%);"></div>
+  <div class="abs" style="left:96px; top:110px;"><span class="pv" style="font-size:180px;">Try it now</span></div>
+  <div class="abs" style="left:96px; top:390px;"><span class="pc" style="font-size:64px;">previously-seven.vercel.app/replay</span></div>
+  <div class="abs lead w" style="left:104px; top:540px; width:820px;">The example recording runs in your browser with no keys. Jump to the raid, open the sources, apply a correction.</div>
+  <div class="abs lead w" style="left:104px; top:830px; width:900px;">Then run it on your channel with your own Twitch app and OpenAI key. It has not run on a real broadcast yet.</div>
+  <div class="abs foot" style="left:104px; top:1100px;">github.com/DarinaX2005X/previously-codex-twitchcon-project</div>
 </section>
 
 </body>
