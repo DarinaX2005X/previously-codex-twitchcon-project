@@ -1,0 +1,183 @@
+{
+ "session_id": "01a19879-7da5-79b3-8c12-6e50d95c2250",
+ "session_start_utc": "2026-11-01T18:57:42.413Z",
+ "session_end_utc": "2026-11-02T04:31:48.976Z",
+ "main_tool_calls": 1494,
+ "owner_messages": 12,
+ "workers_spawned": 27,
+ "worker_models": {
+  "gpt-6-astra": 22,
+  "gpt-6.1-sol": 5
+ },
+ "workers": [
+  {
+   "name": "twitch_research",
+   "tool_calls": 25,
+   "first": "2026-11-01T18:58:50.581Z",
+   "last": "2026-11-01T19:11:44.658Z"
+  },
+  {
+   "name": "story_engine_research",
+   "tool_calls": 26,
+   "first": "2026-11-01T18:59:05.027Z",
+   "last": "2026-11-01T19:57:50.022Z"
+  },
+  {
+   "name": "product_challenge",
+   "tool_calls": 28,
+   "first": "2026-11-01T18:59:20.701Z",
+   "last": "2026-11-01T19:46:08.575Z"
+  },
+  {
+   "name": "architecture_proposal",
+   "tool_calls": 35,
+   "first": "2026-11-01T19:01:50.116Z",
+   "last": "2026-11-01T19:35:26.976Z"
+  },
+  {
+   "name": "visual_direction",
+   "tool_calls": 64,
+   "first": "2026-11-01T19:02:16.091Z",
+   "last": "2026-11-01T20:20:43.442Z"
+  },
+  {
+   "name": "install_twitch_cli",
+   "tool_calls": 8,
+   "first": "2026-11-01T19:07:14.768Z",
+   "last": "2026-11-01T19:08:28.582Z"
+  },
+  {
+   "name": "storage_build",
+   "tool_calls": 398,
+   "first": "2026-11-01T19:54:03.569Z",
+   "last": "2026-11-01T23:41:45.420Z"
+  },
+  {
+   "name": "shared_ui_build",
+   "tool_calls": 20,
+   "first": "2026-11-01T19:54:15.319Z",
+   "last": "2026-11-01T20:00:33.594Z"
+  },
+  {
+   "name": "runtime_foundation",
+   "tool_calls": 646,
+   "first": "2026-11-01T19:57:01.628Z",
+   "last": "2026-11-02T03:40:31.146Z"
+  },
+  {
+   "name": "foundation_review",
+   "tool_calls": 18,
+   "first": "2026-11-01T20:09:51.920Z",
+   "last": "2026-11-01T20:12:24.399Z"
+  },
+  {
+   "name": "foundation_review_final",
+   "tool_calls": 13,
+   "first": "2026-11-01T20:14:58.259Z",
+   "last": "2026-11-01T20:17:02.009Z"
+  },
+  {
+   "name": "story_domain",
+   "tool_calls": 251,
+   "first": "2026-11-01T20:20:11.264Z",
+   "last": "2026-11-01T22:13:21.096Z"
+  },
+  {
+   "name": "twitch_engine",
+   "tool_calls": 249,
+   "first": "2026-11-01T20:20:27.489Z",
+   "last": "2026-11-01T22:48:09.363Z"
+  },
+  {
+   "name": "providers_engine",
+   "tool_calls": 262,
+   "first": "2026-11-01T20:20:43.592Z",
+   "last": "2026-11-01T22:42:14.187Z"
+  },
+  {
+   "name": "publication_engine",
+   "tool_calls": 67,
+   "first": "2026-11-01T20:20:57.130Z",
+   "last": "2026-11-01T20:49:40.619Z"
+  },
+  {
+   "name": "owner_service",
+   "tool_calls": 204,
+   "first": "2026-11-01T20:32:35.834Z",
+   "last": "2026-11-01T22:45:56.957Z"
+  },
+  {
+   "name": "live_engine_review",
+   "tool_calls": 22,
+   "first": "2026-11-01T20:46:24.373Z",
+   "last": "2026-11-01T20:54:14.684Z"
+  },
+  {
+   "name": "dock_experience",
+   "tool_calls": 130,
+   "first": "2026-11-01T21:09:22.187Z",
+   "last": "2026-11-01T23:04:39.555Z"
+  },
+  {
+   "name": "public_experience",
+   "tool_calls": 95,
+   "first": "2026-11-01T21:09:32.645Z",
+   "last": "2026-11-01T22:22:46.575Z"
+  },
+  {
+   "name": "overlay_experience",
+   "tool_calls": 77,
+   "first": "2026-11-01T21:09:43.475Z",
+   "last": "2026-11-01T22:04:10.587Z"
+  },
+  {
+   "name": "replay_experience",
+   "tool_calls": 294,
+   "first": "2026-11-01T21:09:52.536Z",
+   "last": "2026-11-01T23:15:23.801Z"
+  },
+  {
+   "name": "experience_review",
+   "tool_calls": 54,
+   "first": "2026-11-01T22:31:52.849Z",
+   "last": "2026-11-01T22:38:20.649Z"
+  },
+  {
+   "name": "documentation",
+   "tool_calls": 99,
+   "first": "2026-11-01T22:37:20.369Z",
+   "last": "2026-11-02T01:20:57.103Z"
+  },
+  {
+   "name": "release_audit",
+   "tool_calls": 70,
+   "first": "2026-11-01T22:37:35.961Z",
+   "last": "2026-11-02T01:24:09.012Z"
+  },
+  {
+   "name": "experience_review_two",
+   "tool_calls": 28,
+   "first": "2026-11-01T23:01:18.309Z",
+   "last": "2026-11-01T23:04:31.925Z"
+  },
+  {
+   "name": "engine_write_probe",
+   "tool_calls": 73,
+   "first": "2026-11-01T23:32:29.921Z",
+   "last": "2026-11-02T02:32:33.615Z"
+  },
+  {
+   "name": "source_recovery",
+   "tool_calls": 48,
+   "first": "2026-11-01T23:48:59.472Z",
+   "last": "2026-11-02T01:22:54.716Z"
+  }
+ ],
+ "worker_tool_calls": 3304,
+ "total_tool_calls": 4798,
+ "codex_commits": 29,
+ "codex_shortstat": "354 files changed, 34261 insertions(+)",
+ "tests_full_integration": "609 tests across 67 files (docs/testing/functional/release-preflight.md)",
+ "intake": "1,000 messages at 20 per second without a gap, receive-to-commit p95 49.84 ms (submission journal)",
+ "engine_partial_run": "280,780 chats over 3.80 virtual hours, ended early (submission journal)"
+}
