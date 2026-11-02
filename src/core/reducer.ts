@@ -120,7 +120,7 @@ function acceptSource(s:DomainState,source:Source,effects:DomainEffect[],clock:C
     publish(s,effects,clock,true);
   }
   s.sources=s.sources.filter(x=>x.id!==source.id);s.sources.push(structuredClone(source));if(scheduleStory)s.sourceRevision++;
-  effects.push({type:'source.persist',source:structuredClone(source)});return true;
+  effects.push({type:'source.persist',source:structuredClone(source),...(old?{invalidatePreviousRevision:true}:{})});return true;
 }
 function commitStory(s:DomainState,event:Extract<DomainEvent,{type:'generation.result'}>,effects:DomainEffect[],clock:Clock){
   const result=validateStoryPatch(s,event.ticket,event.patch,event.grounding);

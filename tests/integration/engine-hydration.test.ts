@@ -31,6 +31,31 @@ function fixture(onCommittedTransition?:EngineOptions['onCommittedTransition']){
 }
 
 describe('checkpoint hot path keeps authoritative storage fences',()=>{
+  it.each([
+    ['pending','dispatch'],['unavailable','dispatch'],['pending','ingest'],['unavailable','ingest'],
+  ] as const)('persists and recovers a generic %s source replacement via %s without reviving stale text',async(moderation,via)=>{
+    const f=fixture(),original:Source={...f.source('replaceable'),moderation,status:moderation==='unavailable'?'quarantined':'active'};
+    await f.engine.dispatch('session',{type:'source',source:original});
+    const replacement:Source={...original,revision:2,text:'Corrected authored evidence',status:'active',moderation:'allowed'};
+    if(via==='dispatch')await f.engine.dispatch('session',{type:'source',source:replacement});
+    else await f.engine.ingest(f.event('replacement',{source:replacement}));
+    const saved=f.repository.getDomainCheckpoint(f.scope,'session');
+    expect(saved.privacyEpoch).toBe(1);expect(saved.checkpoint?.session.privacyEpoch).toBe(1);
+    expect(f.repository.getSource(f.scope,original.id)).toEqual(replacement);
+    expect(f.engine.state('session').session.privacyEpoch).toBe(1);
+    f.sql("UPDATE domain_checkpoints SET body=json_set(body,'$.version',2)");
+    const recovered=f.engine.state('session');expect(recovered.session.privacyEpoch).toBe(1);expect(recovered.sources).toContainEqual(replacement);
+    expect(JSON.stringify(recovered)).not.toContain(original.text!);
+    await f.engine.dispatch('session',{type:'source.safety',id:original.id,baseRevision:1,text:original.text,safety:{moderation:'allowed',pii:'allowed',checkedAt:'2026-11-02T00:00:10Z',reason:null}});
+    await f.engine.ingest(f.event('late-original',{source:original}));
+    expect(f.repository.getSource(f.scope,original.id)).toEqual(replacement);expect(f.engine.state('session').session.privacyEpoch).toBe(1);
+    await f.engine.dispatch('session',{type:'privacy',target:{kind:'source',sessionId:'session',id:original.id}});
+    await f.engine.dispatch('session',{type:'source',source:{...replacement,revision:3}});
+    f.sql("UPDATE domain_checkpoints SET body=json_set(body,'$.version',2)");
+    expect(f.engine.state('session').session.privacyEpoch).toBe(2);
+    expect(f.repository.getSource(f.scope,original.id)).toMatchObject({status:'deleted',text:null});
+    expect(JSON.stringify(f.engine.state('session'))).not.toContain(replacement.text!);
+  });
   it('observes external settings, session metadata and capture lease changes without retaining mutable caller state',async()=>{
     const f=fixture();await f.engine.dispatch('session',{type:'source',source:f.source('initial')});
     const first=f.engine.state('session');first.sources[0]!.text='Caller mutation';

@@ -67,7 +67,7 @@ export type DomainEvent =
 export type DomainEffect =
   | { type: 'generation.request'; request: GenerationRequest }
   | { type: 'owner.review.request'; kind: 'chapter'|'lore'; entityId: string; entityRevision: number; ownerRevision?: number; sourceId: string; sourceRevision: number; privacyEpoch: number; dependencyRefs: VersionRef[] }
-  | { type: 'source.persist'; source: Source }
+  | { type: 'source.persist'; source: Source; invalidatePreviousRevision?:boolean }
   | { type: 'entity.upsert'; node: DerivedNode }
   | { type: 'candidate.save'; candidate: StoryCandidate }
   | { type: 'publication'; snapshot: PublicSnapshot; final: boolean; priority: boolean }

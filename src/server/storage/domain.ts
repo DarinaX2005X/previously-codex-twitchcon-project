@@ -228,10 +228,13 @@ export class DomainPersistence {
       if(!existingEvent)this.repository.ingest(initialEventRefs===null ? {...event,payload:null} : event);
       else if(initialEventRefs===null)this.db.run('UPDATE events SET payload=NULL WHERE channel_id=? AND run_id=? AND id=?',...this.scoped(scope),eventId);
       const sourceChanges=[...new Map(effects.filter(effect=>effect.type==='source.persist').map(effect=>[effect.source.id,effect.source])).values()];
+      // Generic replacement invalidates even previously held evidence. A safety/owner
+      // review upgrade of held evidence does not carry this reducer-issued marker.
+      const revisedSourceIds=new Set(effects.flatMap(effect=>effect.type==='source.persist'&&effect.invalidatePreviousRevision?[effect.source.id]:[]));
       const receipts:InvalidationReceipt[]=[];
       for(const [index,effect] of effects.entries())if(effect.type==='privacy')receipts.push(this.repository.invalidate(scope,effect.target,{idempotencyKey:`domain-privacy:${hash([mutationKey,index])}`,reason:'privacy'}));
       const clearBefore=this.repository.controlGet<number>(scope,`chat-clear:${sessionId}`),clearChanged=state.chatClearThroughMs!==null && (clearBefore===null || state.chatClearThroughMs>clearBefore);
-      const corrections=sourceChanges.filter(source=>{const old=this.repository.getSource(scope,source.id);return old && source.status!=='deleted' && source.revision>old.revision && ['allowed','redacted'].includes(old.moderation);}).map(source=>source.id);
+      const corrections=sourceChanges.filter(source=>{const old=this.repository.getSource(scope,source.id);return old && source.status!=='deleted' && source.revision>old.revision && (revisedSourceIds.has(source.id)||['allowed','redacted'].includes(old.moderation));}).map(source=>source.id);
       if(corrections.length || clearChanged)receipts.push(this.repository.invalidateSourceVersions(scope,sessionId,corrections,{idempotencyKey:`domain-revision:${hash(mutationKey)}`,reason:'source_revision'}));
       if(clearChanged)this.repository.controlPut(scope,`chat-clear:${sessionId}`,state.chatClearThroughMs);
       const currentSession=this.repository.getSession(scope,sessionId);

@@ -106,10 +106,94 @@
     "resolvedBy": "Coordinator confirmed file/PID monitoring and retained stdout-session closure."
   },
   "monitorRecovery": {
-    "activeFunctionsCell": "201",
-    "nextMilestoneVirtualSecond": 3600,
+    "activeFunctionsCell": "209",
+    "nextMilestoneVirtualSecond": 7260,
     "waitMaxMilliseconds": 55000,
-    "mode": "Read progress/failure/result files and PID only; root owns stdout session38214.",
-    "reportMilestones": "1h virtual, complete burst,4h virtual,completion/failure; no unchanged polling narration."
-  }
+    "mode": "Progress/failure/result files and PID only; root retains stdout session 38214.",
+    "lastMilestoneVirtualSecond": 3600
+  },
+  "boundedHostObservations": [
+    {
+      "observedAtUtc": "2026-11-02T01:16:26.5933160Z",
+      "endedAtUtc": "2026-11-02T01:16:46.9314446Z",
+      "triggeringSegments": [
+        {
+          "virtualSecond": 3284,
+          "eventsPerSecond": 10.350131761058611
+        },
+        {
+          "virtualSecond": 3300,
+          "eventsPerSecond": 9.789414280498937
+        },
+        {
+          "virtualSecond": 3322,
+          "eventsPerSecond": 14.496175503668189
+        }
+      ],
+      "processId": 164168,
+      "priority": "Normal",
+      "wallSeconds": 20.3307137,
+      "processCpuSeconds": 19.8125,
+      "processCpuSecondsPerWallSecond": 0.9745107964409533,
+      "hostCpuPercentBefore": 85,
+      "hostCpuPercentAfter": 20,
+      "availableMemoryMiBBefore": 14933,
+      "availableMemoryMiBAfter": 15133,
+      "memoryPagesPerSecondBefore": 0,
+      "memoryPagesPerSecondAfter": 60,
+      "processWorkingSetBytes": 235380736,
+      "processPrivateMemoryBytes": 247427072,
+      "scope": "One bounded read-only process/host observation during the unchanged run. No process, priority, workload or product code was changed. Active CPU work was observed, but this does not establish the full cause of the throughput decline."
+    }
+  ],
+  "milestones": [
+    {
+      "name": "first_virtual_hour",
+      "recordedAt": "2026-11-02T01:19:21.907Z",
+      "sample": {
+        "virtualSecond": 3600,
+        "messages": 70820,
+        "elapsedSeconds": 1666.5923103,
+        "segmentEventsPerSecond": 35.11852651042764,
+        "heapUsed": 16264824,
+        "rss": 240558080,
+        "diskBytes": 177025024,
+        "retainedSources": 500,
+        "chapters": 12,
+        "nodes": 78,
+        "providerCalls": 62,
+        "providerFailures": 39,
+        "providerDone": 23,
+        "staleLeases": 1,
+        "sinkConsumed": 18,
+        "duplicates": 13,
+        "deletes": 6,
+        "freshness": {
+          "boundSeconds": 240,
+          "supplied": 13,
+          "eligible": 11,
+          "fulfilled": 11,
+          "pending": 0,
+          "due": 11,
+          "overdueIds": [],
+          "nextDeadlineVirtualSecond": null,
+          "maxObservedSourceToPublishedSeconds": 76.05,
+          "maxObservedSupplyToSinkSeconds": 80,
+          "lastProviderSpeechId": "speech-3300",
+          "lastProviderSpeechEndMs": 3300900,
+          "providerNoSpeechFailures": 38,
+          "lastPublishedAt": "2026-11-02T01:00:00.999Z",
+          "lastPublishedChapterSourceEndMs": 3300999,
+          "lastPublishedCurrentSourceTimeMs": 3300999,
+          "lastDomainCurrentSourceTimeMs": 3300999,
+          "lastSinkPublication": {
+            "revision": 19,
+            "publishedAt": "2026-11-02T01:00:00.999Z",
+            "chapterSourceEndMs": 3300999,
+            "currentSourceTimeMs": 3300999
+          }
+        }
+      }
+    }
+  ]
 }
