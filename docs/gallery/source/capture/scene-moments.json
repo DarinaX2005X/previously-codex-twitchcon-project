@@ -4,6 +4,8 @@
   "moments": {
     "welcome": 1000,
     "previously": 2000,
+    "chapters": 3250,
+    "chat": 5550,
     "joke": 7000,
     "now": 8750
   }
