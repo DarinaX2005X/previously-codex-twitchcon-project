@@ -289,6 +289,15 @@ describe('real SQLite storage boundaries',()=>{
     storage.close();storage=createStorage({path,now:()=>now,encryptionKey:key});
     expect(storage.repository.listBlockedTerms(scope,'s1')).toEqual(['brick']);
   });
+  it('re-folds blocked terms saved before Unicode case folding so they keep matching',()=>{
+    storage.close();const previous=new DatabaseSync(path);
+    previous.prepare('INSERT INTO blocked_terms VALUES(?,?,?)').run(scope.channelId,scope.runId,'straße');
+    previous.exec('DELETE FROM schema_migrations WHERE version=5;');previous.close();
+    storage=createStorage({path,now:()=>now,encryptionKey:key});
+    expect(storage.repository.isTermBlocked(scope,'s1','STRASSE')).toBe(true);
+    expect(storage.repository.isTermBlocked(scope,'s1','straße')).toBe(true);
+    expect(storage.repository.listBlockedTerms(scope,'s1')).toEqual(['strasse']);
+  });
   it('pins with a revision fence and atomic publication work without locking model wording',()=>{
     seed();
     expect(storage.repository.pinEntity(scope,'chapter1',1,true)).toBe(true);

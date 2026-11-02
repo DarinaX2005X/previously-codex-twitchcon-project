@@ -1,15 +1,17 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { normalizeTermText } from '../../shared/text.js';
 
 /** DELETE journaling permits a consistent backup only while the instance is stopped. */
 export function migrate(db: DatabaseSync): void {
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON; PRAGMA busy_timeout=5000;');
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY);`);
   const version = db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()?.version;
-  if (version && Number(version) > 4) throw new Error('Storage schema is newer than this application.');
-  if (version === 4) return;
-  if (version === 3) { upgrade4(db); return; }
-  if (version === 2) { upgrade3(db); upgrade4(db); return; }
-  if (version === 1) { upgrade2(db); upgrade3(db); upgrade4(db); return; }
+  if (version && Number(version) > 5) throw new Error('Storage schema is newer than this application.');
+  if (version === 5) return;
+  if (version === 4) { upgrade5(db); return; }
+  if (version === 3) { upgrade4(db); upgrade5(db); return; }
+  if (version === 2) { upgrade3(db); upgrade4(db); upgrade5(db); return; }
+  if (version === 1) { upgrade2(db); upgrade3(db); upgrade4(db); upgrade5(db); return; }
   db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE channels(channel_id TEXT NOT NULL, run_id TEXT NOT NULL, login TEXT NOT NULL,
       privacy_revision INTEGER NOT NULL DEFAULT 0, publish_seq INTEGER NOT NULL DEFAULT 0,
@@ -100,6 +102,7 @@ export function migrate(db: DatabaseSync): void {
   upgrade2(db);
   upgrade3(db);
   upgrade4(db);
+  upgrade5(db);
 }
 
 function upgrade2(db: DatabaseSync):void {
@@ -152,4 +155,30 @@ function upgrade4(db:DatabaseSync):void {
       FOREIGN KEY(channel_id,run_id,session_id) REFERENCES sessions(channel_id,run_id,id));
     CREATE INDEX audio_source ON audio_chunks(channel_id,run_id,source_id);
     INSERT INTO schema_migrations VALUES(4); COMMIT;`);
+}
+
+/** Blocked terms saved before Unicode case folding are stored again in the current form, so an old block keeps matching. */
+function upgrade5(db:DatabaseSync):void {
+  db.exec('BEGIN IMMEDIATE;');
+  try {
+    const rows=db.prepare('SELECT channel_id,run_id,term FROM blocked_terms').all() as {channel_id:string;run_id:string;term:string}[];
+    const insert=db.prepare('INSERT INTO blocked_terms VALUES(?,?,?) ON CONFLICT DO NOTHING');
+    const remove=db.prepare('DELETE FROM blocked_terms WHERE channel_id=? AND run_id=? AND term=?');
+    for (const row of rows) {
+      const term=normalizeTermText(String(row.term));
+      if (term===row.term) continue;
+      insert.run(row.channel_id,row.run_id,term);
+      remove.run(row.channel_id,row.run_id,row.term);
+    }
+    const settings=db.prepare('SELECT channel_id,run_id,body FROM channel_settings').all() as {channel_id:string;run_id:string;body:string}[];
+    const update=db.prepare('UPDATE channel_settings SET body=? WHERE channel_id=? AND run_id=?');
+    for (const row of settings) {
+      const body=JSON.parse(String(row.body)) as {blockedTerms?:unknown};
+      if (!Array.isArray(body.blockedTerms)) continue;
+      const terms=[...new Set(body.blockedTerms.filter((term):term is string=>typeof term==='string').map(normalizeTermText))];
+      if (JSON.stringify(terms)===JSON.stringify(body.blockedTerms)) continue;
+      body.blockedTerms=terms;update.run(JSON.stringify(body),row.channel_id,row.run_id);
+    }
+    db.exec('INSERT INTO schema_migrations VALUES(5); COMMIT;');
+  } catch (error) {db.exec('ROLLBACK;');throw error;}
 }
