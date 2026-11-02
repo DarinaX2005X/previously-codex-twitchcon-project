@@ -1,0 +1,36 @@
+{
+  "checkedAt": "2026-11-02T01:30:27.947Z",
+  "origin": "https://previously-seven.vercel.app",
+  "revision": "c4aa089",
+  "scope": "Read-only public deployment check. Current entry and replay worker match the local public build; authored manifest/assets remain gated and intact. No new visual, live Twitch, provider, microphone or OBS claim.",
+  "homeStatus": 200,
+  "replayStatus": 200,
+  "buildAssets": [
+    {
+      "path": "/assets/index-vDw7_w4l.js",
+      "bytes": 331323,
+      "hashMatches": true
+    },
+    {
+      "path": "/assets/worker-CAZVp7dQ.js",
+      "bytes": 183878,
+      "hashMatches": true
+    }
+  ],
+  "manifest": {
+    "id": "authored-notes",
+    "revision": 1,
+    "origin": "authored",
+    "visibilityLeaseMs": 6000,
+    "cacheControl": "private, no-store"
+  },
+  "assets": [
+    {
+      "id": "bundle",
+      "kind": "bundle",
+      "bytes": 8481,
+      "hashMatches": true,
+      "cacheControl": "private, no-store"
+    }
+  ]
+}

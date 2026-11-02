@@ -1,6 +1,6 @@
 # Requirements reconciliation
 
-This snapshot reconciles R01–R56 with the product and existing evidence on 2026-11-02. The current deployment is revision `8748221`; its [HTTP and asset checks](../functional/deployment-source-recovery-2026-11-02.json) do not extend earlier visual observations to a new review. The [release preflight](../functional/release-preflight.md) records the passing full suite, typecheck, both builds, and focused repairs. This document adds no new test execution.
+This snapshot reconciles R01–R56 with the product and existing evidence on 2026-11-02. The current deployment is revision `c4aa089`; its [HTTP and asset checks](../functional/deployment-held-source-2026-11-02.json) do not extend earlier visual observations to a new review. The [release preflight](../functional/release-preflight.md) records the passing full suite, typecheck, both builds, and focused repairs. This document adds no new test execution.
 
 Authored provider responses, official CLI mock events, accelerated load, actual private cloud storage, and browser observations retain their separate scopes. Actual Twitch authorization and incoming events, paid-provider behavior, microphone/OBS operation, owned recordings, raw broadcast media, and human comprehension remain unverified. Account-dependent work is deferred to the planned owner session; no credentials or private coordination records are reproduced here.
 
