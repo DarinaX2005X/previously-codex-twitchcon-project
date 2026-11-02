@@ -3,7 +3,7 @@ import {
   recoverDomainState, hydrateDomainState, reduceDomain, canonical, canDispatch,
   type DomainState, type DomainEvent, type DomainEffect, type GenerationRequest,
 } from '../../core/index.js';
-import { GroundedClaimSchema, safetyAllowsPublication, type Channel, type Clock, type EventEnvelope, type OwnerSnapshot, type Scope, type Settings, type Source, type SourceStatus, type StoryProvider, type Safety } from '../../shared/contracts/index.js';
+import { GroundedClaimSchema, safetyAllowsPublication, type Channel, type Clock, type EventEnvelope, type OwnerIssue, type OwnerSnapshot, type Scope, type Settings, type Source, type SourceStatus, type StoryProvider, type Safety } from '../../shared/contracts/index.js';
 import { createStorage, StorageError, type WorkLease } from '../storage/index.js';
 import type { SafetyService } from '../providers/safety.js';
 import type { OpenAIStoryProvider } from '../providers/story.js';
@@ -62,6 +62,12 @@ export class StoryEngine {
     }
     return status;
   }
+  private issueSource: (() => OwnerIssue[]) | null = null;
+  /** Live composition supplies current integration problems; replay and tests have none. */
+  setIssueSource(source: () => OwnerIssue[]): void {this.issueSource = source;}
+  issues(): OwnerIssue[] {try {return this.issueSource?.() ?? [];} catch {return [];}}
+  /** Tell owner streams to refetch after a non-status change such as a new integration problem. */
+  notifyStatus(): void {let sessionId: string | null = null; try {sessionId = this.activeSessionId();} catch { /* Notification cannot depend on storage. */ } this.options.updates.publish({...this.scope, event: 'source.status', data: {sessionId, revision: 0}});}
   outputsBlocked(): boolean {return this.outputPrivacyBlocked;}
   /** Volatile fail-closed fence also works when SQLite cannot accept the privacy transaction. */
   setOutputsBlocked(blocked: boolean): void {

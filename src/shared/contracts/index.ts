@@ -242,7 +242,11 @@ export type OwnerSnapshot = {
   lore: Lore[]; moments: Moment[]; playback: PlaybackRef[]; sync: SyncState;
   revision: number; serverNow: string;
   budget: { limitUsd: number; committedUsd: number; reservedUsd: number; paidCallsEnabled: boolean };
+  /** Current integration problems with fixed owner-facing wording; empty when nothing needs attention. Absent in replay. */
+  issues?: OwnerIssue[];
 };
+/** One active integration problem. `reason` says what is wrong, `recovery` what the owner can do; neither contains keys or raw provider text. */
+export type OwnerIssue = { source: 'openai' | 'twitch'; component: 'transcription' | 'story' | 'moderation' | 'narration' | 'chat'; code: string; reason: string; recovery: string; since: string };
 export type OwnerHistoryQuery = {sessionId: string; kind: 'chapter' | 'lore'; filter?: 'all' | 'published' | 'draft' | 'held'; limit: number; cursor?: string};
 export type OwnerHistoryPage = {items: (Chapter | Lore)[]; nextCursor: string | null; privacyEpoch: number; language: RecapLanguage};
 export type UpdateEvent = { id: number; event: 'snapshot.changed' | 'snapshot.reset' | 'privacy.invalidated' | 'source.status' | 'publication.synced' | 'playback.prepare' | 'playback.start' | 'playback.cancel'; data: { sessionId: string | null; revision: number; affectedIds?: string[] } };

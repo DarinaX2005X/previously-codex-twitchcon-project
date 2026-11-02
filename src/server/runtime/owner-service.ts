@@ -25,6 +25,7 @@ export interface OwnerEnginePort {
   outputsBlocked?(): boolean;
   dispatch(sessionId: string, event: DomainEvent, options?: OwnerDispatchOptions): Promise<DomainState>;
   statuses(): OwnerSnapshot['status'];
+  issues?(): NonNullable<OwnerSnapshot['issues']>;
   presentOwnerChapter?(sessionId: string, entityId: string): Promise<void>;
   presentOwnerLore?(sessionId: string, entityId: string): Promise<void>;
 }
@@ -157,7 +158,7 @@ export class RuntimeOwnerService implements OwnerService {
   private snapshot(state: DomainState|null): OwnerSnapshot {
     const publication=this.engine.repository.getPublicationState(this.engine.scope),budget=this.engine.storage.budget.status(),status=this.engine.statuses();
     const visible = this.engine.outputsBlocked?.() ? null : state;
-    return structuredClone({channel:this.engine.channel,session:state?.session??null,settings:this.engine.repository.getSettings(this.engine.scope),status,published:visible?.published??null,drafts:visible?.chapters.filter(c=>c.publicationState==='draft')??[],held:[...visible?.chapters.filter(c=>c.publicationState==='held')??[],...visible?.lore.filter(l=>l.status==='held')??[]],lore:visible?.lore??[],moments:visible?.moments??[],playback:visible?.playbacks??[],sync:{state:status.cloud.state==='error'?'error':status.cloud.state==='unconfigured'?'unconfigured':publication.pendingPrivacy||publication.publishSeq>publication.ackSeq?'pending':'synced',revision:publication.publishSeq,acknowledgedRevision:publication.ackSeq||null,lastSyncedAt:publication.lastSyncedAtMs===null?null:new Date(publication.lastSyncedAtMs).toISOString(),pendingPrivacy:publication.pendingPrivacy||Boolean(this.engine.outputsBlocked?.())},revision:state?.revision??0,serverNow:this.engine.clock.iso(),budget:{limitUsd:budget.limitMicroUsd/1e6,committedUsd:budget.committedMicroUsd/1e6,reservedUsd:budget.reservedMicroUsd/1e6,paidCallsEnabled:budget.enabled}});
+    return structuredClone({channel:this.engine.channel,session:state?.session??null,settings:this.engine.repository.getSettings(this.engine.scope),status,published:visible?.published??null,drafts:visible?.chapters.filter(c=>c.publicationState==='draft')??[],held:[...visible?.chapters.filter(c=>c.publicationState==='held')??[],...visible?.lore.filter(l=>l.status==='held')??[]],lore:visible?.lore??[],moments:visible?.moments??[],playback:visible?.playbacks??[],sync:{state:status.cloud.state==='error'?'error':status.cloud.state==='unconfigured'?'unconfigured':publication.pendingPrivacy||publication.publishSeq>publication.ackSeq?'pending':'synced',revision:publication.publishSeq,acknowledgedRevision:publication.ackSeq||null,lastSyncedAt:publication.lastSyncedAtMs===null?null:new Date(publication.lastSyncedAtMs).toISOString(),pendingPrivacy:publication.pendingPrivacy||Boolean(this.engine.outputsBlocked?.())},revision:state?.revision??0,serverNow:this.engine.clock.iso(),budget:{limitUsd:budget.limitMicroUsd/1e6,committedUsd:budget.committedMicroUsd/1e6,reservedUsd:budget.reservedMicroUsd/1e6,paidCallsEnabled:budget.enabled},issues:this.engine.issues?.()??[]});
   }
   listSessions(principal: Principal,query: SessionQuery) {
     this.authorize(principal);const cursor=decode(query.cursor),limit=Math.max(1,Math.min(50,Math.floor(query.limit)));

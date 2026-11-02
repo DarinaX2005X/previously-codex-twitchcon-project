@@ -2,7 +2,8 @@ import { Router, type RequestHandler } from 'express';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ChannelSchema, type Channel, type Clock } from '../../shared/contracts/index.js';
-import { ProviderTransport, OpenAIStoryProvider, OpenAITranscriptionProvider, OpenAIRealtimeNarrationProvider, SafetyService, OpenAIContextualPrivacy, OpenAIModeration, MODEL } from '../providers/index.js';
+import { ProviderTransport, OpenAIStoryProvider, OpenAITranscriptionProvider, OpenAIRealtimeNarrationProvider, SafetyService, OpenAIContextualPrivacy, OpenAIModeration, MODEL, OPENAI_ISSUES } from '../providers/index.js';
+import { IssueBoard, twitchIssues } from './issues.js';
 import { AudioIntakeService } from '../audio/intake.js';
 import { createAudioRouter } from '../audio/router.js';
 import { PrivateMediaCache } from '../media/cache.js';
@@ -49,7 +50,16 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
     storage.repository.updateSettings(scope, settings.revision, {recapLanguage: config.language, publicationDelaySeconds: config.publicationDelaySeconds});
   }
   storage.budget.setPaidEnabled(Boolean(config.paidCallsEnabled && config.openaiApiKey && storage.budget.status().usedMicroUsd < storage.budget.status().limitMicroUsd));
-  const transport = new ProviderTransport({apiKey: config.openaiApiKey, runId: 'live', budget: storage.budget, externalCallsEnabled: config.paidCallsEnabled, now: clock.now});
+  // Owner-facing integration problems: provider failures until the same component succeeds; Twitch state derived on read.
+  const shownReasons = new Map<string, string>();
+  const issues = new IssueBoard(() => clock.iso(), () => twitch ? twitchIssues(twitch.status()) : [], (component, issue) => {
+    if (component === 'narration') {engine.notifyStatus(); return;}
+    if (issue) {shownReasons.set(component, issue.reason); engine.setStatus(component, {state: 'error', lastObservedAt: clock.iso(), message: issue.reason, action: issue.recovery}); return;}
+    // Clear only the message this board wrote; never overwrite a newer engine status.
+    if (engine.statuses()[component].message === shownReasons.get(component)) engine.setStatus(component, {state: 'ready', lastObservedAt: clock.iso(), message: null, action: null});
+    shownReasons.delete(component);
+  });
+  const transport = new ProviderTransport({apiKey: config.openaiApiKey, runId: 'live', budget: storage.budget, externalCallsEnabled: config.paidCallsEnabled, now: clock.now, onIssue: (component, issue) => issues.setProvider(component, issue)});
   const safety = new SafetyService(new OpenAIContextualPrivacy(transport), new OpenAIModeration(transport), clock.now);
   const story = new OpenAIStoryProvider(transport);
   let twitch: ReturnType<typeof createTwitchRuntime>;
@@ -77,6 +87,10 @@ export async function createLiveRuntime(options: {config: RuntimeConfig; storage
       }
     },
   });
+  engine.setIssueSource(() => issues.list());
+  if (!config.openaiApiKey) issues.setProvider('transcription', {code: 'openai_not_configured', reason: 'No OpenAI API key is configured, so new speech and story work stays held.', recovery: 'Set OPENAI_API_KEY in .env and restart.'});
+  else if (!config.paidCallsEnabled) issues.setProvider('transcription', {code: 'openai_paid_calls_off', reason: 'OpenAI calls are switched off, so new speech and story work stays held.', recovery: 'Set OPENAI_PAID_CALLS_ENABLED=true in .env and restart.'});
+  else if (!storage.budget.status().enabled) issues.setProvider('transcription', OPENAI_ISSUES.budget);
   const media = new PrivateMediaCache({directory: resolve(config.dataDir, 'media'), allowedHosts: ['production.assets.clips.twitchcdn.net'], now: clock.now,
     visible: input => !engine.outputsBlocked() && (input.id.startsWith('narration:') ? narration?.allowsMedia(input) ?? false : twitch?.allowsMedia(input) ?? false),
     onRevoke: () => updates.publish({...scope, event: 'privacy.invalidated', data: {sessionId: engine.activeSessionId(), revision: 0}}),

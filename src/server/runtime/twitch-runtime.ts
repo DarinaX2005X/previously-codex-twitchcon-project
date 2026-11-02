@@ -192,7 +192,7 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
     return {actor,text,contentAllowed,accepted:contentAllowed?envelope:{...envelope,payload:{quotesReady:false}}};
   };
   const enqueueCommand=(envelope:EventEnvelope,actor:string,text:string)=>{
-    if(!publicUrl||!envelope.sessionId)return;
+    if(!envelope.sessionId)return;
     const command=parseCommand(text);if(!command)return;
     const fresh=engine.state(envelope.sessionId),reply=safeReply(fresh,command);
     effects.enqueueChat({sessionId:fresh.session.id,privacyEpoch:fresh.session.privacyEpoch,dependencyRefs:reply.refs,publicationRevision:fresh.published?.revision??null,message:composeReply(command,reply.snapshot,fresh.settings.recapLanguage,publicUrl,reply.blocked),actorId:actor,key:`command:${envelope.externalId}`} as EffectContext&{publicationRevision:number|null;message:string;actorId:string;key:string});
@@ -257,10 +257,10 @@ export function createTwitchRuntime(options:TwitchRuntimeOptions) {
         const accepted=envelope.kind==='channel.chat.message'&&!contentAllowed?{...envelope,payload:{quotesReady:false}}:envelope;
         if(envelope.kind==='channel.chat.clear')control.put('twitch:chat-cleared-through',Math.max(Date.parse(envelope.occurredAt),control.get<number>('twitch:chat-cleared-through')??0));
         if(envelope.kind==='channel.raid'&&state&&!state.settings.autoRaid)await engine.ingest({...envelope,kind:'twitch.raid.observed',payload:null});else await engine.ingest(accepted);
-        if(publicUrl&&state&&envelope.kind==='channel.chat.message'&&contentAllowed&&typeof text==='string'){
+        if(state&&envelope.kind==='channel.chat.message'&&contentAllowed&&typeof text==='string'){
           enqueueCommand(envelope,actor,text);
         }
-        if(publicUrl&&state&&envelope.kind==='channel.raid'&&state.settings.autoRaid&&!payload.late){const fresh=engine.state(state.session.id),reply=safeReply(fresh,{kind:'previously'});const prefix=fresh.settings.recapLanguage==='ru'?'Добро пожаловать! ':'Welcome, raiders! ';const body=composeReply({kind:'previously'},reply.snapshot,fresh.settings.recapLanguage,publicUrl);const message=[...prefix+body].length<=500?prefix+body:body;effects.enqueueChat({sessionId:state.session.id,privacyEpoch:fresh.session.privacyEpoch,dependencyRefs:reply.refs,publicationRevision:fresh.published?.revision??null,message,actorId:channel.id,key:`raid-welcome:${envelope.externalId}`} as EffectContext&{publicationRevision:number|null;message:string;actorId:string;key:string});}
+        if(state&&envelope.kind==='channel.raid'&&state.settings.autoRaid&&!payload.late){const fresh=engine.state(state.session.id),reply=safeReply(fresh,{kind:'previously'});const prefix=fresh.settings.recapLanguage==='ru'?'Добро пожаловать! ':'Welcome, raiders! ';const message=prefix+composeReply({kind:'previously'},reply.snapshot,fresh.settings.recapLanguage,publicUrl,false,500-[...prefix].length);effects.enqueueChat({sessionId:state.session.id,privacyEpoch:fresh.session.privacyEpoch,dependencyRefs:reply.refs,publicationRevision:fresh.published?.revision??null,message,actorId:channel.id,key:`raid-welcome:${envelope.externalId}`} as EffectContext&{publicationRevision:number|null;message:string;actorId:string;key:string});}
       }
       control.put(key,'done',clock.now()+7*86400000);
     }catch(error){control.delete(key);throw error;}finally{inFlightIngest.delete(key);}

@@ -23,7 +23,7 @@ The server reads `.env` from the project directory; process environment values t
 | `OPENAI_PAID_CALLS_ENABLED` | Explicit `true` or `false`, default `false`. A key alone cannot enable dispatch. Replay never enables live providers. |
 | `RECAP_LANGUAGE` | Initial recap language, `en` or `ru`. The owner can change the persisted setting in the dock. It does not set the source recognition language. |
 | `PUBLICATION_DELAY_SECONDS` | Initial source hold, from 60 to 90 seconds, default 75. Current safety and dependency checks remain required. |
-| `RECAP_PUBLIC_ORIGIN` | HTTPS origin of the Vercel deployment. Omit for isolated local replay. |
+| `RECAP_PUBLIC_ORIGIN` | Optional HTTPS origin of the Vercel deployment. Without it, `!previously`, `!lore` and the raid welcome reply in chat with the published context only; with it, the public recap link is appended. |
 | `PUBLISH_SHARED_SECRET` | At least 32 bytes, identical locally and in the cloud function. Authenticates publication writes. The setup script generates a local value when absent. |
 
 Defaults for language and hold initialize fresh persisted settings. An existing channel keeps its saved settings. Use the dock to change them.
