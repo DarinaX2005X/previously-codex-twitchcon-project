@@ -1,0 +1,175 @@
+{
+  "scope": "One matched600-speech-prefix run per version, plus the exact early goal and immediate result handling from tests/domain/engine.test.ts bounded replay. Fresh separate bundled Node processes, BelowNormal,60s worker bound; every50-source cap/packet and final retained-goal/chapter/candidate/window assertions. Old809eb56 core/contracts vs captured current core/contracts. No Vitest overhead. Shared heavily loaded host, sequential baseline then current, not an isolated capacity guarantee. Direct1000-call retention microprobe uses one monotonic501-source input; source selections asserted identical.",
+  "environment": {
+    "at": "2026-11-02T00:04:22.466Z",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-1260P",
+    "logicalCpus": 16,
+    "freeMemory": 3234775040,
+    "totalMemory": 34071896064,
+    "node": "v22.13.0"
+  },
+  "baselineCommit": "809eb56bae59e1e4954a66932f2e0b6e16c97314",
+  "directory": "C:\\Users\\user\\Desktop\\previouslu\\research\\verification\\engine-retention-1793577860229",
+  "sourceHashes": {
+    "809eb56": {
+      "src/core/epoch.ts": "fb7129e8c7a27318f8314e867757c252d27e182ae89aa089d8e8b49315b7dc05",
+      "src/core/evidence.ts": "187a369b029196a24b606bd5836f0321eba946405f4aaeb214bf4bdd8d73a6b0",
+      "src/core/index.ts": "515fac256bc8a12f1fbe99deb203f6987acd42c0ccc19def4621160371ec9b67",
+      "src/core/lore-presentations.ts": "69d6432042de3183f6fb48fe2ec8f0d8e25b7dd047127bf3faf381e498dcf764",
+      "src/core/moments.ts": "ce4f29418fcee21ea0b1d1843927998c66fd2da96f69ffd93d9e603e2e1fab4b",
+      "src/core/privacy.ts": "1b3b52d7c1829943e0731cacffd718f464a5880b6c573f1b0d9b992de3678f57",
+      "src/core/recap.ts": "302984eea80194ccb46ed3694bd92b4eef737a96181af0378a3ab2ea0178672c",
+      "src/core/recovery.ts": "f981e07151246aa714422a8ee2b1b07b50f2b944d50b09032430d6fb3656ffd3",
+      "src/core/reducer.ts": "deb381318e9a02706b81b9f3717f8bc18d93d9231d4d5cdbfafc7c860956f5df",
+      "src/core/types.ts": "535578a9dcd192336d030b0ebd69a0968448780b2e2cef2be7b64d8d9556b1b5",
+      "src/shared/contracts/index.ts": "46ed213d0514c44ba7b9770107afad949cf19d5553d0e7f598fdf8988cdf1650"
+    },
+    "current": {
+      "src/core/epoch.ts": "fb7129e8c7a27318f8314e867757c252d27e182ae89aa089d8e8b49315b7dc05",
+      "src/core/evidence.ts": "2b7cb66220a6966f3635f9387fe70799fbbc091c79752128c7ba791290d6ff96",
+      "src/core/index.ts": "515fac256bc8a12f1fbe99deb203f6987acd42c0ccc19def4621160371ec9b67",
+      "src/core/lore-presentations.ts": "69d6432042de3183f6fb48fe2ec8f0d8e25b7dd047127bf3faf381e498dcf764",
+      "src/core/moments.ts": "ce4f29418fcee21ea0b1d1843927998c66fd2da96f69ffd93d9e603e2e1fab4b",
+      "src/core/privacy.ts": "1b3b52d7c1829943e0731cacffd718f464a5880b6c573f1b0d9b992de3678f57",
+      "src/core/recap.ts": "302984eea80194ccb46ed3694bd92b4eef737a96181af0378a3ab2ea0178672c",
+      "src/core/recovery.ts": "a6085bc44c6856addbec596e91e6aa4fb299d2885f91ba5111297e7d49e4e6d7",
+      "src/core/reducer.ts": "f9ef084788a8410c317df1392eb762ec0a7a3895d17c911285f35d7665109a9e",
+      "src/core/source-retention.ts": "9461afec1ac47d96bef4430fbd09df00f35e1200f01cfd3465a9c537b6d2054b",
+      "src/core/types.ts": "57652c66a966fb454df10a6eafbf92d2fa6066edcad698d1d227d95ed2e57d44",
+      "src/shared/contracts/index.ts": "46ed213d0514c44ba7b9770107afad949cf19d5553d0e7f598fdf8988cdf1650"
+    }
+  },
+  "results": [
+    {
+      "label": "809eb56",
+      "before": {
+        "at": "2026-11-02T00:04:22.471Z",
+        "freeMemory": 3234775040
+      },
+      "speechInputs": 601,
+      "generationResults": 201,
+      "wallMilliseconds": 15516.2714,
+      "cpuMicroseconds": {
+        "user": 11282000,
+        "system": 1250000
+      },
+      "segments": [
+        {
+          "from": 0,
+          "to": 100,
+          "wallMilliseconds": 1037.6053,
+          "cpuMicroseconds": {
+            "user": 657000,
+            "system": 62000
+          }
+        },
+        {
+          "from": 100,
+          "to": 500,
+          "wallMilliseconds": 9889.034599999999,
+          "cpuMicroseconds": {
+            "user": 7609000,
+            "system": 875000
+          }
+        },
+        {
+          "from": 500,
+          "to": 600,
+          "wallMilliseconds": 4589.1721,
+          "cpuMicroseconds": {
+            "user": 3016000,
+            "system": 313000
+          }
+        }
+      ],
+      "stateHash": "dd91349ddb43fff5",
+      "retainedSources": 500,
+      "nodes": 311,
+      "candidates": 3,
+      "memory": 64,
+      "retentionMicro": {
+        "iterations": 1000,
+        "inputSources": 501,
+        "wallMilliseconds": 5.474400000000969,
+        "cpuMicroseconds": {
+          "user": 0,
+          "system": 0
+        },
+        "selectedSources": 500
+      },
+      "memoryUsage": {
+        "rss": 93974528,
+        "heapTotal": 51331072,
+        "heapUsed": 18423584,
+        "external": 1917032,
+        "arrayBuffers": 10491
+      }
+    },
+    {
+      "label": "current",
+      "before": {
+        "at": "2026-11-02T00:04:38.809Z",
+        "freeMemory": 2902532096
+      },
+      "speechInputs": 601,
+      "generationResults": 201,
+      "wallMilliseconds": 15783.482,
+      "cpuMicroseconds": {
+        "user": 11891000,
+        "system": 1078000
+      },
+      "segments": [
+        {
+          "from": 0,
+          "to": 100,
+          "wallMilliseconds": 843.1889000000001,
+          "cpuMicroseconds": {
+            "user": 688000,
+            "system": 63000
+          }
+        },
+        {
+          "from": 100,
+          "to": 500,
+          "wallMilliseconds": 10021.395,
+          "cpuMicroseconds": {
+            "user": 7703000,
+            "system": 750000
+          }
+        },
+        {
+          "from": 500,
+          "to": 600,
+          "wallMilliseconds": 4918.341,
+          "cpuMicroseconds": {
+            "user": 3500000,
+            "system": 265000
+          }
+        }
+      ],
+      "stateHash": "dd91349ddb43fff5",
+      "retainedSources": 500,
+      "nodes": 311,
+      "candidates": 3,
+      "memory": 64,
+      "retentionMicro": {
+        "iterations": 1000,
+        "inputSources": 501,
+        "wallMilliseconds": 258.52020000000084,
+        "cpuMicroseconds": {
+          "user": 188000,
+          "system": 31000
+        },
+        "selectedSources": 500
+      },
+      "memoryUsage": {
+        "rss": 94281728,
+        "heapTotal": 51859456,
+        "heapUsed": 26351248,
+        "external": 1899862,
+        "arrayBuffers": 10491
+      }
+    }
+  ],
+  "stateHashesMatch": true
+}

@@ -154,7 +154,9 @@ describe('bounded replay',()=>{
     const h=harness();h.set(1000);h.source('early','The goal is reliable note persistence.');h.finish(undefined,'goal');
     for(let i=1;i<=1440;i++){h.set(i*20000);h.source(`speech${i}`,`Working on persistence step ${i}.`);if(h.state.pendingGeneration)h.finish();if(i%50===0){expect(h.state.sources.length).toBeLessThanOrEqual(500);expect(h.state.memory.length).toBeLessThanOrEqual(64);expect(evidencePacketBytes(buildEvidencePacket(h.state))).toBeLessThanOrEqual(EVIDENCE_PACKET_BYTE_CAP);}}
     expect(h.state.memory[0]?.text).toContain('reliable note persistence');expect(h.state.chapters).toHaveLength(1);expect(h.state.candidates.length).toBeLessThanOrEqual(4);expect(h.state.windows.length).toBeLessThanOrEqual(30);
-  },60000);
+  // This is a full-history correctness check; throughput is measured by the stress profiles.
+  // Allow shared CI/workstation load without reducing the 1,440-source workload or assertions.
+  },120000);
   it('replaying identical normalized inputs and clocks produces identical state fingerprints',()=>{
     const run=()=>{const h=harness();h.set(10000);h.source('a','I am fixing persistence.');h.finish();h.set(85000);h.send({type:'tick'});h.send({type:'recap.trigger',trigger:{id:'raid',sessionId:'session',reason:'raid',occurredAt:h.clock.iso()}});return stateHash(h.state);};expect(run()).toBe(run());
   });
