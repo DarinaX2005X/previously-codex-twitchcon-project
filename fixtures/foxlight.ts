@@ -131,8 +131,8 @@ const VERSIONS: Version[] = [
 ];
 const LORE = {
   id: 'fx-lore-moon-jump', term: 'moon jump', originSpeech: 'fx-speech-04', atMs: 134_000,
-  en: 'When the spring had no speed limit, it launched the fox through the ceiling. Chat named it at 1:40.',
-  ru: { term: 'лунный прыжок', explanation: 'Когда у пружины не было ограничения скорости, она запускала лису сквозь потолок. Чат придумал название на 1:40.' },
+  en: 'When the spring had no speed limit, it launched the fox through the ceiling, and chat named it the moon jump.',
+  ru: { term: 'лунный прыжок', explanation: 'Когда у пружины не было ограничения скорости, она запускала лису сквозь потолок. Так это назвал чат.' },
 };
 const CORRECTION = {
   en: { title: 'Moon jump becomes a cheat code', summary: 'The spring speed is capped, so the fox lands on the ledge. The moon jump stays in the game as a secret cheat code.' },

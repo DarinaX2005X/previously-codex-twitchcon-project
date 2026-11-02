@@ -39,7 +39,7 @@ describe('Foxlight example recording',()=>{
     expect(published.chapters.map(c=>[c.title,c.startMs])).toEqual([[TITLES[0],5000],[TITLES[1],100000],[TITLES[2],210000],[TITLES[3],320000]]);
     expect(published.session.title).toBe('Building a tiny cave platformer');
     expect(published.current).toMatchObject({goal:'Make the lanterns light up the cave.',change:'The spring no longer launches the fox to the moon.',now:'Making the lantern behind the waterfall reachable.'});
-    expect(published.lore).toEqual([expect.objectContaining({term:'moon jump',originKind:'spoken',originMs:125000,firstSeenMs:100800,explanation:'When the spring had no speed limit, it launched the fox through the ceiling. Chat named it at 1:40.'})]);
+    expect(published.lore).toEqual([expect.objectContaining({term:'moon jump',originKind:'spoken',originMs:125000,firstSeenMs:100800,explanation:'When the spring had no speed limit, it launched the fox through the ceiling, and chat named it the moon jump.'})]);
     const burst=d.state.moments.find(m=>m.triggerReasons.includes('activity_burst'))!;
     expect(burst).toMatchObject({startMs:100000,endMs:110000,count:45,distinctActors:23,mediaState:'ready'});
     expect(burst.triggerReasons).toEqual(expect.arrayContaining(['activity_burst','clip_it']));
