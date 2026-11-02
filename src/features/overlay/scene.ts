@@ -539,7 +539,7 @@ function heroState(t: number, g: Geo): SceneObject[] {
     // Open-state positions are measured against the card's actual height so the words stay on the strip.
     const openTopNow = box.h - (F.h - openTop);
     return L.closed.map((w, i) => {
-      const o = L.open[i]!;
+      const o = L.open[i] ?? { ...w, x: w.x * L.openSize / L.closedSize };
       const r = run(`w${index}:${i}`, w.text, mix(48 + w.x, 32 + o.x, ride), mix(closedTop + w.line * lineH(L.closedSize), openTopNow + o.line * lineH(L.openSize), ride), mix(L.closedSize, L.openSize, ride), 800, ink);
       return kinetic(r, clamp(enterP * (L.closed.length + 4) / 4 - i * .25), clamp(exitQ * (L.closed.length + 3) / 3 - i * .33));
     });
