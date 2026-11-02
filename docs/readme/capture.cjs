@@ -12,7 +12,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-readme-'));
 const mode = process.argv[2] || 'all';
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
-const MOMENTS = { 'shot-scene-chapters': 3300, 'shot-scene-chat': 6420, 'shot-scene-now': 8750 };
+const MOMENTS = { 'shot-scene-chapters': 3250, 'shot-scene-chat': 5550, 'shot-scene-now': 8750 };
 const LOOP = { from: 1750, to: 11500, fps: 12, width: 720, quality: 80 }; // starts on the full "Previously" title
 
 // resize + JPEG through Pillow (Lanczos), exact output size

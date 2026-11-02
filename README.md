@@ -12,7 +12,7 @@ Previously follows a Twitch stream while it happens. It listens to the streamer'
   <a href="https://previously-seven.vercel.app/replay"><b>Watch the example recording</b></a>&emsp;&emsp;<a href="#run-it-for-your-channel"><b>Run it for your channel</b></a>&emsp;&emsp;<a href="#how-the-story-is-built"><b>See how it works</b></a>
 </p>
 
-<p align="center"><img src="docs/readme/scene-loop.webp" width="720" alt="The Previously raid scene playing over Foxlight gameplay: chapter cards with real clips, chat's moon jump burst folding into the term, and the card saying what is happening now"></p>
+<p align="center"><img src="docs/readme/scene-loop.webp" width="720" alt="The Previously raid scene playing over Foxlight gameplay: the chapter list, the moon jump clip with chat's 45 messages, the term explained, and the card saying what is happening now"></p>
 <p align="center"><sub>The raid scene from the example recording, captured from the app</sub></p>
 
 <p align="center">
@@ -35,8 +35,8 @@ A raid brings a group of people who have no idea what the stream is about. Regul
 
 In the example recording, Foxlight Dev is building a small cave platformer. At 1:40 a spring pad launches the fox through the ceiling and chat floods with "MOON JUMP". At 3:30 the spring gets a speed limit, and the moon jump stays in the game as a secret cheat. When pixelmoth raids with 37 viewers at 7:10, the scene walks them through the chapters with the real gameplay clips, shows chat's burst turning into the term "moon jump" and what it means, and ends on what is happening now: making the lantern behind the waterfall reachable. Then the overlay clears the screen.
 
-<p align="center"><img src="docs/readme/shot-scene-chapters.jpg" width="32%" alt="Raid scene: the first chapter card, Fox learns to jump, playing its gameplay clip over the stream"> <img src="docs/readme/shot-scene-chat.jpg" width="32%" alt="Raid scene: the moon jump chapter card next to a card explaining the term chat named: when the spring had no speed limit, it launched the fox through the ceiling"> <img src="docs/readme/shot-scene-now.jpg" width="32%" alt="Raid scene: the final card saying the streamer is making the lantern behind the waterfall reachable"></p>
-<p align="center"><sub>The chapters with their clips, the joke chat named explained, and what is happening now</sub></p>
+<p align="center"><img src="docs/readme/shot-scene-chapters.jpg" width="32%" alt="Raid scene: the chapter list so far, Fox learns to jump at 0:05, The moon jump at 1:40 and Spring gets a speed limit at 3:30"> <img src="docs/readme/shot-scene-chat.jpg" width="32%" alt="Raid scene: the moon jump clip with a counter reading 45 messages in 10 seconds and two chat lines, MOON JUMP and he's gone"> <img src="docs/readme/shot-scene-now.jpg" width="32%" alt="Raid scene: the final card saying the streamer is making the lantern behind the waterfall reachable"></p>
+<p align="center"><sub>The chapters so far, chat's reaction to the moon jump, and what is happening now</sub></p>
 
 The same story answers `!previously` in chat and fills the channel's public page, where a late viewer can open the source behind any chapter. Every sentence is held back for 75 seconds after its last source and checked before anyone sees it, so the streamer has time to fix or remove it first.
 
