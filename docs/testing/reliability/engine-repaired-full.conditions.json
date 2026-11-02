@@ -195,5 +195,62 @@
         }
       }
     }
+  ],
+  "postLaunchSourceChanges": [
+    {
+      "recordedAtUtc": "2026-11-02T01:27:01.732Z",
+      "commit": "e5fad83",
+      "description": "Generic same-ID revision>1 replacement of a pending/unavailable source now carries an explicit replacement marker and consistent storage epoch handling.",
+      "capturedFilesChanged": [
+        "src/server/storage/domain.ts",
+        "src/core/reducer.ts",
+        "src/core/types.ts"
+      ],
+      "hashesAtThisObservation": {
+        "src/server/storage/domain.ts": "6223d68226c7f0c72bfb28804e40a492ea91b3ce7a10988985d9e333c91afdb3",
+        "src/core/reducer.ts": "970e15139702a130b643499cea3c42e96cceccea3f4bdd472a65c5b02d8a34fe",
+        "src/core/types.ts": "cd497a07b4dd52c61192d758d1c322ae446e1eac65bb1df968b06c84a290130d"
+      },
+      "profileScope": "Coordinator/source_recovery confirmed that unique chat/speech IDs at revision 1, unique metadata source IDs, duplicate envelopes and privacy deletions do not enter the repaired generic replacement branch. The running process retains its launch code; no restart or workload change occurred.",
+      "validation": "Coordinator reports 52 related tests, typecheck and independent release_audit passing before final integration checks."
+    }
+  ],
+  "reportedHostActivityChanges": [
+    {
+      "recordedAtUtc": "2026-11-02T01:27:01.732Z",
+      "source": "coordinator",
+      "description": "Tiny root-owned README preview and owner fixture servers were stopped; their exact stop times were not independently recorded."
+    }
+  ],
+  "concurrentValidationRuns": [
+    {
+      "status": "completed",
+      "sourceCommit": "e5fad83",
+      "scope": "Coordinator-owned typecheck, full correctness suite and local/public builds.",
+      "source": "Coordinator supplied start/completion times and actual worker configuration after completion.",
+      "completedAtUtc": "2026-11-02T01:27:22Z",
+      "profileChanged": false,
+      "announcementRecordedAtUtc": "2026-11-02T01:27:01.732Z",
+      "startedAtUtc": "2026-11-02T01:26:38Z",
+      "requestedCliMaxWorkers": 2,
+      "effectiveConfiguredMaxWorkers": 4,
+      "workerCorrection": "The npm wrapper did not forward the CLI worker flag; configured maxWorkers:4 was effective.",
+      "result": {
+        "typecheck": "passed",
+        "testsPassed": 609,
+        "testsSkipped": 2,
+        "testFilesPassed": 67,
+        "testFilesSkipped": 2,
+        "suiteSeconds": 31.84,
+        "localBuild": "passed",
+        "publicBuild": "passed"
+      },
+      "keylessSmoke": {
+        "startedAtUtc": "2026-11-02T01:27:22Z",
+        "completedAtUtc": "2026-11-02T01:27:24Z",
+        "result": "passed",
+        "scope": "Trusted HTTPS, manifest/chapter/raid, no external fetch."
+      }
+    }
   ]
 }
