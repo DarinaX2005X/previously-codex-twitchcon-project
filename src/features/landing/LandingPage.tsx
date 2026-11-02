@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Brand, ChatSlip, ClipFrame, LorePlate, Plate, TitleCard, buttonClass, formatTimecode } from '../../ui';
+import { Brand, ClipFrame, LorePlate, Plate, TitleCard, buttonClass, formatTimecode } from '../../ui';
 import { ScenePlayer } from '../overlay';
 import { composeReply } from '../../shared/chat-commands.js';
 import { useFootage, type Footage } from '../replay/footage';
@@ -74,7 +74,7 @@ function HeroEnsemble({ story, footage, unavailable }: { story: LandingStory | n
   useEffect(() => { if (!video.current) return; if (paused || reduced) video.current.pause(); else void video.current.play().catch(() => undefined); }, [paused, reduced, footage.src]);
   const restartLater = () => { window.setTimeout(() => setCycle(value => value + 1), 2600); };
   const chapters = story ? [...story.published.chapters].sort((a, b) => a.startMs - b.startMs) : [];
-  const slips = story?.focus?.messages.slice(0, 5) ?? [];
+  const now = story?.published.current?.now;
   const lore = story?.published.lore.find(l => l.originKind !== 'unknown');
   return <div className="lp-ensemble lp-in">
     {chapters[0] && <TitleCard className="lp-obj lp-obj--card-a" title={chapters[0].title} atMs={chapters[0].startMs} ground="var(--lp-paper)" aria-hidden="true"><p>{chapters[0].summary}</p></TitleCard>}
@@ -92,13 +92,12 @@ function HeroEnsemble({ story, footage, unavailable }: { story: LandingStory | n
         </button>}
       </div>
     </figure>
-    {slips.length > 0 && <div className="lp-obj lp-obj--slips" aria-hidden="true">{slips.map((text, i) => <ChatSlip key={i} style={{ ['--i' as string]: i, ['--r' as string]: tilt(i) }}>{text}</ChatSlip>)}</div>}
+    {now && <article className="pv-card lp-obj lp-obj--now" aria-hidden="true"><p className="lp-obj__label">Right now</p><p className="lp-obj__now">{now}</p></article>}
     {lore && <LorePlate className="lp-obj lp-obj--lore" term={lore.term} explanation={lore.explanation} originMs={lore.originMs ?? lore.firstSeenMs} />}
   </div>;
 }
-function tilt(i: number) { const n = Math.sin((i + 1) * 37.719) * 43758.5453, f = n - Math.floor(n); return `${(f - .5) * 9}deg`; }
 
-/** Scroll story: the recording's moments on the right, the recap they build on the left. */
+/** Scroll story: the recording's moments on the right; on the left, what viewers can read at that moment. */
 function StoryScroll({ story, poster }: { story: LandingStory; poster?: string }) {
   const chapters = [...story.published.chapters].sort((a, b) => a.startMs - b.startMs);
   const steps = chapters.length + (story.raider ? 1 : 0);
@@ -111,44 +110,60 @@ function StoryScroll({ story, poster }: { story: LandingStory; poster?: string }
     refs.current.forEach(node => node && observer.observe(node));
     return () => observer.disconnect();
   }, [steps]);
-  const shown = chapters.slice(0, Math.min(active + 1, chapters.length));
-  const top = shown.at(-1)!;
-  const topMoment = story.chapterMoments[top.id];
+  const goTo = (i: number) => refs.current[i]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const raid = !!story.raider && active >= chapters.length;
+  const top = chapters[Math.min(active, chapters.length - 1)];
+  const earlier = chapters.slice(0, Math.min(active, chapters.length - 1) + (raid ? 1 : 0)).filter(c => raid || c.id !== top.id);
   const lore = story.published.lore.find(l => l.originKind !== 'unknown');
-  const loreVisible = lore && chapters.findIndex(c => lore.firstSeenMs >= c.startMs && lore.firstSeenMs <= c.endMs + 120000) <= active;
-  const raid = story.raider && active >= chapters.length;
-  const slips = story.focus?.chapter.id === top.id ? story.focus.messages.slice(0, 8) : [];
+  const loreAt = lore ? chapters.findIndex(c => lore.firstSeenMs >= c.startMs && lore.firstSeenMs <= c.endMs + 120000) : -1;
+  const loreVisible = !!lore && loreAt >= 0 && active >= loreAt;
   const clip = story.focus?.chapter.id === top.id ? story.focus.clipUrl : undefined;
+  const duration = Math.max(story.raidAtMs ?? 0, ...chapters.map(c => c.endMs)) || 1;
+  const stepTime = (i: number) => i >= chapters.length ? story.raidAtMs ?? duration : chapters[i].startMs + story.delaySeconds * 1000;
+  const position = Math.min(1, stepTime(active) / duration);
   return <section className="lp-field lp-field--cave lp-story" aria-labelledby="lp-story-title">
-    <div className="lp-in lp-story__in">
-      <div className="lp-story__sticky">
-        <div className="lp-story__panel" data-raid={raid ? 'true' : undefined} style={poster ? { ['--lp-poster' as string]: `url("${poster}")` } : undefined}>
-          <p className="lp-story__label">{raid ? 'What the raiders see' : `The recap at ${formatTimecode(top.startMs + story.delaySeconds * 1000)}`}</p>
-          <div className="lp-story__stack" style={{ ['--n' as string]: shown.length - 1 + (raid ? 1 : 0) }}>
-            {raid && story.published.current?.now && <article key="now" className="pv-card pv-card--now lp-story__now"><p className="lp-story__now-label">Right now</p><p className="lp-story__now-text">{story.published.current.now}</p></article>}
-            {[...shown].reverse().map((c, depth) => <TitleCard key={c.id} className="lp-story__card" title={c.title} atMs={c.startMs} ground="var(--lp-cave)" style={{ ['--d' as string]: depth + (raid ? 1 : 0) }}>
-              {depth === 0 && !raid && <><p>{c.summary}</p>{clip && <ClipFrame className="lp-story__clip" src={clip} label={`Clip from ${c.title}`} autoPlay />}</>}
-            </TitleCard>)}
-          </div>
-          {slips.length > 0 && !raid && <div key={top.id} className="lp-story__slips" aria-hidden="true">{slips.map((text, i) => <ChatSlip key={i} style={{ ['--i' as string]: i, ['--r' as string]: tilt(i) }}>{text}</ChatSlip>)}</div>}
-          {loreVisible && lore && <LorePlate className="lp-story__lore" term={lore.term} explanation={lore.explanation} originMs={lore.originMs ?? lore.firstSeenMs} />}
-        </div>
-      </div>
-      <div className="lp-story__steps">
+    <div className="lp-in">
+      <div className="lp-story__head">
         <h2 id="lp-story-title">Chapters come from what you say and how chat reacts</h2>
-        {chapters.map((c, i) => {
-          const speech = story.chapterSpeech[c.id], moment = story.chapterMoments[c.id];
-          return <article key={c.id} ref={node => { refs.current[i] = node; }} data-step={i} className={`lp-step ${active === i ? 'is-active' : ''}`}>
-            <span className="pv-tab">{formatTimecode(speech?.startMs ?? c.startMs)}</span>
-            {speech ? <blockquote>“{speech.text}”</blockquote> : <p className="lp-step__text">{c.summary}</p>}
-            {moment && <p className="lp-step__burst"><strong>{moment.count}</strong> chat messages in {Math.max(1, Math.round((moment.endMs - moment.startMs) / 1000))} seconds</p>}
-            <p className="lp-step__result">Published as <b>{c.title}</b> {story.delaySeconds} seconds later</p>
-          </article>;
-        })}
-        {story.raider && <article ref={node => { refs.current[chapters.length] = node; }} data-step={chapters.length} className={`lp-step lp-step--raid ${active === chapters.length ? 'is-active' : ''}`}>
-          <span className="pv-tab pv-tab--now">{story.raidAtMs !== undefined ? formatTimecode(story.raidAtMs) : 'Raid'}</span>
-          <p className="lp-step__text"><b>{story.raider.login}</b> raids with {story.raider.viewers} viewers. The recap plays over the stream, then leaves it alone.</p>
-        </article>}
+        <p>Scroll to move through the recording. Scroll back up to rewind.</p>
+      </div>
+      <div className="lp-story__in">
+        <div className="lp-story__sticky">
+          <div className="lp-story__panel" style={poster ? { ['--lp-poster' as string]: `url("${poster}")` } : undefined}>
+            <div className="lp-story__clock">
+              <span className="lp-story__time">{formatTimecode(stepTime(active))}</span>
+              <div className="lp-story__bar" aria-hidden="true">
+                <span className="lp-story__fill" style={{ width: `${position * 100}%` }} />
+                {chapters.map((c, i) => <button key={c.id} type="button" tabIndex={-1} className={`lp-story__tick ${i <= active ? 'is-past' : ''}`} style={{ left: `${Math.min(1, stepTime(i) / duration) * 100}%` }} onClick={() => goTo(i)} />)}
+                {story.raider && <button type="button" tabIndex={-1} className={`lp-story__tick lp-story__tick--raid ${raid ? 'is-past' : ''}`} style={{ left: '100%' }} onClick={() => goTo(chapters.length)} />}
+              </div>
+              <span className="lp-story__end">{formatTimecode(duration)}</span>
+            </div>
+            <p className="lp-story__label">{raid ? 'What the raiders see' : 'What viewers can read now'}</p>
+            {raid && story.published.current?.now
+              ? <article key="now" className="pv-card pv-card--now lp-story__now"><p className="lp-story__now-label">Right now</p><p className="lp-story__now-text">{story.published.current.now}</p></article>
+              : <TitleCard key={top.id} className="lp-story__card" title={top.title} atMs={top.startMs} ground="var(--lp-cave-deep)"><p>{top.summary}</p>{clip && <ClipFrame className="lp-story__clip" src={clip} label={`Clip from ${top.title}`} autoPlay />}</TitleCard>}
+            <div className="lp-story__after">
+              {earlier.length > 0 && <ol className="lp-story__earlier" aria-label="Earlier chapters">{earlier.map(c => <li key={c.id}><span>{formatTimecode(c.startMs)}</span>{c.title}</li>)}</ol>}
+              {loreVisible && lore && <LorePlate key={lore.id} className="lp-story__lore" term={lore.term} explanation={lore.explanation} originMs={lore.originMs ?? lore.firstSeenMs} />}
+            </div>
+          </div>
+        </div>
+        <ol className="lp-story__steps">
+          {chapters.map((c, i) => {
+            const speech = story.chapterSpeech[c.id], moment = story.chapterMoments[c.id];
+            return <li key={c.id} ref={node => { refs.current[i] = node; }} data-step={i} className={`lp-step ${active === i ? 'is-active' : ''}`} onClick={() => goTo(i)}>
+              <span className="pv-tab">{formatTimecode(speech?.startMs ?? c.startMs)}</span>
+              {speech ? <blockquote>“{speech.text}”</blockquote> : <p className="lp-step__text">{c.summary}</p>}
+              {moment && <p className="lp-step__burst"><strong>{moment.count}</strong> chat messages in {Math.max(1, Math.round((moment.endMs - moment.startMs) / 1000))} seconds</p>}
+              <p className="lp-step__result">Published as <b>{c.title}</b> {story.delaySeconds} seconds later</p>
+            </li>;
+          })}
+          {story.raider && <li ref={node => { refs.current[chapters.length] = node; }} data-step={chapters.length} className={`lp-step lp-step--raid ${raid ? 'is-active' : ''}`} onClick={() => goTo(chapters.length)}>
+            <span className="pv-tab pv-tab--now">{story.raidAtMs !== undefined ? formatTimecode(story.raidAtMs) : 'Raid'}</span>
+            <p className="lp-step__text"><b>{story.raider.login}</b> raids with {story.raider.viewers} viewers. The recap plays over the stream, then leaves it alone.</p>
+          </li>}
+        </ol>
       </div>
     </div>
   </section>;
