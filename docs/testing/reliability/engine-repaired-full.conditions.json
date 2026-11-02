@@ -1,6 +1,6 @@
 {
   "profile": "engine-repaired-full.json",
-  "status": "running",
+  "status": "stopped_early_for_delivery_priority",
   "sourceCommit": "a9df89c",
   "sourceCommitProvenance": "Coordinator launch handoff; no Git operations performed.",
   "startedAt": "2026-11-02T00:50:30.103Z",
@@ -353,5 +353,13 @@
       "scope": "Measured clone, candidate-persistence and prepare hotspots were on chat-batch stacks. No standalone tick, dispatch or executeStory sample was observed; nested repository ingest belonged to runDomainBatch. This does not establish zero unsampled tick work. The profile itself does not identify baseline versus burst phase or processed message count and is not sustained throughput evidence."
     },
     "rawProfileRetention": "The raw CPU profile is retained locally; this file preserves the reported summary, operation times and scope."
+  },
+  "stoppedAt": "2026-11-02T04:25:19.0349765Z",
+  "stoppedArtifact": "engine-repaired-full.stopped.json",
+  "stopReason": "Ended early following the request to prioritize remaining delivery time. Repeated recovery cycles and the complete burst were exercised. Remaining long-session growth and full-profile completion are unverified.",
+  "backgroundInterval": {
+    "monitoringStoppedAtApproxUtc": "2026-11-02T03:39:00Z",
+    "nextReadAtApproxUtc": "2026-11-02T04:24:00Z",
+    "scope": "Run left in background while work was paused. Process/host and stdout-drain timing were not continuously observed; no causal throughput inference is made."
   }
 }

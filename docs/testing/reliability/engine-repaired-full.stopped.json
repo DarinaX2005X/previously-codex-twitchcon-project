@@ -1,0 +1,207 @@
+{
+  "status": "stopped_early_for_delivery_priority",
+  "completed": false,
+  "target": {
+    "durationSeconds": 28800,
+    "chatMessages": 577200
+  },
+  "startedAt": "2026-11-02T00:50:30.103Z",
+  "stoppedAt": "2026-11-02T04:25:19.0349765Z",
+  "elapsedWallSecondsToStop": 12888.931,
+  "reason": "Ended early following the request to prioritize remaining delivery time. Repeated recovery cycles and the complete burst were exercised. Remaining long-session growth and full-profile completion are unverified.",
+  "process": {
+    "pid": 164168,
+    "termination": "Windows Stop-Process after exact command identity verification; abrupt termination, not graceful harness completion.",
+    "sessionExitCode": 1
+  },
+  "profileHeader": {
+    "scope": "Actual StoryEngine.ingestBatch/ingest/executeStory with file-backed SQLite durable receipts, transitions and checkpoints. Accelerated virtual timestamps at 20 chat/s baseline, 200/s for virtual seconds 7200..7259, final 60 seconds of every hour quiet. Already-queued batches of up to 20; no socket arrival, queue latency, real capture, paid provider, OBS or cloud measurement. Chat remains pending safety; supplied speech is synthetic pre-reviewed text. Deterministic local metadata-safety/story stubs; delayed job execution and failures use virtual time. Publication outbox is consumed by a bounded local sink without external publication.",
+    "startedAt": "2026-11-02T00:50:30.103Z",
+    "pid": 164168,
+    "databasePath": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-engine-full-xluGSP\\state.sqlite",
+    "durationSeconds": 28800,
+    "baselineRate": 20,
+    "burstRate": 200,
+    "burstSeconds": 60,
+    "batchSize": 20,
+    "priority": "Normal",
+    "freshnessContract": {
+      "boundSeconds": 240,
+      "eligible": "Supplied speech outside the first 300 seconds of each virtual hour.",
+      "success": "One snapshot contains the supplied speech verbatim in a grounded chapter summary and current.now, with the speech source label and sufficiently recent dependency/source times; that snapshot is consumed by the local sink by the deadline.",
+      "scope": "Deterministic harness recovery bound, not product live latency; near-end obligations without a reached deadline remain pending."
+    },
+    "hardware": {
+      "platform": "win32",
+      "release": "10.0.19045",
+      "cpu": "12th Gen Intel(R) Core(TM) i7-1260P",
+      "logicalCpus": 16,
+      "totalMemory": 34071896064,
+      "node": "v22.13.0"
+    },
+    "sourceHashes": {
+      "src/server/runtime/engine.ts": "0911db7c2b51c082c87b6dab17d2af818456c9d3bdef5572428fd443a17d4d93",
+      "src/server/runtime/input.ts": "db7018085e06756bad291f8945bf057e4c43a45795f3451d8b48a58abf6d9f14",
+      "src/server/runtime/history.ts": "831605ee3e6f09b0c2957140945065433b75a401cf4bc8a5a5edc6f76719453a",
+      "src/server/storage/repository.ts": "d89cce845eb636a412cb7879c2b5fddc559222277bec4cfd37280a5de317688a",
+      "src/server/storage/domain.ts": "a02507b166fbe5830ba73a2fadad053d952c0a6b19185f657eb70c80b5b0dba2",
+      "src/server/storage/database.ts": "cecd990d46636b8fdde42e7f79d5a2fc455a6c7dc4201e400e425ac8830ef138",
+      "src/server/storage/migrations.ts": "ed13fb82838c4666dce38c0d66444224f326647db69d1fda2cec456fb51ff01b",
+      "src/server/storage/history.ts": "816a3d6c13b6275c66458b5c8a70fe3d8de29896eac5c9753aa380f1bccf2be8",
+      "src/server/providers/safety.ts": "b72101496cc6aada8ec489c605e08c37b93a0a095e07f32c5657a585d352dc0b",
+      "src/core/reducer.ts": "f9ef084788a8410c317df1392eb762ec0a7a3895d17c911285f35d7665109a9e",
+      "src/core/source-retention.ts": "9461afec1ac47d96bef4430fbd09df00f35e1200f01cfd3465a9c537b6d2054b",
+      "src/core/recovery.ts": "a6085bc44c6856addbec596e91e6aa4fb299d2885f91ba5111297e7d49e4e6d7",
+      "src/core/evidence.ts": "2b7cb66220a6966f3635f9387fe70799fbbc091c79752128c7ba791290d6ff96",
+      "src/core/types.ts": "57652c66a966fb454df10a6eafbf92d2fa6066edcad698d1d227d95ed2e57d44",
+      "src/core/privacy.ts": "1b3b52d7c1829943e0731cacffd718f464a5880b6c573f1b0d9b992de3678f57",
+      "src/core/epoch.ts": "fb7129e8c7a27318f8314e867757c252d27e182ae89aa089d8e8b49315b7dc05",
+      "src/core/recap.ts": "302984eea80194ccb46ed3694bd92b4eef737a96181af0378a3ab2ea0178672c",
+      "src/shared/contracts/index.ts": "46ed213d0514c44ba7b9770107afad949cf19d5553d0e7f598fdf8988cdf1650",
+      "scripts/stress/engine-full-profile.mts": "2e71f345b9bf56d4ce1719e22baea282bb1e4ec1cf45919e806ead1073dfdfc0"
+    }
+  },
+  "lastCompletedProgressSample": {
+    "virtualSecond": 13661,
+    "messages": 280440,
+    "elapsedSeconds": 12861.5723072,
+    "segmentEventsPerSecond": 12.786367849719001,
+    "heapUsed": 17798680,
+    "rss": 280940544,
+    "diskBytes": 700936192,
+    "retainedSources": 500,
+    "chapters": 43,
+    "nodes": 278,
+    "providerCalls": 238,
+    "providerFailures": 153,
+    "providerDone": 85,
+    "staleLeases": 1,
+    "sinkConsumed": 68,
+    "duplicates": 46,
+    "deletes": 22,
+    "freshness": {
+      "boundSeconds": 240,
+      "supplied": 46,
+      "eligible": 42,
+      "fulfilled": 42,
+      "pending": 0,
+      "due": 41,
+      "overdueIds": [],
+      "nextDeadlineVirtualSecond": null,
+      "maxObservedSourceToPublishedSeconds": 76.05,
+      "maxObservedSupplyToSinkSeconds": 80,
+      "lastProviderSpeechId": "speech-13500",
+      "lastProviderSpeechEndMs": 13500900,
+      "providerNoSpeechFailures": 143,
+      "lastPublishedAt": "2026-11-02T03:46:16.950Z",
+      "lastPublishedChapterSourceEndMs": 13500999,
+      "lastPublishedCurrentSourceTimeMs": 13500999,
+      "lastDomainCurrentSourceTimeMs": 13500999,
+      "lastSinkPublication": {
+        "revision": 69,
+        "publishedAt": "2026-11-02T03:46:16.950Z",
+        "chapterSourceEndMs": 13500999,
+        "currentSourceTimeMs": 13500999
+      }
+    }
+  },
+  "observedSampleMaxima": {
+    "heapUsed": 19198008,
+    "rss": 283054080,
+    "diskBytes": 700936192,
+    "retainedSources": 500,
+    "chapters": 43
+  },
+  "freshness": {
+    "boundSeconds": 240,
+    "supplied": 46,
+    "eligible": 42,
+    "fulfilled": 42,
+    "pending": 0,
+    "due": 41,
+    "overdueIds": [],
+    "nextDeadlineVirtualSecond": null,
+    "maxObservedSourceToPublishedSeconds": 76.05,
+    "maxObservedSupplyToSinkSeconds": 80,
+    "lastProviderSpeechId": "speech-13500",
+    "lastProviderSpeechEndMs": 13500900,
+    "providerNoSpeechFailures": 143,
+    "lastPublishedAt": "2026-11-02T03:46:16.950Z",
+    "lastPublishedChapterSourceEndMs": 13500999,
+    "lastPublishedCurrentSourceTimeMs": 13500999,
+    "lastDomainCurrentSourceTimeMs": 13500999,
+    "lastSinkPublication": {
+      "revision": 69,
+      "publishedAt": "2026-11-02T03:46:16.950Z",
+      "chapterSourceEndMs": 13500999,
+      "currentSourceTimeMs": 13500999
+    },
+    "scope": "Last completed progress sample only. The in-memory per-speech ledger and full-run final assertion artifact were not saved. No extension to the unsampled tail or unexecuted workload is claimed."
+  },
+  "durability": {
+    "recoveryMethod": "Normal SQLite open and empty write transaction for rollback-journal recovery, followed by integrity/count checks. No application migrations or new workload were executed.",
+    "integrity": [
+      {
+        "integrity_check": "ok"
+      }
+    ],
+    "foreignKeyViolationCount": 0,
+    "chatEvents": 280780,
+    "chatSources": 280780,
+    "pendingChatEvents": 0,
+    "deletedChatSources": 22,
+    "deletedChatTextRows": 0,
+    "speechSources": 46,
+    "metadataSources": 46,
+    "burstEvents": 12000,
+    "sourceMessageNumberRange": {
+      "first": 0,
+      "last": 280779
+    },
+    "batchMultipleOf20": true,
+    "contiguousChatSourceIds": true,
+    "latestCommittedVirtualSecond": 13678.95,
+    "checkpoint": {
+      "revision": 281150,
+      "sources": 500,
+      "chapters": 43,
+      "currentSourceTimeMs": 13500999
+    },
+    "checksPassed": true
+  },
+  "currentSourceHashes": {
+    "src/server/runtime/engine.ts": "0911db7c2b51c082c87b6dab17d2af818456c9d3bdef5572428fd443a17d4d93",
+    "src/server/runtime/input.ts": "db7018085e06756bad291f8945bf057e4c43a45795f3451d8b48a58abf6d9f14",
+    "src/server/runtime/history.ts": "831605ee3e6f09b0c2957140945065433b75a401cf4bc8a5a5edc6f76719453a",
+    "src/server/storage/repository.ts": "d89cce845eb636a412cb7879c2b5fddc559222277bec4cfd37280a5de317688a",
+    "src/server/storage/domain.ts": "6223d68226c7f0c72bfb28804e40a492ea91b3ce7a10988985d9e333c91afdb3",
+    "src/server/storage/database.ts": "cecd990d46636b8fdde42e7f79d5a2fc455a6c7dc4201e400e425ac8830ef138",
+    "src/server/storage/migrations.ts": "ed13fb82838c4666dce38c0d66444224f326647db69d1fda2cec456fb51ff01b",
+    "src/server/storage/history.ts": "816a3d6c13b6275c66458b5c8a70fe3d8de29896eac5c9753aa380f1bccf2be8",
+    "src/server/providers/safety.ts": "b72101496cc6aada8ec489c605e08c37b93a0a095e07f32c5657a585d352dc0b",
+    "src/core/reducer.ts": "970e15139702a130b643499cea3c42e96cceccea3f4bdd472a65c5b02d8a34fe",
+    "src/core/source-retention.ts": "9461afec1ac47d96bef4430fbd09df00f35e1200f01cfd3465a9c537b6d2054b",
+    "src/core/recovery.ts": "a6085bc44c6856addbec596e91e6aa4fb299d2885f91ba5111297e7d49e4e6d7",
+    "src/core/evidence.ts": "2b7cb66220a6966f3635f9387fe70799fbbc091c79752128c7ba791290d6ff96",
+    "src/core/types.ts": "cd497a07b4dd52c61192d758d1c322ae446e1eac65bb1df968b06c84a290130d",
+    "src/core/privacy.ts": "1b3b52d7c1829943e0731cacffd718f464a5880b6c573f1b0d9b992de3678f57",
+    "src/core/epoch.ts": "fb7129e8c7a27318f8314e867757c252d27e182ae89aa089d8e8b49315b7dc05",
+    "src/core/recap.ts": "302984eea80194ccb46ed3694bd92b4eef737a96181af0378a3ab2ea0178672c",
+    "src/shared/contracts/index.ts": "46ed213d0514c44ba7b9770107afad949cf19d5553d0e7f598fdf8988cdf1650",
+    "scripts/stress/engine-full-profile.mts": "2e71f345b9bf56d4ce1719e22baea282bb1e4ec1cf45919e806ead1073dfdfc0"
+  },
+  "changedAfterLaunch": [
+    "src/server/storage/domain.ts",
+    "src/core/reducer.ts",
+    "src/core/types.ts"
+  ],
+  "artifacts": {
+    "progress": "engine-repaired-full.json.progress.jsonl",
+    "progressSha256": "414a10a5af6eb49d0ceedf3926a862a80bafa2d310156177605272cfc7d6fe8a",
+    "databasePath": "C:\\Users\\user\\AppData\\Local\\Temp\\previously-engine-full-xluGSP\\state.sqlite",
+    "databaseBytesAfterRecovery": 701440000,
+    "successArtifactCreated": false,
+    "failureArtifactExists": false
+  },
+  "scope": "Partial actual-engine synthetic evidence. Eight virtual hours and 577200 chats were not completed. Integrity/count checks cover the recovered committed prefix. Full-run pagination and in-memory maxima are unverified. This is not live Twitch capacity, real-provider quality, microphone/OBS or cloud evidence. Shared-host timing includes an unobserved background interval and must not be treated as an isolated throughput measurement."
+}
