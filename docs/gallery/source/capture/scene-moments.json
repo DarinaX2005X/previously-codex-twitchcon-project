@@ -2,11 +2,9 @@
   "plan": "foxlight",
   "bg": "video",
   "moments": {
-    "welcome": 1000,
-    "previously": 2000,
-    "chapters": 3250,
-    "chat": 5550,
-    "joke": 7000,
-    "now": 8750
+    "lockup": 2500,
+    "jump": 6000,
+    "moon": 18000,
+    "now": 36000
   }
 }

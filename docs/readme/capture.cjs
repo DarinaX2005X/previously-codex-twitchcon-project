@@ -2,7 +2,7 @@
 //   node docs/readme/capture.cjs [scene|app|all]     (default all)
 // Needs: the scene lab dev server (LAB, default http://127.0.0.1:4321), the app (APP, default https://localhost:4317),
 // Playwright (PW, default the review/pw install), ffmpeg with libwebp_anim, and python with Pillow.
-// Scene timings are in milliseconds of the 12 s Foxlight raid plan; adjust MOMENTS and LOOP if the scene changes.
+// Scene timings are in milliseconds of the 44 s Foxlight raid plan; adjust MOMENTS and LOOP if the scene changes.
 const fs = require('fs'), path = require('path'), os = require('os'), { execFileSync } = require('child_process');
 const { chromium } = require(process.env.PW || 'C:/Users/user/Desktop/previouslu/review/pw/node_modules/playwright');
 const LAB = process.env.LAB || 'http://127.0.0.1:4321';
@@ -12,8 +12,9 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-readme-'));
 const mode = process.argv[2] || 'all';
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
-const MOMENTS = { 'shot-scene-chapters': 3250, 'shot-scene-chat': 5550, 'shot-scene-now': 8750 };
-const LOOP = { from: 1750, to: 11500, fps: 12, width: 720, quality: 80 }; // starts on the full "Previously" title
+const MOMENTS = { 'shot-scene-chapters': 6000, 'shot-scene-chat': 18000, 'shot-scene-now': 36000 };
+// The loop is an edit of the scene's own hard cuts: the title lockup, two captioned clips, right now, the P mark.
+const LOOP = { segments: [[1500, 3500], [4000, 6500], [15500, 18500], [34500, 36500], [42200, 43300]], fps: 12, width: 720, quality: 80 };
 
 // resize + JPEG through Pillow (Lanczos), exact output size
 function jpeg(src, dst, w, h, crop) {
@@ -53,9 +54,10 @@ async function scene(b) {
   if (only.length) { await p.close(); return; }
   // animated loop, frame exact
   const dir = path.join(TMP, 'loop'); fs.mkdirSync(dir);
-  const n = Math.round((LOOP.to - LOOP.from) * LOOP.fps / 1000);
+  const times = LOOP.segments.flatMap(([a, b]) => Array.from({ length: Math.round((b - a) * LOOP.fps / 1000) }, (_, k) => a + k * 1000 / LOOP.fps));
+  const n = times.length;
   for (let i = 0; i < n; i++) {
-    await shot(LOOP.from + i * 1000 / LOOP.fps, { path: path.join(dir, `f${String(i).padStart(4, '0')}.jpg`), type: 'jpeg', quality: 95 });
+    await shot(times[i], { path: path.join(dir, `f${String(i).padStart(4, '0')}.jpg`), type: 'jpeg', quality: 95 });
   }
   await p.close();
   const webp = path.join(OUT, 'scene-loop.webp');
