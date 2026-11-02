@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import type { Chapter, InvalidationReceipt, Lore, Moment, OwnerIssue, OwnerSnapshot, PrivacyTarget, PublicChapter, RecapClient, RecapLanguage, RecapPlan } from '../../shared/contracts';
+import type { Chapter, InvalidationReceipt, Lore, Moment, OwnerSnapshot, PrivacyTarget, PublicChapter, RecapClient, RecapLanguage, RecapPlan } from '../../shared/contracts';
 import { ActionGroup, Brand, Button, ClipFrame, Dialog, DockLayout, Field, IconButton, InlineNotice, LanguageControl, QuietButton, SegmentedControl, Sheet, SourceDisclosure, Textarea, Timecode, formatTimecode } from '../../ui';
 import { SettingsSheet } from '../settings/SettingsSheet';
 import { dockClock, DockStore, errorCode, forgetWindow, hotkeyMatches, pauseListening, privacyAcknowledged, publicationLabel, recordingRecovery, saveChapterDraft, type DockClockMode } from './model';
@@ -9,6 +9,7 @@ import { LoreRow } from './LoreRow';
 import { DockHistoryStore, historyKey, mergeHistory, type HistoryContext } from './history';
 import type { RecordingPanelStatus, RecordingPort } from './RecordingPanel';
 import { Icon } from './icons';
+import { IssueCard } from './IssueCard';
 import './dock.css';
 
 const RecordingPanel = import.meta.env.MODE === 'public' ? null : lazy(() => import('./RecordingPanel').then(module => ({ default: module.RecordingPanel })));
@@ -54,26 +55,14 @@ export function pollDockMarkers(read: NonNullable<DockOwnerPort['listMarkers']>,
   return () => { closed = true; clearTimeout(timer); active?.abort(); };
 }
 
+/** 120000 becomes "2 minutes", 45000 becomes "45 seconds". */
+const spanLabel = (ms: number) => { const seconds = Math.round(ms / 1000); return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} minute${seconds === 60 ? '' : 's'}` : `${seconds} seconds`; };
 const clockTime = (iso: string) => { const time = Date.parse(iso); return Number.isFinite(time) ? new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''; };
-const issueSubject: Record<OwnerIssue['component'], string> = { transcription: 'Speech', story: 'Chapters', moderation: 'Safety checks', narration: 'Narration', chat: 'Chat' };
-
 function Signal({ icon, label, detail, state }: { icon: 'mic' | 'chat'; label: string; detail: string; state: SignalState }) {
   return <div className="dk-signal" data-state={state} title={detail}>
     <span className="dk-signal__icon"><Icon name={icon} /><i aria-hidden="true" /></span>
     <span className="dk-signal__text"><strong>{label}</strong>{state !== 'live' && <span>{detail}</span>}</span>
   </div>;
-}
-
-function IssueCard({ issue, action }: { issue: OwnerIssue; action?: ReactNode }) {
-  return <article className="dk-issue" data-source={issue.source}>
-    <Icon name="alert" className="dk-issue__icon" />
-    <div className="dk-issue__body">
-      <p className="dk-issue__reason">{issue.reason}</p>
-      <p className="dk-issue__recovery">{issue.recovery}</p>
-      <p className="dk-issue__meta">{issue.source === 'twitch' ? 'Twitch' : 'OpenAI'} {issueSubject[issue.component].toLowerCase()}{clockTime(issue.since) && <>, since {clockTime(issue.since)}</>}</p>
-      {action && <div className="dk-issue__action">{action}</div>}
-    </div>
-  </article>;
 }
 
 interface ChapterCardProps {
@@ -272,7 +261,7 @@ export function DockPage({ client, capture: providedCapture, owner, renderPrevie
     return value && (value.src || value.poster) ? { ...value, label: `Clip from ${chapter.title} at ${formatTimecode(moment!.startMs)}` } : undefined;
   };
   const counts = { drafts: snapshot?.drafts.length ?? 0, held: snapshot?.held.length ?? 0 };
-  const reconnect = import.meta.env.MODE === 'public' || recording ? undefined : <a className="dk-link" href="/api/auth/twitch/start?returnTo=/dock" target="_blank" rel="noreferrer"><Icon name="twitch" />Reconnect Twitch</a>;
+  const reconnect = import.meta.env.MODE === 'public' || recording ? undefined : <a className="dk-link" href="/api/auth/twitch/start?returnTo=/dock" target="_blank" rel="noreferrer"><Icon name="link" />Reconnect Twitch</a>;
 
   const header = <>
     <div className="dk-id">
@@ -318,7 +307,7 @@ export function DockPage({ client, capture: providedCapture, owner, renderPrevie
           {['denied', 'no_device'].includes(captureState.status) && snapshot.settings.listeningPaused && <QuietButton pending={pending.has('chatOnly')} onClick={() => void run('chatOnly', async () => { await client.setSettings({ listeningPaused: false, baseRevision: snapshot.settings.revision }); setNotice('Chat-only listening enabled. The microphone remains off.'); await store.refresh(); })}><Icon name="chat" />Continue with chat only</QuietButton>}
         </div> : null}
         {!issueComponents.has('chat') && (snapshot.status.chat.state === 'error' || snapshot.status.chat.state === 'disconnected') ? <InlineNotice tone="warning" action={reconnect}>{import.meta.env.MODE === 'public' || recording ? 'Recorded chat is unavailable. Use the recording controls to restart.' : <>{snapshot.status.chat.message ?? 'Chat is disconnected.'} Your edits stay open in this tab.</>}</InlineNotice> : null}
-        {(['story', 'transcription', 'moderation'] as const).some(key => !issueComponents.has(key) && ['delayed', 'error'].includes(snapshot.status[key].state)) && <InlineNotice tone="warning">{recording ? recordingRecovery : <>Recap updates are delayed. Your published chapters stay online. {snapshot.status.story.action ?? 'Check the connection, then refresh the dock.'}</>}</InlineNotice>}
+        {(['story', 'transcription', 'moderation'] as const).some(key => !issueComponents.has(key) && ['delayed', 'error'].includes(snapshot.status[key].state)) && <InlineNotice tone="warning">{recording ? recordingRecovery : <>New chapters are delayed. {snapshot.status.story.action ?? 'Published chapters stay online. Check the connection, then refresh the dock.'}</>}</InlineNotice>}
         {!snapshot.session && <InlineNotice>There is no live stream. Start your stream on Twitch, then refresh this dock. Your saved settings stay available.</InlineNotice>}
         {snapshot.session && snapshot.session.status !== 'live' && <InlineNotice tone={snapshot.session.finalSnapshotAckAt ? 'success' : 'info'}>{snapshot.session.status === 'closing' ? 'Finishing the recap. Keep this process running.' : snapshot.session.finalSnapshotAckAt ? 'The stream ended and its recap is saved online.' : 'Public update pending. Keep this process running until the final recap is acknowledged.'}</InlineNotice>}
         {!recording && snapshot.sync.state === 'unconfigured' && <InlineNotice tone="warning">Public sharing is not set up, so the recap is saved on this computer only. <a href="/setup">Set up public sharing</a></InlineNotice>}
@@ -350,7 +339,7 @@ export function DockPage({ client, capture: providedCapture, owner, renderPrevie
     <Sheet open={!!edit} onOpenChange={open => { if (!open) closeEdit(); }} title="Edit chapter" className="dock-paper" description="New audio will not replace your wording. Publication still waits for its safety check." footer={<ActionGroup><Button pending={pending.has('edit')} disabled={!edit?.title.trim() || !edit?.summary.trim() || edit.conflict} onClick={() => void saveEdit()}>Save chapter</Button><QuietButton onClick={closeEdit}>Cancel</QuietButton></ActionGroup>}>
       {edit && <><Field label="Chapter title" disabled={pending.has('edit')} value={edit.title} maxLength={120} onChange={event => setEdit({ ...edit, title: event.target.value })} /><Textarea label="Chapter summary" disabled={pending.has('edit')} value={edit.summary} maxLength={700} onChange={event => setEdit({ ...edit, summary: event.target.value })} />{edit.error && <InlineNotice tone="danger" live>{edit.error}</InlineNotice>}{edit.conflict && <section className="dock-comparison"><h3>Latest saved version</h3>{comparison ? <><strong>{comparison.title}</strong><p>{comparison.summary}</p><QuietButton onClick={() => setEdit({ ...edit, baseRevision: comparison.revision, conflict: false, error: '' })}>Keep my edit against this version</QuietButton></> : <p>This chapter is no longer available. Copy any wording you want to keep before closing.</p>}</section>}<p className="pv-secondary">Deleting a chapter removes it from the recap. To remove what was captured, open Source and use Forget.</p></>}
     </Sheet>
-    <Dialog open={!!forget} onOpenChange={open => { if (!open) setForget(null); }} title={forget?.kind === 'interval' ? `Forget ${formatTimecode(forget.fromMs)} to ${formatTimecode(forget.toMs)}?` : 'Forget captured material?'} className="dock-paper dk-forget" footer={<ActionGroup><Button tone="danger" pending={pending.has('forget')} onClick={() => void applyForget()}>{forget?.kind === 'interval' ? `Forget these ${Math.round((forget.toMs - forget.fromMs) / 1000)} seconds` : 'Forget this interval'}</Button><QuietButton onClick={() => setForget(null)}>Keep it</QuietButton></ActionGroup>}>
+    <Dialog open={!!forget} onOpenChange={open => { if (!open) setForget(null); }} title={forget?.kind === 'interval' ? `Forget ${formatTimecode(forget.fromMs)} to ${formatTimecode(forget.toMs)}?` : 'Forget captured material?'} className="dock-paper dk-forget" footer={<ActionGroup><Button tone="danger" pending={pending.has('forget')} onClick={() => void applyForget()}>{forget?.kind === 'interval' ? `Forget ${spanLabel(forget.toMs - forget.fromMs)}` : 'Forget this interval'}</Button><QuietButton onClick={() => setForget(null)}>Keep it</QuietButton></ActionGroup>}>
       {forget?.kind === 'interval' && <div className="dk-forget__window" aria-hidden="true"><span>{formatTimecode(forget.fromMs)}</span><i /><span>{formatTimecode(forget.toMs)}</span></div>}
       {recording ? <p>This removes the interval and the chapters, moments, lore and media made from it in this recording’s sandbox. Reset recording restores the original. Your live channel and Twitch clips are unchanged.</p> : <><p>Speech and chat from this interval are deleted, along with the chapters, moments, lore and Previously media made from them. This cannot be undone.</p><p>Twitch clips have to be deleted on Twitch. Any affected clips are listed after removal.</p><p>Keep this process running until the cloud confirms the removal.</p></>}{error && <InlineNotice tone="danger">{error}</InlineNotice>}
     </Dialog>

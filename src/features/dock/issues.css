@@ -1,0 +1,16 @@
+/* Integration problems with recovery, and the paper action link they carry. Shared by dock and setup. */
+.dk-issues { display: grid; gap: 10px; }
+.dk-issue { color: var(--pv-paper); display: flex; gap: 12px; padding: 14px 14px 14px 12px; border-radius: 16px; background: #2A2419; box-shadow: 0 4px 0 #17130C, inset 0 0 0 1px rgb(242 198 109 / .28), var(--pv-edge-light); animation: dk-arrive var(--pv-motion-reorder) var(--pv-ease) both; }
+.dk-issue + .dk-issue { animation-delay: 60ms; }
+.dk-issue__icon { width: 20px; height: 20px; margin-top: 1px; color: var(--pv-warning); }
+.dk-issue__body { display: grid; gap: 4px; min-width: 0; }
+.dk-issue__reason { font-size: .9375rem; line-height: 1.35; font-weight: 750; }
+.dk-issue__recovery { font-size: .875rem; line-height: 1.45; color: #D9D2C3; }
+.dk-issue__meta { font-size: .8125rem; color: #B8AE98; }
+.dk-issue__action { margin-top: 6px; }
+.dk-link { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 8px 12px; border-radius: 10px; background: var(--pv-paper); color: var(--pv-ink) !important; font-size: .875rem; font-weight: 750; text-decoration: none; box-shadow: 0 3px 0 var(--pv-paper-side); transition: transform var(--pv-motion-recover) var(--pv-spring), box-shadow var(--pv-motion-hover); }
+.dk-link .dk-icon { width: 16px; height: 16px; }
+.dk-link:hover { transform: translateY(-1px); box-shadow: 0 4px 0 var(--pv-paper-side); }
+.dk-link:active { transform: translateY(2px) scale(.98); box-shadow: 0 1px 0 var(--pv-paper-side); }
+@keyframes dk-arrive { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .dk-issue { animation: none; } }

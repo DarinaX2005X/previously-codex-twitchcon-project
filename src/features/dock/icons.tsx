@@ -1,3 +1,4 @@
+import './icons.css';
 /** One small stroke icon family (24 grid, 2 px stroke, round joins) for the dock, setup and public recap. */
 const paths = {
   gear: <><path d="m10 3-.7 2.1-1.6.9-2.2-.4-2 3.4 1.5 1.7v1.9L3.5 14l2 3.4 2.2-.4 1.6.9.7 2.1h4l.7-2.1 1.6-.9 2.2.4 2-3.4-1.5-1.7v-1.9l1.5-1.7-2-3.4-2.2.4-1.6-.9L14 3Z" /><circle cx="12" cy="11.5" r="3" /></>,
@@ -19,7 +20,6 @@ const paths = {
   chat: <path d="M4 5.5h16v10.5H10l-4.5 3.5V16H4V5.5Z" />,
   cast: <><rect x="3" y="5" width="18" height="12" rx="2.5" /><path d="M8 20.5h8" /><path d="m10 9 4.5 2-4.5 2V9Z" /></>,
   clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
-  twitch: <><path d="M5 3.5h15v10l-4.5 4.5H12l-3 3v-3H5v-14.5Z" /><path d="M11 8v4.5M15.5 8v4.5" /></>,
   key: <><circle cx="8" cy="15" r="4" /><path d="m11 12 8.5-8.5M16.5 6.5l2.5 2.5M14.5 8.5l2 2" /></>,
   terminal: <><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="m7 9.5 3 2.5-3 2.5M12.5 15H17" /></>,
   arrowUp: <path d="M12 19V5M6 11l6-6 6 6" />,
