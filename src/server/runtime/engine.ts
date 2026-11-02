@@ -402,7 +402,10 @@ export class StoryEngine {
     await Promise.all(Array.from({length: Math.min(3, jobs.length)}, worker));
     if (this.options.story.presentLore) for (const visible of published.lore) {
       const fresh = this.state(sessionId), lore = fresh.lore.find(item => item.id === visible.id);
-      if (!lore || safeLorePresentation(fresh, lore, language)) continue;
+      // Same gate as presentOwnerLore: only publishable, privacy-current lore is sent for a new language.
+      if (!lore || !['confirmed', 'published'].includes(lore.status) || !safetyAllowsPublication(lore.safety)
+        || !this.allowed({sessionId, privacyEpoch: fresh.session.privacyEpoch, dependencyRefs: lore.dependencyRefs})
+        || safeLorePresentation(fresh, lore, language)) continue;
       try {
         const originRefs = fresh.nodes[lore.id]?.supports ?? [];
         const value = (await this.options.story.presentLore({term: lore.term, explanation: lore.explanation, originRefs}, this.safety, signal, [language]))[language];
