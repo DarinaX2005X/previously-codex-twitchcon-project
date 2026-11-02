@@ -46,6 +46,11 @@ function Mark({o}:{o:SceneObject}) {
   </>;
 }
 
+function Word({r}:{r:SceneObject['runs'][number]}) {
+  return <span className={`pv-run${r.tabular?' pv-tabular':''}`} style={{left:r.x,top:r.y,fontSize:r.size,fontWeight:r.weight,color:r.color,opacity:r.opacity,letterSpacing:r.weight>=800?'-.03em':'-.01em',
+    transform:`translate(${r.dx??0}px,${r.dy}px) scale(${r.scale})`,filter:r.blur>.4?`blur(${r.blur.toFixed(1)}px)`:undefined}}>{r.text}</span>;
+}
+
 /** Read-only local renderer. It has no trigger, ACK, broadcast or publication API. */
 export function ScenePlayer(props:ScenePlayerProps) {
   const {timeMs,playing=false,channel,title,resolveMedia,preparedMedia,soundEnabled=false,volume=.45,cropToLayout=false,frameExact=false}=props;
@@ -105,12 +110,13 @@ export function ScenePlayer(props:ScenePlayerProps) {
             const persp=o.rotX||o.rotY?`perspective(1800px) rotateX(${o.rotX??0}deg) rotateY(${o.rotY??0}deg) `:'';
             const style:CSSProperties&Record<string,string|number|undefined>={width:o.w,height:o.h,borderRadius:o.radius,opacity:o.opacity,zIndex:o.z,
               transform:`translate3d(${o.x}px,${o.y}px,0) ${persp}rotate(${o.rot}deg) scale(${o.sx},${o.sy})`,transformOrigin:o.origin==='tl'?'0 0':'50% 50%',
-              background:o.fill,filter:(o.blurX||o.blurY)?`url(#mb${uid}${o.key.replace(/[^a-zA-Z0-9]/g,'')})`:undefined,'--lift':o.lift??0};
+              background:o.fill,filter:(o.blurX||o.blurY)?`url(#mb${uid}${o.key.replace(/[^a-zA-Z0-9]/g,'')})`:undefined,'--lift':o.lift??0,...(o.side?{'--side':o.side}:{})};
             return <div key={o.key} className={`pv-o pv-${o.kind} pv-tone-${o.tone}${o.mask?' pv-mask':''}`} style={style} data-key={o.key}>
+              {o.wipe!==undefined&&o.wipe>0&&<span className="pv-wipe" style={{transform:`scaleX(${o.wipe})`}}/>}
               {o.media&&<MediaHost bundle={media} plan={plan} media={o.media} playing={playing} frameExact={frameExact} onBlocked={blocked}/>}
               {o.kind==='mark'&&<Mark o={o}/>}
-              {o.runs.map(r=><span key={r.key} className={`pv-run${r.tabular?' pv-tabular':''}`} style={{left:r.x,top:r.y,fontSize:r.size,fontWeight:r.weight,color:r.color,opacity:r.opacity,letterSpacing:r.weight>=800?'-.03em':'-.01em',
-                transform:`translate(${r.dx??0}px,${r.dy}px) scale(${r.scale})`,filter:r.blur>.4?`blur(${r.blur.toFixed(1)}px)`:undefined}}>{r.text}</span>)}
+              {o.runs.map(r=><Word key={r.key} r={r}/>)}
+              {o.notch&&o.notch.h>1&&<span className="pv-notch" style={{left:o.notch.x,width:o.notch.w,height:o.notch.h,opacity:o.notch.opacity}}>{o.notch.runs.map(r=><Word key={r.key} r={r}/>)}</span>}
               {o.sheen!==undefined&&<span className="pv-sheen" style={{transform:`translateX(${-60+o.sheen*220}%) skewX(-18deg)`}}/>}
             </div>;
           })}

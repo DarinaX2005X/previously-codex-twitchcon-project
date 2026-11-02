@@ -107,7 +107,15 @@ export class ReplayDriver {
     }
     this.atMs=target;if(target>=this.durationMs&&!this.state.playbacks.some(p=>['queued','preparing','playing'].includes(p.status)))this.playing=false;
   }
-  control(control:ReplayControl){if(control.speed)this.speed=control.speed;if(control.action==='play')this.playing=true;if(control.action==='pause')this.playing=false;if(control.action==='seek'){const m=this.milestones.find(x=>x.id===control.milestone);if(m)this.advanceTo(m.atMs);}}
+  /** Recorded offset a seek moves to: a milestone, or `atMs` floored and clamped to the recording. Null when the control names neither. */
+  seekTarget(control:ReplayControl):number|null{
+    if(control.milestone!==undefined){const m=this.milestones.find(x=>x.id===control.milestone);return m?m.atMs:null;}
+    if(control.atMs===undefined)return null;
+    if(typeof control.atMs!=='number'||!Number.isFinite(control.atMs))throw Object.assign(new Error('Choose a time inside the recording.'),{code:'invalid_seek',status:400});
+    return Math.min(this.durationMs,Math.max(0,Math.floor(control.atMs)));
+  }
+  /** A seek only moves forward by executing every recorded event up to the target. Moving back needs a fresh run (the worker does that). */
+  control(control:ReplayControl){if(control.speed)this.speed=control.speed;if(control.action==='play')this.playing=true;if(control.action==='pause')this.playing=false;if(control.action==='seek'){const target=this.seekTarget(control);if(target!==null)this.advanceTo(target);}}
   chapter(id:string,revision:number){const c=this.state.chapters.find(x=>x.id===id);if(!c||c.revision!==revision)throw Object.assign(new Error('The chapter changed. Compare the current version.'),{code:'revision_conflict',status:409});return c;}
   editChapter(id:string,patch:{title:string;summary:string;baseRevision:number}):Chapter {
     if(!patch.title.trim()||!patch.summary.trim()||patch.title.length>120||patch.summary.length>700)throw new Error('The correction needs a title and summary within the chapter limits.');

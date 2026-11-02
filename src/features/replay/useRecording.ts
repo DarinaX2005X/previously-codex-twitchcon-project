@@ -31,5 +31,7 @@ export function useRecording(manifestUrl?:string){
     void load().catch(failure=>{if(!disposed){const code=failure instanceof Error&&/^[a-z_]{1,80}$/.test(failure.message)?failure.message:failure instanceof Error?failure.name:'unknown';console.warn('Recording initialization failed',phase,code);gate?.dispose();replay?.dispose();setMedia([]);setClient(null);setView(null);setError('The recording is unavailable. Reload to try again.');}});
     return()=>{disposed=true;discovery.abort();window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',focus);unsubscribe?.();gate?.dispose();replay?.dispose();};
   },[manifestUrl]);
-  return {client,view,error,origin,resolveMedia,chat,mediaRanges};
+  /** Timeline seek to a recorded offset in ms; resolves once the replay has executed up to that time. */
+  const seek=useCallback((atMs:number)=>client?client.seekTo(atMs):Promise.reject(new Error('recording_unavailable')),[client]);
+  return {client,view,error,origin,resolveMedia,chat,mediaRanges,seek};
 }

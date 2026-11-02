@@ -22,7 +22,8 @@ export function resolveSceneLayout(input: OverlayLayout): SceneLayout | null {
   const free = candidates[0];
   if (!free) return null;
   const full = free.width >= 1450 && free.height >= 420;
-  const height = Math.min(free.height, full ? 490 : 400);
+  // A raid scene may use a tall band for its ~10 s; it never touches a protected area and then leaves completely.
+  const height = Math.min(free.height, full ? 640 : 420);
   const y = input.preset === 'upper' ? free.y : free.y+free.height-height;
   return {bounds:{...free,y,height},mode:full?'full':'compact',captionSize:free.width>=1650?96:free.width>=1450?88:80,openingSize:full?152:136,protected:blocked};
 }

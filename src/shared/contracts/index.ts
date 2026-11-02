@@ -137,7 +137,8 @@ export const defaultSettings: Settings = {
   revision: 0, recapLanguage: 'en', publicationDelaySeconds: 75,
   listeningPaused: true, autoClips: false, autoRaid: true,
   narrationEnabled: false, broadcastSoundEnabled: false, volume: 0.35, uiSoundEnabled: false,
-  layout: { preset: 'lower', protectedRects: [{ x: 760, y: 64, width: 1096, height: 470 }] },
+  // A typical face cam in the top-right corner. Streamers add or move areas in scene settings.
+  layout: { preset: 'lower', protectedRects: [{ x: 1376, y: 64, width: 480, height: 270 }] },
   recapDurationMs: 12000, hotkey: 'Alt+P', channelContext: '', earlyWelcomeClipId: null,
 };
 export const ChannelSchema = z.object({ id: IdSchema, login: z.string().regex(/^[a-z0-9_]{1,25}$/), displayName: z.string().min(1).max(64) }).strict();
@@ -266,7 +267,8 @@ export type OwnerIssue = { source: 'openai' | 'twitch'; component: 'transcriptio
 export type OwnerHistoryQuery = {sessionId: string; kind: 'chapter' | 'lore'; filter?: 'all' | 'published' | 'draft' | 'held'; limit: number; cursor?: string};
 export type OwnerHistoryPage = {items: (Chapter | Lore)[]; nextCursor: string | null; privacyEpoch: number; language: RecapLanguage};
 export type UpdateEvent = { id: number; event: 'snapshot.changed' | 'snapshot.reset' | 'privacy.invalidated' | 'source.status' | 'publication.synced' | 'playback.prepare' | 'playback.start' | 'playback.cancel'; data: { sessionId: string | null; revision: number; affectedIds?: string[] } };
-export type ReplayControl = { action: 'play' | 'pause' | 'reset' | 'seek'; speed?: 1 | 2 | 4; milestone?: string };
+/** `seek` takes either a milestone id or a recorded offset `atMs` (integer ms, clamped to the recording). A milestone wins when both are given. */
+export type ReplayControl = { action: 'play' | 'pause' | 'reset' | 'seek'; speed?: 1 | 2 | 4; milestone?: string; atMs?: number };
 export interface RecapClient {
   getSnapshot(): Promise<OwnerSnapshot>;
   subscribe(listener: (event: UpdateEvent) => void): () => void;

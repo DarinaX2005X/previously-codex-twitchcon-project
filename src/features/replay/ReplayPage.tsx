@@ -15,7 +15,7 @@ function sourceExcerpt(text:string){
   const head=characters.slice(0,150).join(''),boundary=head.lastIndexOf(' ');
   return {text:(boundary>100?head.slice(0,boundary):head).trimEnd(),truncated:true};
 }
-function chatterName(actor:string|null){if(!actor)return 'viewer';const value=actor.replace(/^(user|chatter|actor)[-_:]/,'');return /^[a-z0-9_]{2,25}$/i.test(value)?value:'viewer';}
+function chatterName(actor:string|null):string|null{if(!actor||/viewer[-_]?\d+$/i.test(actor)||/^fx-/.test(actor))return null;const value=actor.replace(/^(user|chatter|actor)[-_:]/,'');return /^[a-z0-9_]{2,25}$/i.test(value)?value:null;}
 
 export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
   const {client,view,error,origin,resolveMedia,chat,mediaRanges}=useRecording(manifestUrl);
@@ -30,6 +30,12 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
   const availableLanguages=t?.availableLanguages??[];
   const correction=t?.correction;
   const correctionChapter=correctionTarget(s,correction?.targetId);
+  // Remember the published wording before the streamer replaces it, to show what changed.
+  const original=useRef<{id:string;title:string;summary:string}|null>(null);
+  if(correctionChapter&&!t?.correctionApplied&&correctionChapter.title!==correction?.title)original.current={id:correctionChapter.id,title:correctionChapter.title,summary:correctionChapter.summary};
+  if(!correctionChapter&&!t?.correctionApplied)original.current=null;
+  const replaced=t?.correctionApplied&&original.current?.id===correctionChapter?.id?original.current:null;
+  const livePublished=!!correction&&!!published?.chapters.some(c=>c.title===correction.title);
   const owner=useMemo(()=>client?{
     listSources:client.listSources.bind(client),
     editLore:async()=>{throw new Error('This recording has no safety check for this edit');},
@@ -57,9 +63,10 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
   const removedContext=sameTimeline&&publicationSeen.current.seen&&!hasContext;
   useEffect(()=>{publicationSeen.current={sessionId:s?.session?.id??null,atMs:t?.atMs??0,seen:hasContext||sameTimeline&&publicationSeen.current.seen};},[s?.session?.id,t?.atMs,hasContext,sameTimeline]);
   const held=!!s?.held.length;
-  const incoming=!activePlan?t?.latestSource:null;
+  const incoming=!activePlan&&t?.latestSource&&t.latestSource.kind!=='chat'?t.latestSource:null;
   const visibleChat=useVisibleChat(client,s,chat,t?.atMs??0);
-  const seek=(milestone:string,play=true)=>void run(async()=>{await client!.controlReplay({action:'seek',milestone});if(play)await client!.controlReplay({action:'play'});});
+  // Jumping to a moment plays it at normal speed so the raid scene can be watched.
+  const seek=(milestone:string,play=true)=>void run(async()=>{await client!.controlReplay({action:'seek',milestone});if(play)await client!.controlReplay({action:'play',speed:1});});
 
   return <main className="rp">
     <nav className="rp-nav" aria-label="Replay navigation">
@@ -122,15 +129,16 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
           </div>
         </div>
         {correction?<div className="rp-diff">
-          {correctionChapter?<TitleCard tone="ink" title={correctionChapter.title} atMs={correctionChapter.startMs} ground="var(--pv-ink)" className="rp-diff__before" meta="Published now"><p>{correctionChapter.summary}</p></TitleCard>
+          {correctionChapter&&(t.correctionApplied?replaced:true)?<TitleCard tone="ink" title={replaced?.title??correctionChapter.title} atMs={correctionChapter.startMs} ground="var(--pv-ink)" className="rp-diff__before" meta={replaced?'Replaced':'Published now'}><p>{replaced?.summary??correctionChapter.summary}</p></TitleCard>
             :<div className="rp-diff__waiting"><p>{chapter?'Open the streamer dock to choose the chapter to edit.':held?'The edit is waiting for its safety check.':removedContext?'Restart to restore the original recording.':'The chapter to correct is published later in the recording. Play or jump to the raid first.'}</p></div>}
           <TitleCard title={correction.title} atMs={correctionChapter?.startMs} ground="var(--pv-ink)" className="rp-diff__after" meta={t.correctionApplied?'Applied':'Your wording'}><p>{correction.summary}</p></TitleCard>
-          <Button size="large" disabled={!correctionChapter||busy||t.correctionApplied} onClick={()=>void run(()=>client.editChapter(correctionChapter!.id,{title:correction.title,summary:correction.summary,baseRevision:correctionChapter!.revision}))}>{t.correctionApplied?'Wording applied':'Apply my wording'}</Button>
+          {t.correctionApplied?<p className="rp-applied" role="status">{livePublished?'Published. The recap page, the chat answer and the next raid scene use your wording.':'Applied. Your wording is waiting for its safety check before viewers see it.'}</p>
+            :<Button size="large" disabled={!correctionChapter||busy} onClick={()=>void run(()=>client.editChapter(correctionChapter!.id,{title:correction.title,summary:correction.summary,baseRevision:correctionChapter!.revision}))}>Apply my wording</Button>}
         </div>:<p className="rp-owner__none">This recording has no suggested correction.</p>}
       </section>
 
       {preview&&<section className="rp-preview" aria-label="Next raid scene preview"><div className="rp-preview__head"><h2>Next raid scene</h2><QuietButton onClick={()=>setPreview(null)}>Close the preview</QuietButton></div><ScenePreview plan={preview} playing soundEnabled={false} resolveMedia={resolveMedia}/></section>}
-      {dock&&<section ref={dockRegion} tabIndex={-1} className="rp-dock" id="replay-demo-dock" aria-label="Streamer dock"><div className="rp-dock__bar"><p>Streamer dock, as it appears inside OBS</p><QuietButton onClick={closeDock}>Close the dock</QuietButton></div><DockPage client={client} owner={owner} clockMode="snapshot" recording availableLanguages={availableLanguages} label="Recorded stream" renderPreview={(plan,close)=><div><ScenePreview plan={plan} playing soundEnabled={false} resolveMedia={resolveMedia}/><QuietButton onClick={close}>Close preview</QuietButton></div>}/></section>}
+      {dock&&<section ref={dockRegion} tabIndex={-1} className="rp-dock" id="replay-demo-dock" aria-label="Streamer dock"><div className="rp-dock__bar"><p>Streamer dock, as it appears inside OBS</p><QuietButton onClick={closeDock}>Close the dock</QuietButton></div><DockPage client={client} owner={owner} clockMode="snapshot" recording availableLanguages={availableLanguages} label="Recorded stream" resolveMedia={id=>{const src=resolveMedia(id);return src?{src}:undefined;}} renderPreview={(plan,close)=><div><ScenePreview plan={plan} playing soundEnabled={false} resolveMedia={resolveMedia}/><QuietButton onClick={close}>Close preview</QuietButton></div>}/></section>}
     </>}
   </main>;
 }
@@ -178,7 +186,7 @@ function ChatColumn({messages,atMs}:{messages:RecordedChat[];atMs:number}){
   useEffect(()=>{const el=list.current;if(el)el.scrollTop=el.scrollHeight;},[shown.length,shown.at(-1)?.id]);
   return <aside className="rp-chat" aria-label="Stream chat">
     <div className="rp-chat__head"><h2>Stream chat</h2><span className={recent>=12?'rp-chat__rate is-busy':'rp-chat__rate'}>{recent} in the last 10 s</span></div>
-    {shown.length?<ol ref={list} className="rp-chat__list" aria-live="off">{shown.map(m=><li key={m.id}><b>{chatterName(m.actor)}</b> {m.text}</li>)}</ol>
+    {shown.length?<ol ref={list} className="rp-chat__list" aria-live="off">{shown.map(m=>{const who=chatterName(m.actor);return <li key={m.id}>{who&&<b>{who}</b>}{who?' ':''}{m.text}</li>;})}</ol>
       :<p className="rp-chat__empty">Chat messages from the recording appear here as it plays.</p>}
   </aside>;
 }
@@ -200,7 +208,7 @@ function NowCard({snapshot,held,removed,publishAtMs,atMs,canCorrect}:{snapshot:O
 }
 
 function ChapterCard({chapter,snapshot,mediaUrl}:{chapter:PublicChapter;snapshot:OwnerSnapshot;mediaUrl?:string}){
-  const moment=snapshot.moments.find(m=>chapter.momentIds.includes(m.id));
+  const moment=snapshot.moments.find(m=>chapter.momentIds.includes(m.id)&&m.count>0);
   const meta=[chapter.pinned&&'Pinned',chapter.edited&&'Edited by the streamer',moment&&`${moment.count} chat messages at ${time(moment.startMs)}`].filter(Boolean).join('. ');
   return <TitleCard className="rp-chapter" title={chapter.title} atMs={chapter.startMs} ground="var(--pv-ink)" meta={meta||undefined}>
     <p>{chapter.summary}</p>

@@ -10,10 +10,10 @@ The bundle is built from its timeline by running the production reducer through 
 
 Run the [local keyless path](../setup/local.md#install-and-try-replay), then open `/replay`:
 
-1. **Play recording** follows the stream. The first chapter publishes at 1:54 after its 75-second hold; four chapters are public by the raid.
-2. **Jump to raid** executes the preceding events and advances to the raid scene. It does not replace the state with a finished screenshot or snapshot.
-3. **Apply correction** appears after the recording's last story update (6:17). It renames the third chapter with the exact checked owner wording included in the bundle. **Preview next recap** displays that correction in the next plan.
-4. English and Russian select separately checked recorded presentations at any point of the recording. An arbitrary edit from the demo dock stays held when the bundle has no matching safety outcome.
+1. **Play the recording** follows the stream. The first chapter publishes at 1:54 after its 75-second hold; four chapters are public by the raid.
+2. **Jump to the raid** executes the preceding events and advances to the raid scene. It does not replace the state with a finished screenshot or snapshot.
+3. **Apply my wording** in **Change the recap** becomes available after the recording's last story update (6:17). It renames the third chapter with the exact checked owner wording included in the bundle. **Preview the next raid scene** shows that correction in the next scene.
+4. English and Russian select separately checked recorded presentations at any point of the recording. An arbitrary edit from **Open the streamer dock** stays held when the bundle has no matching safety outcome.
 5. **Restart** creates a fresh run. Changes in one replay tab do not edit the broadcaster's live database or another visitor's run.
 
 `/c/foxlight_dev` opens the real public recap page with the snapshot this recording publishes at the raid, says once that it is an example, and plays the example clips from the same gated recording. `scripts/export-foxlight-raid.mts` writes the exact raid plan and snapshot as JSON for scene and video work.
@@ -30,7 +30,7 @@ An unmatched request produces `fixture_missing`. Replay does not quietly call a 
 
 The browser fetches the current manifest, verifies the bundle hash and identity, and revalidates before starting the worker. It polls every two seconds, including while downloading chunks. A changed manifest or revoked asset stops loading or playback and removes the in-memory story. After six seconds without successful revalidation, the visibility lease expires. Local replay serves the authored bundle from its separate private registry; the fixture is not embedded in the public JavaScript bundle.
 
-Own-stream controls follow what was captured. **Jump to raid** appears only with a recorded raid milestone. **Apply correction** appears only when a checked correction is included. Language choices include only checked presentations available for the current wording; a recording with one available language shows its name without a switch. The bundled authored example contains all of those optional events, while a safe single-language recording can export without a raid or an edit.
+Own-stream controls follow what was captured. **Jump to the raid** appears only with a recorded raid milestone. **Apply my wording** appears only when a checked correction is included. Language choices include only checked presentations available for the current wording; a recording with one available language shows its name without a switch. The bundled authored example contains all of those optional events, while a safe single-language recording can export without a raid or an edit.
 
 ## Capture your own material
 

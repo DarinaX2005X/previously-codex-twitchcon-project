@@ -17,7 +17,7 @@ export function labPlan(variant: string): RecapPlan {
   const base: RecapPlan = {
     id: `recap:lab-${variant}`, sessionId: 'foxlight-session', revision: 12, privacyEpoch: 0, language: 'en', variant: 'full', durationMs: 12000,
     dependencyRefs: [{ id: 'chapter:moon', revision: 2 }],
-    layout: { preset: 'lower', protectedRects: [{ x: 760, y: 64, width: 1096, height: 470 }] },
+    layout: { preset: 'lower', protectedRects: [{ x: 1376, y: 64, width: 480, height: 270 }] },
     arrivals: [{ triggerId: 'fx-raid-pixelmoth', fromLogin: 'pixelmoth', viewers: 37 }],
     overflowArrivals: { channels: 0, viewers: 0 },
     beats: [

@@ -10,16 +10,15 @@ The interface uses [Onest Variable](../../public/fonts/Onest-Variable.ttf), with
 
 | Role | Color |
 | --- | --- |
-| Canvas | `#E9EBE6` |
-| Paper | `#F5F4EC` |
-| Source plane | `#D5DAD2` |
-| Charcoal / primary text | `#252B2C` |
-| Raised dark surface | `#3A4440` |
-| Action / meaningful emphasis | `#F26844` |
-| Border | `#66716E` |
-| Success | `#286345` |
-| Warning | `#795214` |
-| Error | `#A93130` |
+| Ink stage | `#14171B` |
+| Raised ink surface | `#1E232A` |
+| Paper card | `#F4EFE6` |
+| Paper underside | `#CFC5B3` |
+| Vermilion, action and the present | `#FF5A36` |
+| Vermilion underside | `#C93F22` |
+| Lime, chat energy and the live state | `#C8F560` |
+| Muted text on ink | `#A9B1BC` |
+| Muted text on paper | `#4A4F57` |
 
 [The production tokens](../../src/styles/tokens.css) are authoritative, including dark-surface text and state colors.
 
@@ -27,9 +26,9 @@ The interface uses [Onest Variable](../../public/fonts/Onest-Variable.ttf), with
 
 [Visual review captures](../testing/visual/) show the authored example and isolated owner fixtures. Their scope is described in [the review notes](../testing/visual/experience-review.md). They must retain the authored/example disclosure when reused. They are not footage of the owner, a real raid, or evidence of model quality.
 
-## Live source material
+## Example and live source material
 
-Owned microphone, Twitch and OBS material is pending the agreed live session. The remaining source set is the actual raid, a clean overlay pass, an overlay pass over the owner's screen, and dock/public recap screenshots from that stream. Do not substitute the authored example under a live caption.
+The example recording uses real gameplay footage of Foxlight, a small original browser game made for it (`tools/foxlight`, clips in `public/demo/foxlight`). Its speech, chat, raid and model outcomes are authored. No owner live stream has been recorded, so do not present the example under a live caption.
 
 Keep raw private captures outside Git until their actual screen and audio content have been reviewed. Encode approved MP4 footage with `h264_nvenc`. H.264 has no alpha channel: for compositing, supply aligned fill and matte files with the same dimensions, frame rate, frame count and timestamps, together with the transparent OBS Browser Source. Record encoder, source session, export revision and timing beside each approved capture.
 

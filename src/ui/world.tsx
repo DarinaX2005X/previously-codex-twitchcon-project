@@ -1,4 +1,4 @@
-import type { HTMLAttributes, ReactNode } from 'react';
+import { useState, type HTMLAttributes, type ReactNode } from 'react';
 import { formatTimecode } from './story';
 
 const cx = (...names: (string | false | undefined)[]) => names.filter(Boolean).join(' ');
@@ -27,8 +27,13 @@ export function TitleCard({ title, atMs, tone = 'paper', ground, meta, as: Tag =
 export interface ClipFrameProps extends HTMLAttributes<HTMLElement> { src?: string; poster?: string; label: string; autoPlay?: boolean; loop?: boolean; children?: ReactNode; }
 /** A clip inside a rounded frame with a thin inner bevel. Shows the poster alone when there is no video. */
 export function ClipFrame({ src, poster, label, autoPlay = false, loop = true, children, className, ...props }: ClipFrameProps) {
-  return <figure {...props} className={cx('pv-frame', className)}>
-    {src ? <video src={poster || src.includes('#') ? src : `${src}#t=0.1`} poster={poster} muted playsInline autoPlay={autoPlay} loop={loop} preload="metadata" aria-label={label} /> : poster ? <img src={poster} alt={label} /> : null}
+  const [failed, setFailed] = useState<string | null>(null);
+  if (src && failed === src && !poster) return null;
+  // Hovering a still clip plays it; leaving pauses it again.
+  const play = (event: { currentTarget: HTMLElement }) => { const v = event.currentTarget.querySelector('video'); if (v && v.paused) void v.play().catch(() => undefined); };
+  const stop = (event: { currentTarget: HTMLElement }) => { const v = event.currentTarget.querySelector('video'); if (v && !autoPlay) v.pause(); };
+  return <figure {...props} onMouseEnter={play} onMouseLeave={stop} className={cx('pv-frame', className)}>
+    {src && failed !== src ? <video onError={() => setFailed(src)} src={poster || src.includes('#') ? src : `${src}#t=0.1`} poster={poster} muted playsInline autoPlay={autoPlay} loop={loop} preload="metadata" aria-label={label} /> : poster ? <img src={poster} alt={label} /> : null}
     {children}
   </figure>;
 }

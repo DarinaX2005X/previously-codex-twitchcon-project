@@ -29,7 +29,7 @@ Copy the private OBS overlay URL from setup. Add it above your captured window a
 
 ## Start the stream and let real context accumulate
 
-Start the private OBS recording, then **Start Streaming**. Confirm your Twitch channel is live and use **Check configuration** in a separate setup tab until its session appears. Return to the dock and confirm **Recording privately**. Choose **Resume listening** when paused, or **Start microphone** if listening is enabled but the microphone is off, then grant microphone access. Keep this browser dock tab open while capturing; open public links in another tab. OBS carries your broadcast voice; Previously captures speech for transcription. Avoid duplicating your microphone through the overlay.
+Start the private OBS recording, then **Start Streaming**. Confirm your Twitch channel is live and use **Check again** in a separate setup tab until its session appears. Return to the dock and confirm **Recording privately**. Choose **Resume listening** when paused, or **Start microphone** if listening is enabled but the microphone is off, then grant microphone access. Keep this browser dock tab open while capturing; open public links in another tab. OBS carries your broadcast voice; Previously captures speech for transcription. Avoid duplicating your microphone through the overlay.
 
 Wait for an actual checked chapter and its published state. The default hold is 75 seconds after its supporting source ends, plus processing and checks. Inspect held text or provider errors before continuing.
 

@@ -18,7 +18,7 @@ self.onmessage=(message:MessageEvent<{id:number;method:string;args:unknown[]}>)=
       if(!driver)throw new Error('recording_unavailable');
       switch(method){
         case 'getSnapshot':result=driver.snapshot();break;
-        case 'controlReplay':{const control=args[0] as ReplayControl;if(control.action==='reset')fresh();else if(control.action==='seek'){const m=driver.milestones.find(x=>x.id===control.milestone);if(m&&m.atMs<driver.atMs)fresh();driver!.control(control);}else driver.control(control);virtualPosition=driver!.atMs;last=performance.now();break;}
+        case 'controlReplay':{const control=args[0] as ReplayControl;if(control.action==='reset')fresh();else if(control.action==='seek'){const target=driver.seekTarget(control);if(target!==null&&target<driver.atMs){const {playing,speed}=driver;fresh();driver!.playing=playing;driver!.speed=speed;}driver!.control(control);}else driver.control(control);virtualPosition=driver!.atMs;last=performance.now();break;}
         case 'editChapter':result=driver.editChapter(args[0] as string,args[1] as Parameters<ReplayDriver['editChapter']>[1]);break;
         case 'deleteChapter':driver.chapter(args[0] as string,args[1] as number);result=driver.privacy({kind:'entity',sessionId:driver.state.session.id,id:args[0] as string});break;
         case 'privacy':result=driver.privacy(args[0] as Parameters<ReplayDriver['privacy']>[0]);break;

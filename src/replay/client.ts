@@ -29,6 +29,8 @@ export class ReplayClient implements RecapClient {
   previewRecap(sessionId:string){return this.call<RecapPlan|null>('previewRecap',sessionId);}
   cancelRecap(id:string){return this.call<void>('cancelRecap',id);}
   controlReplay(control:ReplayControl){return this.call<void>('controlReplay',control);}
+  /** Moves to a recorded offset in ms. Earlier times restart the run and replay every event up to that time. */
+  seekTo(atMs:number){return this.controlReplay({action:'seek',atMs});}
   getEvidence(id:string){return this.call<Source[]>('getEvidence',id);}
   listSources(query:{sessionId:string;fromMs?:number;toMs?:number;cursor?:string;limit:number}){return this.call<{items:Source[];nextCursor:string|null}>('listSources',query);}
   dispose(){this.worker.terminate();this.view=null;for(const p of this.pending.values())p.reject(new Error('Recording closed'));this.pending.clear();this.views.clear();this.listeners.clear();}

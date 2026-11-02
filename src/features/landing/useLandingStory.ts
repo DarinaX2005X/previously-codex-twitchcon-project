@@ -11,6 +11,10 @@ export interface LandingStory {
   /** The chapter that best shows how a chapter forms: the one with a chat moment, else the latest. */
   focus: { chapter: PublicChapter; speech: Source | null; moment: Moment | null; messages: string[]; clipUrl?: string; lore: PublicLore | null } | null;
   chatBeforeRaid: RecordedChat[];
+  /** First spoken source of each published chapter, by chapter id. */
+  chapterSpeech: Record<string, { startMs: number; text: string }>;
+  /** Chat moments of the published chapters, by chapter id. */
+  chapterMoments: Record<string, { startMs: number; endMs: number; count: number }>;
   delaySeconds: number;
   correction: { title: string; summary: string; targetId?: string } | null;
   raider: { login: string; viewers: number } | null;
@@ -24,6 +28,7 @@ export function useLandingStory(manifestUrl?: string): { story: LandingStory | n
   const [plan, setPlan] = useState<RecapPlan | null>(null);
   const [speech, setSpeech] = useState<Source | null>(null);
   const [settled, setSettled] = useState(false);
+  const [chapterSpeech, setChapterSpeech] = useState<Record<string, { startMs: number; text: string }>>({});
   const snapshot = view?.snapshot;
   const milestones = view?.transport.milestones;
   // Move the recording to its raid (or its last milestone) once, then read the published state.
@@ -35,7 +40,10 @@ export function useLandingStory(manifestUrl?: string): { story: LandingStory | n
       try {
         if (target) await client.controlReplay({ action: 'seek', milestone: target.id });
         const current = await client.getSnapshot();
-        if (current.session) { const value = await client.previewRecap(current.session.id); if (active) setPlan(value); }
+        // Prefer the raid's own plan (it carries the raider); fall back to a preview of the next recap.
+        const raidPlan = current.playback.find(p => p.plan && p.plan.arrivals.length)?.plan ?? current.playback.find(p => p.plan)?.plan;
+        if (raidPlan) { if (active) setPlan(raidPlan); }
+        else if (current.session) { const value = await client.previewRecap(current.session.id); if (active) setPlan(value); }
       } catch { /* the landing still renders the published state */ }
       if (active) setSettled(true);
     })();
@@ -58,6 +66,18 @@ export function useLandingStory(manifestUrl?: string): { story: LandingStory | n
     }).catch(() => { if (active) setSpeech(null); });
     return () => { active = false; };
   }, [client, focusChapter?.id, focusChapter?.revision]);
+  useEffect(() => {
+    if (!client || !published?.chapters.length) return;
+    let active = true;
+    void Promise.all(published.chapters.map(async c => {
+      const sources = await client.getEvidence(c.id).catch(() => [] as Source[]);
+      // The sentence that opened this chapter: the first spoken source at or after its start, else the closest one.
+      const all = sources.filter(x => x.kind === 'speech' && x.text && x.status === 'active').sort((a, b) => a.startMs - b.startMs);
+      const spoken = all.find(x => x.startMs >= c.startMs - 2000) ?? all.at(-1);
+      return [c.id, spoken ? { startMs: spoken.startMs, text: spoken.text! } : null] as const;
+    })).then(entries => { if (active) setChapterSpeech(Object.fromEntries(entries.filter(e => e[1]) as [string, { startMs: number; text: string }][])); });
+    return () => { active = false; };
+  }, [client, published?.revision]);
   const story = useMemo<LandingStory | null>(() => {
     if (!snapshot || !published) return null;
     const moment = focusChapter ? snapshot.moments.find(m => focusChapter.momentIds.includes(m.id)) ?? null : null;
@@ -76,12 +96,14 @@ export function useLandingStory(manifestUrl?: string): { story: LandingStory | n
       published, plan,
       focus: focusChapter ? { chapter: focusChapter, speech, moment, messages, clipUrl, lore } : null,
       chatBeforeRaid: chat.filter(c => c.atMs < raidMs),
+      chapterSpeech,
+      chapterMoments: Object.fromEntries(published.chapters.flatMap(c => { const m = snapshot.moments.find(x => c.momentIds.includes(x.id) && x.count > 0); return m ? [[c.id, { startMs: m.startMs, endMs: m.endMs, count: m.count }]] : []; })),
       delaySeconds: snapshot.settings.publicationDelaySeconds,
       correction: view?.transport.correction ? { title: view.transport.correction.title, summary: view.transport.correction.summary, targetId: view.transport.correction.targetId } : null,
       raider: arrival ? { login: arrival.fromLogin, viewers: arrival.viewers } : null,
       raidAtMs: view?.transport.milestones.find(m => m.id === 'raid')?.atMs,
       resolveMedia,
     };
-  }, [snapshot?.revision, published?.revision, plan?.id, focusChapter?.id, speech?.id, chat, mediaRanges, resolveMedia]);
+  }, [snapshot?.revision, published?.revision, plan?.id, focusChapter?.id, speech?.id, chat, mediaRanges, resolveMedia, chapterSpeech]);
   return { story, error };
 }

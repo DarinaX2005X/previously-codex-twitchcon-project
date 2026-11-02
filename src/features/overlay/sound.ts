@@ -81,7 +81,7 @@ export function scheduleSfx(ctx: Ctx, dest: AudioNode, event: SceneSoundEvent, w
       // Paper slide: soft band-passed friction with a short swell.
       const f = filter('bandpass', 2900 * v, .8), g = gainNode(); noise(t, .26, f, 3); f.connect(g); g.connect(dest);
       f.frequency.setValueAtTime(3200 * v, t); f.frequency.exponentialRampToValueAtTime(1700 * v, t + .22);
-      g.gain.setValueAtTime(.0001, t); g.gain.linearRampToValueAtTime(level * .45, t + .05); g.gain.exponentialRampToValueAtTime(.0001, t + .25);
+      g.gain.setValueAtTime(.0001, t); g.gain.linearRampToValueAtTime(level * .8, t + .05); g.gain.exponentialRampToValueAtTime(.0001, t + .25);
       break;
     }
     case 'flick': {
@@ -101,7 +101,7 @@ export function scheduleSfx(ctx: Ctx, dest: AudioNode, event: SceneSoundEvent, w
     case 'chatter': {
       // Granular chatter swell: many tiny filtered blips whose density rises and falls with the burst.
       const length = (event.durationMs ?? 1200) / 1000, grains = Math.round(length * 70);
-      const bus = gainNode(level * .55), bp = filter('bandpass', 1500 * v, .6); bp.connect(bus); bus.connect(dest);
+      const bus = gainNode(level * 1.25), bp = filter('bandpass', 1500 * v, .6); bp.connect(bus); bus.connect(dest);
       let s = seed;
       const next = () => { s = (Math.imul(1103515245, s) + 12345) >>> 0; return s / 4294967296; };
       for (let i = 0; i < grains; i++) {
