@@ -12,7 +12,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-readme-'));
 const mode = process.argv[2] || 'all';
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
-const MOMENTS = { 'shot-scene-chapters': 4400, 'shot-scene-chat': 5750, 'shot-scene-now': 8750 };
+const MOMENTS = { 'shot-scene-chapters': 3300, 'shot-scene-chat': 5750, 'shot-scene-now': 8750 };
 const LOOP = { from: 1750, to: 11500, fps: 12, width: 720, quality: 80 }; // starts on the full "Previously" title
 
 // resize + JPEG through Pillow (Lanczos), exact output size
@@ -43,11 +43,14 @@ async function scene(b) {
     }
   };
   await open();
+  const only = (process.env.ONLY || '').split(',').filter(Boolean); // e.g. ONLY=shot-scene-chapters re-captures just that still
   for (const [name, ms] of Object.entries(MOMENTS)) {
+    if (only.length && !only.includes(name)) continue;
     const raw = path.join(TMP, name + '.png');
     await shot(ms, { path: raw });
     jpeg(raw, path.join(OUT, name + '.jpg'), 960, 540);
   }
+  if (only.length) { await p.close(); return; }
   // animated loop, frame exact
   const dir = path.join(TMP, 'loop'); fs.mkdirSync(dir);
   const n = Math.round((LOOP.to - LOOP.from) * LOOP.fps / 1000);
