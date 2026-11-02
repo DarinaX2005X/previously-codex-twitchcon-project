@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Previously film</title>
+<style>
+@font-face { font-family: Onest; src: url('/fonts/Onest-Variable.ttf') format('truetype'); font-weight: 100 900; }
+:root {
+  --ink: #14171B; --ink-raised: #1E232A; --ink-high: #272D35; --ink-edge: #2C333C; --ink-deep: #0C0E11;
+  --paper: #F4EFE6; --paper-shade: #E4DDD0; --paper-side: #CFC5B3;
+  --verm: #FF5A36; --verm-side: #C93F22; --verm-deep: #8F2F1C; --lime: #C8F560;
+  --muted-ink: #A9B1BC; --muted-paper: #4A4F57;
+}
+html, body { margin: 0; background: #000; overflow: hidden; }
+body.preview { overflow: auto; background: #050607; }
+#stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--ink); font-family: Onest, Arial, sans-serif; color: var(--paper); font-kerning: normal; -webkit-font-smoothing: antialiased; }
+#stage * { box-sizing: border-box; }
+.abs { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.layer { position: absolute; inset: 0; }
+.word { position: absolute; left: 0; top: 0; white-space: pre; font-weight: 800; letter-spacing: -.035em; line-height: 1; transform-origin: 50% 60%; }
+.tab { font-variant-numeric: tabular-nums; }
+.plate { position: absolute; left: 0; top: 0; border-radius: 18px; }
+.card { position: absolute; left: 0; top: 0; width: 520px; height: 392px; border-radius: 20px; background: var(--paper); box-shadow: 0 6px 0 var(--paper-side), 0 30px 60px -20px rgb(5 6 8 / .8); transform-origin: 50% 50%; }
+.card img { position: absolute; left: 20px; top: 20px; width: 480px; height: 270px; border-radius: 12px; object-fit: cover; }
+.card .ttl { position: absolute; left: 24px; top: 306px; right: 20px; color: var(--ink); font-weight: 800; font-size: 40px; letter-spacing: -.03em; line-height: 1.02; }
+.card .ctab { position: absolute; left: 28px; top: -30px; height: 40px; padding: 0 14px; border-radius: 10px 10px 0 0; background: var(--ink); color: var(--paper); font-weight: 750; font-size: 26px; line-height: 40px; font-variant-numeric: tabular-nums; }
+#player { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+#pframe { position: absolute; border-radius: 30px; background: var(--ink-deep); box-shadow: 0 0 0 1.5px var(--ink-edge), 0 4px 0 #07080a, 0 50px 110px -30px rgb(0 0 0 / .9); overflow: hidden; }
+#pview { position: absolute; overflow: hidden; background: #000; }
+#pview video, #pview iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; }
+#pcover { position: absolute; left: 0; top: 0; background: var(--paper); }
+#ptitle { position: absolute; left: 0; top: 0; height: 64px; display: flex; align-items: center; gap: 18px; padding: 0 28px; color: var(--ink); font-size: 27px; white-space: nowrap; }
+#ptitle .live { width: 14px; height: 14px; border-radius: 7px; background: #3c9a2e; box-shadow: 0 0 0 4px rgb(60 154 46 / .18); }
+#ptitle b { font-weight: 750; letter-spacing: -.01em; }
+#ptitle span.t { color: var(--muted-paper); font-weight: 500; }
+#ptime { position: absolute; top: 0; height: 64px; display: flex; align-items: center; gap: 12px; color: var(--ink); font-weight: 750; font-size: 30px; font-variant-numeric: tabular-nums; }
+.roll { display: inline-block; position: relative; overflow: hidden; height: 1.1em; vertical-align: top; }
+.roll > span { display: block; line-height: 1.1em; }
+.tile { position: absolute; left: 0; top: 0; transform-origin: 50% 50%; }
+.tile svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.ripple { position: absolute; left: 0; top: 0; border: 4px solid var(--verm); transform-origin: 50% 50%; }
+#streaks { position: absolute; inset: 0; pointer-events: none; mix-blend-mode: screen; }
+#streaks div { position: absolute; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, transparent, rgb(244 239 230 / .55) 30%, rgb(244 239 230 / .2) 70%, transparent); }
+#caption { position: absolute; left: 0; top: 0; height: 84px; border-radius: 16px; background: var(--paper); box-shadow: 0 5px 0 var(--paper-side), 0 26px 50px -18px rgb(5 6 8 / .8); overflow: hidden; }
+#caption .line { position: absolute; right: 30px; top: 0; height: 84px; line-height: 84px; color: var(--ink); font-size: 50px; font-weight: 750; letter-spacing: -.025em; white-space: nowrap; }
+#caption .line em { font-style: normal; color: var(--verm); }
+#scrim { position: absolute; inset: 0; background: var(--ink); }
+.letter { position: absolute; left: 0; top: 0; overflow: visible; }
+.tagw { position: absolute; left: 0; top: 0; white-space: pre; font-weight: 700; letter-spacing: -.02em; line-height: 1; color: var(--paper); }
+#stroke { position: absolute; left: 0; top: 0; overflow: visible; }
+#hud { font: 14px monospace; color: #9ab; padding: 8px; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script type="module" src="./film.js"></script>
+</body>
+</html>

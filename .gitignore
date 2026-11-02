@@ -41,3 +41,6 @@ Thumbs.db
 vibemachina.checkpoint.json
 submission/
 
+
+# The 1080p60 master is too large for Git; it is uploaded to YouTube. The web copy stays in the repository.
+docs/video/previously-submission.mp4

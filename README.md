@@ -12,7 +12,7 @@ Previously follows a Twitch stream while it happens. It listens to the streamer'
   <a href="https://previously-seven.vercel.app/replay"><b>Watch the example recording</b></a>&emsp;&emsp;<a href="#run-it-for-your-channel"><b>Run it for your channel</b></a>&emsp;&emsp;<a href="#how-the-story-is-built"><b>See how it works</b></a>
 </p>
 
-<!-- MEDIA: submission video. Upload the web MP4 to this repository as a GitHub attachment and put the returned https://github.com/user-attachments/assets/... URL on its own line here, with a blank line above and below. -->
+https://github.com/user-attachments/assets/403faf40-6864-4395-9494-d190995cd7de
 
 <p align="center"><img src="docs/readme/scene-loop.webp" width="720" alt="The Previously raid scene playing over Foxlight gameplay: chapter cards with real clips, chat's moon jump burst folding into the term, and the card saying what is happening now"></p>
 <p align="center"><sub>The raid scene from the example recording, captured from the app</sub></p>
