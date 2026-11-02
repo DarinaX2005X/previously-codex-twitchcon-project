@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Previously gallery</title>
+<style>
+@font-face { font-family: Onest; src: url('../../../public/fonts/Onest-Variable.ttf') format('truetype'); font-weight: 100 900; }
+:root {
+  --ink: #14171B; --ink-raised: #1E232A; --ink-high: #272D35; --ink-deep: #0C0E11;
+  --paper: #F4EFE6; --paper-shade: #E4DDD0; --paper-side: #CFC5B3;
+  --verm: #FF5A36; --verm-side: #C93F22; --verm-deep: #8F2F1C;
+  --lime: #C8F560; --lime-side: #86A833;
+  --muted-ink: #A9B1BC; --muted-paper: #4A4F57;
+  --cave: #0E2A2E; --cave-deep: #071517;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #333; font-family: Onest, sans-serif; -webkit-font-smoothing: antialiased; }
+.slide { width: 1800px; height: 1200px; position: relative; overflow: hidden; margin: 0 0 40px; font-family: Onest, sans-serif; color: var(--paper); font-feature-settings: 'tnum' 0; }
+.abs { position: absolute; }
+img { display: block; }
+
+/* canvases */
+.cv-cave { background:
+  radial-gradient(900px 700px at 78% 30%, rgba(255,176,96,.20), transparent 60%),
+  radial-gradient(1100px 800px at 8% 100%, rgba(40,120,118,.38), transparent 65%),
+  linear-gradient(160deg, #123338 0%, #0B2226 45%, #061214 100%); }
+.cv-verm { color: var(--ink); background:
+  radial-gradient(1000px 760px at 82% 8%, rgba(255,150,110,.55), transparent 60%),
+  radial-gradient(900px 700px at 0% 100%, rgba(143,47,28,.55), transparent 65%),
+  linear-gradient(150deg, #FF6440 0%, #F2492A 55%, #D23C1E 100%); }
+.cv-paper { color: var(--ink); background:
+  radial-gradient(900px 700px at 100% 0%, rgba(255,90,54,.20), transparent 60%),
+  radial-gradient(900px 800px at 0% 100%, rgba(200,245,96,.22), transparent 60%),
+  linear-gradient(165deg, #F7F1E7 0%, #EDE3D2 60%, #E4D7C1 100%); }
+.cv-lime { color: var(--ink); background:
+  radial-gradient(900px 700px at 15% 5%, rgba(255,255,230,.65), transparent 60%),
+  radial-gradient(900px 800px at 100% 100%, rgba(110,150,30,.45), transparent 60%),
+  linear-gradient(155deg, #D9FA86 0%, #C4F25A 50%, #A9DC3E 100%); }
+.cv-ink { background:
+  radial-gradient(1000px 760px at 0% 0%, rgba(36,112,112,.42), transparent 60%),
+  radial-gradient(900px 700px at 100% 100%, rgba(255,90,54,.26), transparent 60%),
+  linear-gradient(160deg, #1A2026 0%, #14171B 60%, #101317 100%); }
+.cv-ember { background:
+  radial-gradient(1000px 760px at 85% 15%, rgba(255,90,54,.40), transparent 60%),
+  radial-gradient(900px 700px at 0% 100%, rgba(255,140,90,.16), transparent 60%),
+  linear-gradient(160deg, #4A170D 0%, #2E0E08 55%, #1C0805 100%); }
+
+/* type */
+.h1 { font-weight: 800; letter-spacing: -.035em; line-height: .98; font-size: 96px; }
+.h1.xl { font-size: 124px; }
+.lead { font-size: 40px; line-height: 1.32; font-weight: 450; letter-spacing: -.005em; }
+.body { font-size: 34px; line-height: 1.34; font-weight: 450; }
+.small { font-size: 28px; line-height: 1.34; font-weight: 450; }
+.b { font-weight: 700; }
+.muted-ink { color: #C9D0D8; }
+.muted-paper { color: var(--muted-paper); }
+
+/* plates: words set on a slab with a darker underside */
+.plate { display: inline-block; padding: .02em .2em .08em; border-radius: .12em; line-height: 1; }
+.plate.v { background: var(--verm); color: var(--ink); box-shadow: 0 .07em 0 var(--verm-side); }
+.plate.p { background: var(--paper); color: var(--ink); box-shadow: 0 .07em 0 var(--paper-side); }
+.plate.k { background: var(--ink); color: var(--paper); box-shadow: 0 .07em 0 var(--ink-deep); }
+.plate.kl { background: var(--ink); color: var(--lime); box-shadow: 0 .07em 0 #000; }
+.plate.l { background: var(--lime); color: var(--ink); box-shadow: 0 .07em 0 var(--lime-side); }
+
+/* title card: paper card, timecode tab, thick underside */
+.card { position: absolute; background: linear-gradient(180deg, #FBF7F0, #F1EADF); color: var(--ink); border-radius: 22px;
+  box-shadow: 0 9px 0 var(--paper-side), 0 30px 50px -18px rgba(5,6,8,.55); padding: 34px 30px 26px; }
+.card .tab { position: absolute; top: -18px; left: 22px; background: var(--ink); color: var(--paper); font-weight: 700; font-size: 24px; padding: 6px 13px 7px; border-radius: 9px; font-variant-numeric: tabular-nums; }
+.card .tab.v { background: var(--verm); color: var(--ink); }
+.card h3 { font-size: 38px; font-weight: 800; letter-spacing: -.02em; line-height: 1.05; }
+.card p { font-size: 28px; line-height: 1.35; margin-top: 10px; color: #2A2E34; }
+
+/* ink card */
+.icard { position: absolute; background: linear-gradient(180deg, #252B33, #1C2128); color: var(--paper); border-radius: 22px;
+  box-shadow: 0 8px 0 var(--ink-deep), 0 30px 50px -18px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.07); padding: 30px; }
+
+/* chat chip */
+.chip { display: inline-block; background: #20262D; color: var(--paper); font-weight: 650; font-size: 30px; padding: 9px 18px 11px; border-radius: 12px;
+  box-shadow: 0 5px 0 var(--lime-side), 0 16px 26px -12px rgba(0,0,0,.6); white-space: nowrap; }
+
+/* screen frame */
+.frame { position: absolute; border-radius: 26px; overflow: hidden; background: var(--ink-deep);
+  box-shadow: 0 12px 0 var(--ink-deep), 0 50px 80px -30px rgba(0,0,0,.75); }
+.frame img { width: 100%; height: 100%; object-fit: cover; }
+.mark { position: absolute; filter: drop-shadow(0 26px 30px rgba(40,8,2,.45)) drop-shadow(0 4px 4px rgba(40,8,2,.3)); }
+.logo { position: absolute; display: flex; align-items: center; gap: 14px; font-weight: 800; font-size: 40px; letter-spacing: -.03em; }
+.logo img { width: 56px; height: 56px; }
+.tag { font-weight: 700; font-size: 27px; letter-spacing: 0; }
+.line { position: absolute; border-top: 3px solid currentColor; }
+.phone { position: absolute; width: 422px; height: 876px; border-radius: 58px; background: linear-gradient(160deg, #2A3038, #0C0E11 40%); padding: 16px;
+  box-shadow: 0 12px 0 #07080A, 0 50px 80px -30px rgba(40,20,10,.55), inset 0 1px 0 rgba(255,255,255,.12); }
+.phone .scr { width: 390px; height: 844px; border-radius: 44px; overflow: hidden; position: relative; background: #14171B; }
+.phone .scr img { position: absolute; left: 0; width: 390px; }
+.ctl { display: inline-block; font-weight: 700; font-size: 26px; padding: 7px 14px 9px; border-radius: 10px; background: var(--paper); color: var(--ink); box-shadow: 0 5px 0 var(--paper-side); }
+.ctl.v { background: var(--verm); box-shadow: 0 5px 0 var(--verm-side); }
+.ctl.k { background: var(--ink); color: var(--paper); box-shadow: 0 5px 0 #000; }
+.code { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 27px; line-height: 1.5; background: #0B0D10; color: var(--paper); border-radius: 14px; padding: 18px 22px; box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
+.strike { position: relative; }
+.strike { text-decoration: line-through; text-decoration-color: var(--verm); text-decoration-thickness: 5px; }
+.num { font-weight: 800; letter-spacing: -.04em; line-height: 1; font-variant-numeric: tabular-nums; }
+.stab { position: absolute; top: -16px; left: 20px; color: var(--ink); font-weight: 700; font-size: 26px; padding: 5px 12px 6px; border-radius: 9px; }
+.row { position: relative; padding: 16px 22px; font-size: 28px; font-weight: 650; }
+</style>
+</head>
+<body>
+
+<!-- ============ THUMBNAIL ============ -->
+<section class="slide cv-cave" id="thumbnail" data-out="thumbnail" data-scale="1.3333333">
+  <img class="abs" src="assets/game/game-waterfall.jpg" style="left:-330px; top:0; width:2134px; height:1200px; object-fit:cover;">
+  <div class="abs" style="inset:0; background: linear-gradient(90deg, rgba(6,18,20,.95) 0%, rgba(8,24,27,.86) 36%, rgba(8,24,27,.25) 62%, rgba(8,24,27,0) 80%), linear-gradient(0deg, rgba(6,18,20,.55), transparent 30%);"></div>
+  <div class="card" style="left:1352px; top:84px; width:380px; padding:20px 20px 16px; transform: rotate(5deg);">
+    <span class="tab" style="font-size:30px;">1:40</span>
+    <div style="height:204px; border-radius:12px; overflow:hidden; background:#000;"><img src="../../../public/demo/foxlight/clip-moon.jpg" style="width:100%; height:100%; object-fit:cover;"></div>
+    <h3 style="font-size:40px; margin-top:14px;">The moon jump</h3>
+  </div>
+  <div class="abs" style="left:1400px; top:478px; transform: rotate(-4deg);"><span class="chip" style="font-size:46px; padding:12px 24px 16px;">!previously</span></div>
+  <img class="mark" src="../../../public/brand/mark-large.svg" style="left:96px; top:90px; width:250px; transform: rotate(-7deg);">
+  <div class="abs" style="left:100px; top:400px;">
+    <div class="h1 plate v" style="font-size:236px;">Previously</div><br>
+    <div class="h1 plate p" style="font-size:128px; margin-top:26px; margin-left:12px;">on your stream</div>
+  </div>
+  <div class="abs lead" style="left:112px; top:905px; width:980px; font-size:54px; font-weight:600; line-height:1.18; color:var(--paper);">A catch-up recap for every raid and late arrival on Twitch</div>
+</section>
+
+<!-- ============ 01 LATE ARRIVALS ============ -->
+<section class="slide cv-cave" id="late-arrivals" data-out="01-late-arrivals">
+  <div class="logo" style="left:96px; top:84px;"><img src="../../../public/brand/mark.svg">Previously</div>
+  <div class="abs" style="left:96px; top:250px;"><span class="chip h1" style="font-size:108px; padding:18px 36px 28px; border-radius:26px; box-shadow: 0 12px 0 var(--lime-side), 0 40px 60px -24px rgba(0,0,0,.7);">What did I miss?</span></div>
+  <div class="abs lead" style="left:100px; top:500px; width:740px;">A raid brings a whole audience into the middle of a stream. They missed the jokes, the bugs and the reason chat keeps typing MOON JUMP.</div>
+  <div class="abs body muted-ink" style="left:100px; top:790px; width:720px;">The streamer can stop and explain or keep playing and leave them lost. Previously gives new viewers that context on the stream, in chat and on a page, while the stream keeps going.</div>
+  <div class="frame" style="left:990px; top:250px; width:720px; height:405px; transform: rotate(2deg);"><img src="../../../public/demo/foxlight/clip-moon.jpg"></div>
+  <div class="abs" style="left:1040px; top:610px; transform: rotate(-3deg);"><span class="chip">where did he go</span></div>
+  <div class="abs" style="left:1380px; top:640px; transform: rotate(2deg);"><span class="chip" style="font-size:40px;">MOON JUMP</span></div>
+  <div class="abs" style="left:960px; top:700px; transform: rotate(1deg);"><span class="chip">fox to the moon</span></div>
+  <div class="abs" style="left:1290px; top:730px; transform: rotate(-2deg);"><span class="chip">he's gone</span></div>
+  <div class="abs" style="left:1540px; top:730px; transform: rotate(3deg);"><span class="chip">o7 fox</span></div>
+  <div class="abs" style="left:1010px; top:795px; transform: rotate(-1deg);"><span class="chip">clip it</span></div>
+  <div class="abs" style="left:1190px; top:815px; transform: rotate(2deg);"><span class="chip" style="font-size:40px;">MOON JUMP MOON JUMP</span></div>
+  <div class="abs small muted-ink" style="left:990px; top:960px; width:720px;">The moon jump from the example recording, a game development stream we wrote around Foxlight, our small cave platformer.</div>
+</section>
+
+<!-- ============ 02 RAID SCENE (anchor) ============ -->
+<section class="slide cv-verm" id="raid-scene" data-out="02-raid-scene">
+  <div class="abs h1" style="left:96px; top:96px; width:560px; font-size:88px;">When a raid lands, the stream plays its own <span class="plate k">Previously&nbsp;on</span></div>
+  <div class="abs body" style="left:100px; top:735px; width:520px; color:#2A0E07;">The scene is built from the story Previously has already published, so it starts as soon as the raid arrives. It greets the raiders, shows the clips that matter and the chat moment behind a running joke, then says what is happening now.</div>
+  <div class="frame" style="left:680px; top:96px; width:1024px; height:576px;"><img src="assets/scene/moon-burst.jpg"></div>
+  <div class="abs" style="left:680px; top:716px; width:1024px; display:grid; grid-template-columns: repeat(3, 1fr); gap:24px;">
+    <figure><div class="frame" style="position:relative; height:186px;"><img src="assets/scene/welcome.jpg"></div><figcaption class="small b" style="margin-top:26px; line-height:1.2;">Greets the raid by name</figcaption></figure>
+    <figure><div class="frame" style="position:relative; height:186px;"><img src="assets/scene/previously.jpg"></div><figcaption class="small b" style="margin-top:26px; line-height:1.2;">Opens the recap</figcaption></figure>
+    <figure><div class="frame" style="position:relative; height:186px;"><img src="assets/scene/now.jpg"></div><figcaption class="small b" style="margin-top:26px; line-height:1.2;">Ends on what is happening now</figcaption></figure>
+  </div>
+  <div class="abs small" style="left:680px; top:1052px; width:1024px; color:#3B1309;">From the example recording. Its chat and raid are written for the demo; the clips are real footage of Foxlight, the small game we made for it.</div>
+</section>
+
+<!-- ============ 03 CHAT COMMAND ============ -->
+<section class="slide cv-lime" id="chat-command" data-out="03-chat-command">
+  <div class="abs h1" style="left:96px; top:96px; width:800px; font-size:94px;">Anyone who joins late can type <span class="plate kl">!previously</span></div>
+  <div class="abs lead" style="left:100px; top:470px; width:760px;">The answer comes from the channel itself: the latest published chapters, what is happening now and a link to the recap page.</div>
+  <div class="abs body" style="left:100px; top:720px; width:740px;"><b>!lore moon jump</b> explains a running joke, but only once its origin is in the sources. Until then the answer says the origin is not confirmed yet.</div>
+  <div class="abs small" style="left:100px; top:1050px; width:740px; color:#2E3A12;">Answers from the example recording, built by the same code the chat bot uses.</div>
+  <div class="frame" style="left:960px; top:150px; width:740px; height:820px; border-radius:34px; transform: rotate(2deg); box-shadow: 0 14px 0 #0C0E11, 0 60px 90px -30px rgba(30,50,0,.6);"><img src="assets/app/landing-chat.png" style="object-fit:cover; object-position: top;"></div>
+</section>
+
+<!-- ============ 04 RECAP PAGE ============ -->
+<section class="slide cv-paper" id="recap-page" data-out="04-recap-page">
+  <div class="abs h1" style="left:96px; top:96px; width:760px; font-size:92px;">The story so far, on a page anyone can open</div>
+  <div class="abs" style="left:100px; top:470px; width:700px; display:grid; gap:34px;">
+    <p class="body"><b>No account.</b> The page opens on what is happening right now, then tells the story so far in short chapters.</p>
+    <p class="body"><b>The real moments.</b> Each chapter can play the clip it describes, and the joke chat named gets its own card.</p>
+    <p class="body"><b>No accidental spoilers.</b> Read up to here stops the story at an earlier point in the stream.</p>
+    <p class="body"><b>Only what was published.</b> Drafts, held chapters and transcripts stay on the streamer's computer.</p>
+  </div>
+  <div class="phone" style="left:900px; top:150px; transform: rotate(-3deg);"><div class="scr"><img src="assets/app/public-phone.png" style="top:0;"></div></div>
+  <div class="phone" style="left:1300px; top:250px; transform: rotate(3deg);"><div class="scr"><img src="assets/app/public-phone-chapters.png" style="top:0;"></div></div>
+</section>
+
+<!-- ============ 05 STREAMER DOCK ============ -->
+<section class="slide cv-ink" id="streamer-dock" data-out="05-streamer-dock">
+  <div class="abs h1" style="left:96px; top:90px; width:1500px; font-size:88px;">The streamer can fix, pin, pause or forget from a dock inside&nbsp;OBS</div>
+  <div class="frame" style="left:96px; top:360px; width:520px; height:920px; border-radius:26px;"><img src="assets/app/dock.png" style="height:auto; margin-top:-48px;"></div>
+  <div class="frame" style="left:560px; top:440px; width:600px; height:656px; transform: rotate(2.5deg); box-shadow: 0 12px 0 var(--paper-side), 0 60px 90px -30px rgba(0,0,0,.8);"><img src="assets/app/dock-edit.png"></div>
+  <div class="abs" style="left:1240px; top:360px; width:470px; display:grid; gap:30px;">
+    <div><span class="ctl">Edit</span><p class="body" style="margin-top:14px; font-size:27px;">Your wording replaces the chapter everywhere once it passes its check, and later automatic rewrites leave it alone.</p></div>
+    <div><span class="ctl">Pin</span><p class="body" style="margin-top:14px; font-size:27px;">Puts a chapter first in the next raid scene without skipping any check.</p></div>
+    <div><span class="ctl">Pause listening</span><p class="body" style="margin-top:14px; font-size:27px;">Stops the microphone and new speech and chat collection at once.</p></div>
+    <div><span class="ctl v">Forget last 2 min</span><p class="body" style="margin-top:14px; font-size:27px;">Erases that window and everything built from it.</p></div>
+  </div>
+</section>
+
+<!-- ============ 06 HOW IT WORKS ============ -->
+<section class="slide cv-paper" id="how-it-works" data-out="06-how-it-works">
+  <div class="abs h1" style="left:96px; top:90px; width:1560px; font-size:84px;">Nothing reaches viewers before it is checked and held for <span class="plate v">75 seconds</span></div>
+  <svg class="abs" style="left:0; top:0;" width="1800" height="1200" viewBox="0 0 1800 1200" fill="none" stroke="#14171B" stroke-width="3" stroke-linecap="round" opacity=".5">
+    <path d="M440 460 C 480 460, 480 450, 520 450"/><path d="M440 670 C 480 670, 480 475, 520 475"/><path d="M440 865 C 480 865, 480 500, 520 500"/>
+    <path d="M880 470 L 950 470"/><path d="M1210 470 L 1280 470"/>
+    <path d="M1492 700 L 1492 770"/>
+  </svg>
+  <div class="abs tag muted-paper" style="left:96px; top:330px;">What it hears</div>
+  <div class="icard" style="left:96px; top:390px; width:344px; padding:30px 24px 22px;"><span class="stab" style="background:var(--verm);">Heard at 5:20</span><p class="small">Each lantern you collect lights part of the cave.</p></div>
+  <div class="icard" style="left:96px; top:585px; width:344px; padding:30px 24px 22px;"><span class="stab" style="background:var(--verm);">Heard at 5:40</span><p class="small">Two lanterns work. The third one is behind the waterfall.</p></div>
+  <div class="icard" style="left:96px; top:815px; width:344px; padding:30px 24px 22px;"><span class="stab" style="background:var(--lime);">Chat at 5:44</span><p class="small">where is the third one</p></div>
+
+  <div class="abs tag muted-paper" style="left:520px; top:330px;">What the model proposes</div>
+  <div class="card" style="left:520px; top:390px; width:360px; padding:26px 24px 22px;"><p style="margin:0; font-size:27px; font-weight:650; color:var(--ink); line-height:1.25;">Two lanterns work, and the third one is behind the waterfall</p><p class="small" style="margin-top:12px; color:var(--muted-paper);">Source: heard at 5:40</p></div>
+  <div class="abs" style="left:520px; top:720px; display:grid; gap:18px; justify-items:start;">
+    <span class="ctl k">Grounded in its sources</span>
+    <span class="ctl k">Moderation</span>
+    <span class="ctl k">Privacy</span>
+  </div>
+
+  <div class="abs tag muted-paper" style="left:950px; top:330px;">The hold</div>
+  <div class="abs" style="left:950px; top:400px; width:270px;"><div class="num plate v" style="font-size:132px; white-space:nowrap;">75&nbsp;s</div><p class="small" style="margin-top:34px;">Time for the streamer to edit or forget before anyone sees it.</p></div>
+
+  <div class="abs tag muted-paper" style="left:1280px; top:330px;">One published version</div>
+  <div class="card" style="left:1280px; top:400px; width:424px;"><span class="tab">5:20</span><h3>Lanterns light the cave</h3><p>Each lantern the fox collects lights part of the cave. Two lanterns work, and the third one is behind the waterfall.</p></div>
+
+  <div class="abs" style="left:1060px; top:790px; width:644px; display:grid; grid-template-columns: 1fr 1fr 1fr; gap:22px;">
+    <figure><div class="frame" style="position:relative; height:112px; border-radius:16px; box-shadow: 0 7px 0 #000, 0 20px 30px -14px rgba(0,0,0,.5);"><img src="assets/scene/now.jpg"></div><figcaption class="small b" style="margin-top:16px;">Raid scene</figcaption></figure>
+    <figure><div style="height:112px; display:flex; align-items:center;"><span class="chip" style="font-size:28px;">!previously</span></div><figcaption class="small b" style="margin-top:16px;">Chat answer</figcaption></figure>
+    <figure><div class="frame" style="position:relative; height:112px; border-radius:16px; box-shadow: 0 7px 0 #000, 0 20px 30px -14px rgba(0,0,0,.5);"><img src="assets/app/public-phone.png" style="object-position: 0 70%;"></div><figcaption class="small b" style="margin-top:16px;">Recap page</figcaption></figure>
+  </div>
+  <div class="abs body" style="left:96px; top:950px; width:860px;">A model response cannot publish anything by itself. Code on the streaming computer checks each proposal against the current sources and privacy state, waits out the hold and commits one version that every output reads.</div>
+</section>
+
+<!-- ============ 07 FORGET ============ -->
+<section class="slide cv-ember" id="forget" data-out="07-forget">
+  <div class="abs h1" style="left:96px; top:90px; width:880px; font-size:80px;">Forget follows the sources into everything built from them</div>
+  <div class="frame" style="left:96px; top:470px; width:720px; height:473px; transform: rotate(-2deg); box-shadow: 0 12px 0 var(--paper-side), 0 60px 90px -30px rgba(0,0,0,.8);"><img src="assets/app/dock-forget.png"></div>
+  <div class="abs body" style="left:100px; top:1010px; width:820px; color:#F6D9CF;">A model reply that arrives after Forget cannot bring the text back, and pins do not protect anything.</div>
+  <svg class="abs" style="left:0; top:0;" width="1800" height="1200" viewBox="0 0 1800 1200" fill="none" stroke="#FF8A6B" stroke-width="3" stroke-linecap="round" opacity=".7">
+    <path d="M1090 330 L 1090 965"/>
+    <path d="M1090 445 L 1150 445"/><path d="M1090 549 L 1150 549"/><path d="M1090 653 L 1150 653"/><path d="M1090 757 L 1150 757"/><path d="M1090 861 L 1150 861"/><path d="M1090 965 L 1150 965"/>
+  </svg>
+  <div class="card" style="left:1000px; top:150px; width:704px; padding:34px 28px 26px;"><span class="tab v">Heard at 5:20</span><p style="margin:0; font-size:28px; color:var(--ink);"><span class="strike">Next, lanterns. The spring no longer launches the fox to the moon, so the fox can reach them.</span></p></div>
+  <div class="abs" style="left:1150px; top:410px; display:grid; gap:34px; width:554px;">
+    <div class="icard row"><span class="strike">The chapter built on it</span></div>
+    <div class="icard row"><span class="strike">Its Russian translation</span></div>
+    <div class="icard row"><span class="strike">Channel terms it explained</span></div>
+    <div class="icard row"><span class="strike">Clips in the local cache</span></div>
+    <div class="icard row"><span class="strike">Queued raid scenes</span></div>
+    <div class="icard row"><span class="strike">Recordings and exports</span></div>
+  </div>
+  <div class="abs small" style="left:1000px; top:1060px; width:704px; color:#F6D9CF;">A clip Twitch has already made stays on Twitch. Previously hides it and links to the clip manager.</div>
+</section>
+
+<!-- ============ 08 BUILT WITH CODEX ============ -->
+<section class="slide cv-ink" id="built-with-codex" data-out="08-built-with-codex">
+  <div class="abs h1" style="left:96px; top:90px; width:860px; font-size:76px;">Built in one Codex session, from research to tested code</div>
+  <div class="abs body" style="left:100px; top:380px; width:780px; color:#D5DBE2;">Codex researched the current Twitch and OpenAI contracts, planned the architecture and wrote the code and its tests. Parallel Codex workers each owned one part, and the main session joined them and walked the user journeys.</div>
+  <svg class="abs" style="left:0; top:0;" width="1800" height="1200" viewBox="0 0 1800 1200" fill="none" stroke="#A9B1BC" stroke-width="3" stroke-linecap="round" opacity=".6">
+    <path d="M190 785 L 190 850"/><path d="M386 785 L 386 850"/><path d="M582 785 L 582 850"/><path d="M778 785 L 778 850"/>
+  </svg>
+  <div class="abs" style="left:96px; top:700px; width:780px; display:grid; grid-template-columns: repeat(4, 1fr); gap:16px;">
+    <div class="card" style="position:relative; padding:22px 12px; text-align:center; display:flex; align-items:center; justify-content:center;"><h3 style="font-size:25px;">Runtime</h3></div>
+    <div class="card" style="position:relative; padding:22px 12px; text-align:center; display:flex; align-items:center; justify-content:center;"><h3 style="font-size:25px;">Storage</h3></div>
+    <div class="card" style="position:relative; padding:22px 12px; text-align:center; display:flex; align-items:center; justify-content:center;"><h3 style="font-size:25px;">Twitch adapters</h3></div>
+    <div class="card" style="position:relative; padding:22px 12px; text-align:center; display:flex; align-items:center; justify-content:center;"><h3 style="font-size:25px;">Interface</h3></div>
+  </div>
+  <div class="icard" style="left:96px; top:850px; width:780px; padding:24px 28px; background:linear-gradient(180deg,#2C333C,#232930);"><p style="font-size:28px; font-weight:700;">Main Codex session</p><p class="small muted-ink" style="margin-top:6px;">joins the parts, reviews the joins and checks every journey</p></div>
+  <div class="abs small muted-ink" style="left:100px; top:1060px; width:780px;">Claude agents made the final visual pass: the new mark, the raid scene, the pages and the Foxlight example.</div>
+
+  <div class="abs" style="left:1000px; top:96px; width:704px; display:grid; gap:34px;">
+    <div><span class="num plate v" style="font-size:100px;">656 tests</span><p class="body" style="margin-top:22px;">passed across 73 test files in the latest full run, with 2 skipped.</p></div>
+    <div><span class="num plate p" style="font-size:100px;">1,000 of 1,000</span><p class="body" style="margin-top:22px;">chat messages committed through the real EventSub transport and SQLite at 20 per second, with no gaps. Receive to commit p95 was 49.84&nbsp;ms.</p></div>
+    <div><span class="num plate l" style="font-size:100px;">577,200</span><p class="body" style="margin-top:22px;">messages through the story core across eight virtual hours, including a one minute burst at 200 per second, within its limits.</p></div>
+  </div>
+  <div class="abs small muted-ink" style="left:1000px; top:1020px; width:704px;">Measured on one Windows machine with fixtures in place of Twitch sockets and the OpenAI API. The full engine run on the same profile was stopped early at 3.80 virtual hours.</div>
+</section>
+
+<!-- ============ 09 RUN IT ============ -->
+<section class="slide cv-cave" id="run-it" data-out="09-run-it">
+  <img class="abs" src="assets/game/game-jump.jpg" style="left:0; top:0; width:1800px; height:1200px; object-fit:cover; opacity:.7;">
+  <div class="abs" style="inset:0; background: linear-gradient(180deg, rgba(7,21,23,.72), rgba(7,21,23,.35) 45%, rgba(7,21,23,.8)), radial-gradient(700px 500px at 85% 15%, rgba(255,176,96,.18), transparent 70%);"></div>
+  <div class="abs h1" style="left:96px; top:90px; width:1500px; font-size:88px;">Try the example now, then run it on your&nbsp;channel</div>
+  <div class="card" style="left:96px; top:360px; width:780px; padding:40px 36px 36px;">
+    <h3 style="font-size:44px;">The example recording, no keys</h3>
+    <div style="margin-top:20px;"><span class="plate v" style="font-size:34px; font-weight:700;">previously-seven.vercel.app/replay</span></div>
+    <p style="font-size:27px; margin-top:24px;">Jump to the raid, open the sources behind a chapter, apply the supplied correction and preview the next raid scene. Nothing you change leaves your tab.</p>
+    <div class="frame" style="position:relative; margin-top:28px; height:390px; border-radius:18px; box-shadow: 0 8px 0 #0C0E11, 0 30px 40px -20px rgba(0,0,0,.5);"><img src="assets/app/replay-raid.jpg" style="object-position: 0 0;"></div>
+  </div>
+  <div class="icard" style="left:940px; top:360px; width:764px; padding:40px 36px 34px;">
+    <h3 style="font-size:44px; font-weight:800; letter-spacing:-.02em;">Your own channel</h3>
+    <p class="muted-ink" style="margin-top:14px; font-size:26px; line-height:1.38;">Windows, Node.js 22.13, OBS, your own Twitch application and OpenAI key</p>
+    <div class="code" style="margin-top:24px;">npm ci<br>npm run setup:local<br><span style="color:#8D97A3;"># add the Twitch app and OpenAI key to .env</span><br>npm run build<br>npm start</div>
+    <p style="font-size:26px; line-height:1.38; margin-top:24px;">Connect Twitch at localhost:4317/setup, then add the overlay to OBS as a 1920 × 1080 Browser Source.</p>
+    <p style="font-size:23px; line-height:1.38; margin-top:22px; color:var(--lime); font-weight:650; white-space:nowrap;">github.com/DarinaX2005X/previously-codex-twitchcon-project</p>
+  </div>
+  <div class="abs body" style="left:940px; top:1040px; width:764px; color:#D5DBE2; font-size:27px;">It has not run on a real broadcast yet, so your first stream is also its first live test.</div>
+</section>
+
+</body>
+</html>
