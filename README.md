@@ -12,8 +12,6 @@ Previously follows a Twitch stream while it happens. It listens to the streamer'
   <a href="https://previously-seven.vercel.app/replay"><b>Watch the example recording</b></a>&emsp;&emsp;<a href="#run-it-for-your-channel"><b>Run it for your channel</b></a>&emsp;&emsp;<a href="#how-the-story-is-built"><b>See how it works</b></a>
 </p>
 
-https://github.com/user-attachments/assets/403faf40-6864-4395-9494-d190995cd7de
-
 <p align="center"><img src="docs/readme/scene-loop.webp" width="720" alt="The Previously raid scene playing over Foxlight gameplay: chapter cards with real clips, chat's moon jump burst folding into the term, and the card saying what is happening now"></p>
 <p align="center"><sub>The raid scene from the example recording, captured from the app</sub></p>
 
@@ -37,10 +35,12 @@ A raid brings a group of people who have no idea what the stream is about. Regul
 
 In the example recording, Foxlight Dev is building a small cave platformer. At 1:40 a spring pad launches the fox through the ceiling and chat floods with "MOON JUMP". At 3:30 the spring gets a speed limit, and the moon jump stays in the game as a secret cheat. When pixelmoth raids with 37 viewers at 7:10, the scene walks them through the chapters with the real gameplay clips, shows chat's burst turning into the term "moon jump" and what it means, and ends on what is happening now: making the lantern behind the waterfall reachable. Then the overlay clears the screen.
 
-<p align="center"><img src="docs/readme/shot-scene-chapters.jpg" width="32%" alt="Raid scene: the first chapter card, Fox learns to jump, playing its gameplay clip over the stream"> <img src="docs/readme/shot-scene-chat.jpg" width="32%" alt="Raid scene: real chat lines saying MOON JUMP piling up next to the moon jump clip, 45 messages in ten seconds"> <img src="docs/readme/shot-scene-now.jpg" width="32%" alt="Raid scene: the final card saying the streamer is making the lantern behind the waterfall reachable"></p>
-<p align="center"><sub>The chapters so far, chat's moon jump burst, and what is happening now</sub></p>
+<p align="center"><img src="docs/readme/shot-scene-chapters.jpg" width="32%" alt="Raid scene: the first chapter card, Fox learns to jump, playing its gameplay clip over the stream"> <img src="docs/readme/shot-scene-chat.jpg" width="32%" alt="Raid scene: the moon jump chapter card next to a card explaining the term chat named: when the spring had no speed limit, it launched the fox through the ceiling"> <img src="docs/readme/shot-scene-now.jpg" width="32%" alt="Raid scene: the final card saying the streamer is making the lantern behind the waterfall reachable"></p>
+<p align="center"><sub>The chapters with their clips, the joke chat named explained, and what is happening now</sub></p>
 
 The same story answers `!previously` in chat and fills the channel's public page, where a late viewer can open the source behind any chapter. Every sentence is held back for 75 seconds after its last source and checked before anyone sees it, so the streamer has time to fix or remove it first.
+
+https://github.com/user-attachments/assets/403faf40-6864-4395-9494-d190995cd7de
 
 ## Try the example recording
 
@@ -51,8 +51,14 @@ The [hosted example](https://previously-seven.vercel.app/replay) needs no accoun
 3. In **Change the recap**, choose **Apply my wording** to rename the third chapter to "Moon jump becomes a cheat code", then **Preview the next raid scene** to see the correction in the scene.
 4. Switch the recap between English and Russian, or **Open the streamer dock** and type your own wording. The recording only contains safety checks for its own wording, so yours stays held, the same way a live edit waits when a check is unavailable. **Restart** gives you a fresh run, and nothing you change leaves your tab.
 
+<p align="center"><img src="docs/readme/shot-replay-burst.jpg" width="49%" alt="The example recording at 1:50, with 45 chat messages about the moon jump in the last ten seconds"> <img src="docs/readme/shot-replay-sources.jpg" width="49%" alt="The recap section with the sources behind the latest chapter: what the streamer said and what chat wrote, each with its time"></p>
+<p align="center"><sub>Chat's moon jump at 1:50 in the recording, and the speech and chat behind the latest chapter</sub></p>
+
 <p align="center"><img src="docs/readme/shot-replay.jpg" width="49%" alt="The example replay page with the raid scene over gameplay, the published chapters and the stream chat"> <img src="docs/readme/shot-recap-page.jpg" width="49%" alt="The public recap page for Foxlight Dev with what is happening now and the chapters with their clips"></p>
 <p align="center"><sub>The example replay after the raid, and the public recap page a late viewer opens from chat</sub></p>
+
+<p align="center"><img src="docs/readme/shot-replay-corrected.jpg" width="49%" alt="The recap after Apply my wording, with the third chapter renamed Moon jump becomes a cheat code and marked as edited by the streamer"> <img src="docs/readme/shot-replay-correction.jpg" width="49%" alt="The Change the recap panel showing the replaced chapter, the applied wording and a note that the recap page, chat answer and next raid scene use it"></p>
+<p align="center"><sub>One correction in the example: the recap uses it at once, and the panel shows where it went</sub></p>
 
 To run the same example on your own computer (Windows, Node.js 22.13 or newer, npm), open PowerShell in the folder with `package.json`:
 
@@ -106,6 +112,9 @@ You need Windows, Node.js 22.13 or newer, a modern desktop browser, OBS, your Tw
 6. **Go live in OBS**, then choose **Check again** in setup until the stream session appears. Connecting the account does not start a session; only a live stream does.
 7. **Open the dock** at [https://localhost:4317/dock](https://localhost:4317/dock) in a normal browser tab. Listening starts paused, so choose **Resume listening** or **Start microphone**, allow the microphone and leave the tab open.
 8. **Add the scene to OBS.** In setup, choose **Copy OBS overlay URL** and add it as a 1920 × 1080 Browser Source. The URL grants access to your overlay, so keep it private.
+
+<p align="center"><img src="docs/readme/shot-setup.jpg" width="49%" alt="The setup page: step one checks local storage, the OpenAI key and the Twitch app and says what to add to .env"> <img src="docs/readme/shot-setup-steps.jpg" width="49%" alt="The setup page further down: choosing when to listen, adding the scene to OBS and previewing it"></p>
+<p align="center"><sub>The setup page checks each step and says what is missing before the first stream</sub></p>
 
 The first chapter needs about two to three minutes of talking, because speech is sent in 20-second chunks and each sentence waits out the hold and its checks. From the second account, `!previously` gets the latest chapters, or a note that the first recap is still being prepared. To test a raid, type `/raid <your login>` in the second account's own chat while your channel is live. All paid calls share a $4.50 ceiling stored in the local database, and every call reserves more than it is likely to cost, so the ceiling is reached well before $4.50 of real spend.
 

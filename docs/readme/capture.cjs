@@ -12,7 +12,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pv-readme-'));
 const mode = process.argv[2] || 'all';
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
-const MOMENTS = { 'shot-scene-chapters': 3300, 'shot-scene-chat': 5750, 'shot-scene-now': 8750 };
+const MOMENTS = { 'shot-scene-chapters': 3300, 'shot-scene-chat': 6420, 'shot-scene-now': 8750 };
 const LOOP = { from: 1750, to: 11500, fps: 12, width: 720, quality: 80 }; // starts on the full "Previously" title
 
 // resize + JPEG through Pillow (Lanczos), exact output size
@@ -69,16 +69,35 @@ async function app(b) {
   const page = async (w, h) => { const ctx = await b.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 2, ignoreHTTPSErrors: true, reducedMotion: 'reduce' }); return ctx.newPage(); };
   const jump = async p => { await p.goto(APP + '/replay', { waitUntil: 'load' }); await wait(2500); await p.getByRole('button', { name: 'Jump to the raid' }).click(); };
 
-  // the replay page after Jump to the raid, scene on screen
-  let p = await page(1440, 900); await jump(p); await wait(9000);
-  await p.evaluate(() => window.scrollTo(0, 0));
-  let raw = path.join(TMP, 'replay.png'); await p.screenshot({ path: raw }); jpeg(raw, path.join(OUT, 'shot-replay.jpg'), 1440, 900);
-  await p.context().close();
-
-  // the public recap page
-  p = await page(1440, 900); await p.goto(APP + '/c/foxlight_dev', { waitUntil: 'load' }); await wait(3000);
-  raw = path.join(TMP, 'recap.png'); await p.screenshot({ path: raw }); jpeg(raw, path.join(OUT, 'shot-recap-page.jpg'), 1440, 900);
-  await p.context().close();
+  const only = (process.env.ONLY || '').split(',').filter(Boolean);
+  const want = name => !only.length || only.includes(name);
+  const scrollTo = (q, selector, y) => q.evaluate(([sel, top]) => { const el = [...document.querySelectorAll('h2, button, section')].find(e => e.textContent.trim().startsWith(sel)); if (el) window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - top); }, [selector, y]);
+  const applyWording = async q => { await jump(q); await wait(6000); await q.getByRole('button', { name: 'Apply my wording' }).click(); await wait(3500); };
+  // desktop shots at 1440x900: [file, how to reach the state]
+  const desktop = [
+    // the replay page after Jump to the raid, scene on screen
+    ['shot-replay', async q => { await jump(q); await wait(9000); await q.evaluate(() => window.scrollTo(0, 0)); }],
+    // the public recap page
+    ['shot-recap-page', async q => { await q.goto(APP + '/c/foxlight_dev', { waitUntil: 'load' }); await wait(3000); }],
+    // the recording at 1:49, in the middle of chat's moon jump burst
+    ['shot-replay-burst', async q => { await q.goto(APP + '/replay', { waitUntil: 'load' }); await wait(2500); await q.getByRole('button', { name: /First recap/ }).click(); await wait(600);
+      await q.getByRole('slider', { name: 'Recording position' }).focus(); await q.keyboard.press('ArrowLeft'); await wait(900); }],
+    // the recap section with the sources behind the latest chapter open
+    ['shot-replay-sources', async q => { await jump(q); await wait(6000); await q.getByRole('button', { name: 'Show what the latest chapter is built from' }).click(); await wait(1500); await scrollTo(q, 'Hide what the latest chapter', 330); await wait(600); }],
+    // after Apply my wording: the recap with the renamed chapter, then the correction panel
+    ['shot-replay-corrected', async q => { await applyWording(q); await scrollTo(q, 'The recap so far', 40); await wait(600); }],
+    ['shot-replay-correction', async q => { await applyWording(q); await q.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await wait(600); }],
+    // the setup page, top and its later steps
+    ['shot-setup', async q => { await q.goto(APP + '/setup', { waitUntil: 'load' }); await wait(2500); }],
+    ['shot-setup-steps', async q => { await q.goto(APP + '/setup', { waitUntil: 'load' }); await wait(2500); await scrollTo(q, 'Choose when to listen', 120); await wait(600); }],
+  ];
+  let raw;
+  for (const [name, reach] of desktop) {
+    if (!want(name)) continue;
+    const q = await page(1440, 900); await reach(q);
+    raw = path.join(TMP, name + '.png'); await q.screenshot({ path: raw }); jpeg(raw, path.join(OUT, name + '.jpg'), 1440, 900);
+    await q.context().close();
+  }
 
   // the replay's demo dock at OBS dock width, scrolled past the page's "as it appears inside OBS" bar
   const dock = async () => {
@@ -94,6 +113,7 @@ async function app(b) {
     ['shot-dock-forget', q => q.locator('.rp-dock').getByRole('button', { name: 'Forget last 2 min' }).click()],
   ];
   for (const [name, act] of shots) {
+    if (!want(name)) continue;
     const q = await dock();
     if (act) { await act(q); await wait(1500); }
     raw = path.join(TMP, name + '.png'); await q.screenshot({ path: raw }); jpeg(raw, path.join(OUT, name + '.jpg'), 480, 860);
