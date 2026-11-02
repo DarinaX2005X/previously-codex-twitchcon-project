@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { TranscriptionProvider } from '../../shared/contracts/index.js';
 import { parseWav } from '../audio/wav.js';
 import { ProviderError, ProviderTransport, RESERVATION } from './transport.js';
-const TranscriptSchema=z.object({text:z.string().max(12000),languages:z.array(z.object({code:z.string().min(2).max(16)})).max(8)});
+// The API reference marks `languages` optional on the Transcription object; an absent list means no reliable detection.
+const TranscriptSchema=z.object({text:z.string().max(12000),languages:z.array(z.object({code:z.string().min(2).max(16)})).max(8).optional().default([])});
 export class OpenAITranscriptionProvider implements TranscriptionProvider {
   constructor(private readonly transport:ProviderTransport){}
   async transcribe(input:Parameters<TranscriptionProvider['transcribe']>[0],signal?:AbortSignal) {

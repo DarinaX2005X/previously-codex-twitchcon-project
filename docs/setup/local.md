@@ -32,7 +32,7 @@ It reuses only the localhost certificate, creates a fresh temporary database, st
 
 ## Connect the channel
 
-Create an application in the [Twitch developer console](https://dev.twitch.tv/console/apps). Register this exact OAuth redirect URL:
+Create an application in the [Twitch developer console](https://dev.twitch.tv/console/apps). [Twitch requires two-factor authentication](https://dev.twitch.tv/docs/authentication/register-app/) on the account that registers it. Choose client type **Confidential** so the app has a client secret; any category works. Register this exact OAuth redirect URL:
 
 ```text
 https://localhost:4317/auth/twitch/callback
@@ -66,7 +66,7 @@ An early raid can use an approved previous-stream clip. Setup samples the channe
 
 ## Enable new speech and story processing
 
-Add `OPENAI_API_KEY` and explicitly set `OPENAI_PAID_CALLS_ENABLED=true` only when you intend to run paid requests. Restart after environment changes. A key alone does not enable requests. Keep the switch `false` for replay or account preparation.
+Add `OPENAI_API_KEY` and explicitly set `OPENAI_PAID_CALLS_ENABLED=true` only when you intend to run paid requests. Restart after environment changes. A key alone does not enable requests. Keep the switch `false` for replay or account preparation. A rejected key (401), missing model access (403/404), or an account without credit (429 `insufficient_quota`) is printed once in the server terminal with the fix; the app itself keeps new material held.
 
 The default persistent dispatch ceiling is $4.50. Reservations and usage survive restarts; an ambiguous request is not treated as free. Model identifiers and optional narration are described in [configuration](configuration.md). Account access, actual transcription quality, mixed-language behavior, and broadcast audio routing require a short test with the intended devices and account.
 

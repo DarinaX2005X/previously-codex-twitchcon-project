@@ -19,7 +19,7 @@ The server reads `.env` from the project directory; process environment values t
 | `TWITCH_CHANNEL_LOGIN` | Broadcaster login without `@` or a URL. OAuth must use this broadcaster. |
 | `TWITCH_REDIRECT_URI` | Must be `https://localhost:4317/auth/twitch/callback`. |
 | `TWITCH_MARKERS_ENABLED` | Optional `true` or `false`, default `false`. Enables attempts to add VOD markers for saved moments. Restart and reconnect Twitch after enabling to grant `channel:manage:broadcast`. Unavailable markers leave the saved moment and its timecode intact. |
-| `OPENAI_API_KEY` | Server-side API key. Missing or disabled access leaves new provider-dependent work held. Keyless replay does not use it. |
+| `OPENAI_API_KEY` | Server-side API key from a project with credit and access to the models below. Missing or disabled access leaves new provider-dependent work held; key, model-access and billing failures print one diagnostic line in the server terminal. Keyless replay does not use it. |
 | `OPENAI_PAID_CALLS_ENABLED` | Explicit `true` or `false`, default `false`. A key alone cannot enable dispatch. Replay never enables live providers. |
 | `RECAP_LANGUAGE` | Initial recap language, `en` or `ru`. The owner can change the persisted setting in the dock. It does not set the source recognition language. |
 | `PUBLICATION_DELAY_SECONDS` | Initial source hold, from 60 to 90 seconds, default 75. Current safety and dependency checks remain required. |

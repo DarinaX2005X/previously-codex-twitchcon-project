@@ -9,7 +9,8 @@ export class TwitchHelix {
   async request<T>(path:string,init?:RequestInit,beforeRequest?:()=>boolean):Promise<T>{
     if(beforeRequest&&!beforeRequest())throw new TwitchRequestCancelled();
     const response=await this.tokens.authorizedFetch(`${this.base}/${path}`,init,beforeRequest);
-    if(!response.ok)throw new HelixError(response.status,response.status===403?'permission_or_disabled':response.status===404?'offline_or_unavailable':'twitch_request_failed',Number(response.headers.get('Retry-After')??0)*1000);
+    // Helix reports rate-limit refill as Ratelimit-Reset (epoch seconds); keep Retry-After for proxies and tests.
+    if(!response.ok){const retry=Number(response.headers.get('Retry-After')??0)*1000,reset=Number(response.headers.get('Ratelimit-Reset')??0)*1000-Date.now();throw new HelixError(response.status,response.status===403?'permission_or_disabled':response.status===404?'offline_or_unavailable':'twitch_request_failed',retry>0?retry:response.status===429&&Number.isFinite(reset)&&reset>0?Math.min(60000,reset):0);}
     return (response.status===204 ? null:await response.json()) as T;
   }
   async currentStream(){return (await this.request<{data:TwitchStream[]}>(`streams?user_id=${encodeURIComponent(this.channelId)}`)).data[0]??null;}
