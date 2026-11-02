@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Brand, ChatSlip, ClipFrame, LorePlate, Plate, TitleCard, buttonClass, formatTimecode } from '../../ui';
 import { ScenePlayer } from '../overlay';
-import { composeReply } from '../../server/twitch/commands';
+import { composeReply } from '../../shared/chat-commands.js';
 import { useFootage, type Footage } from '../replay/footage';
 import type { LandingStory } from './useLandingStory';
 import './landing.css';
