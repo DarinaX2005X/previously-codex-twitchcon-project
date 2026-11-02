@@ -13,6 +13,7 @@ import type { JobResult } from './scheduler.js';
 import { RevisionStream } from './updates.js';
 import { normalizeInput } from './input.js';
 import { enrichGenerationHistory, historyEventEntity, loadHistoryEntity } from './history.js';
+import { newestSourceFirst } from '../../core/source-retention.js';
 
 export type DispatchOptions = {
   envelope?: EventEnvelope; idempotencyKey?: string; requestBody?: unknown;
@@ -249,7 +250,10 @@ export class StoryEngine {
         const state = this.state(session.id);
         if (state.settings.listeningPaused) continue;
         const selected: Source[] = []; let length = 0;
-        for (const source of state.sources.slice().reverse()) {
+        // Review fresh spoken/metadata context before a chat flood consumes the bounded batch.
+        // Owner statements retain their dedicated title/summary review and revision fence.
+        const pending = state.sources.slice().sort((a,b)=>Number(a.kind==='chat')-Number(b.kind==='chat')||newestSourceFirst(a,b));
+        for (const source of pending) {
           // Owner reviews cover their title and summary together, with their own revision fence.
           if (source.kind === 'owner_statement' || source.status === 'deleted' || !['pending', 'unavailable'].includes(source.moderation) || !source.text) continue;
           const size = Buffer.byteLength(JSON.stringify(source.text));

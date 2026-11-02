@@ -4,6 +4,7 @@ import type { DomainState, DerivedNode, StoryCandidate, DomainMedia, LorePresent
 import { createDomainState, hydrateDomainState } from './reducer.js';
 import { isRefActive, leafRefs, uniqueRefs, sourceTombstoned, blockedPhrase } from './evidence.js';
 import { publishedLore } from './lore-presentations.js';
+import { retainRecentSources } from './source-retention.js';
 
 /** Structural port: the SQLite adapter returns this without importing server code into the browser. */
 export type DomainHydrationInput={
@@ -26,7 +27,7 @@ export function recoverDomainState(input:DomainHydrationInput,options:{resumePla
   }
   const state=createDomainState({channel:input.channel,session:{...input.session,privacyEpoch:input.privacyEpoch},settings:input.settings,tombstones:input.tombstones,blockedTerms:input.blockedTerms,bannedActors:input.bannedActors});
   state.revision=input.revision;state.captureEpoch=input.captureEpoch;state.chatClearThroughMs=input.chatClearThroughMs;
-  state.sources=structuredClone(input.sources).filter(s=>s.sessionId===state.session.id).slice(-500).map(s=>sourceTombstoned(state,s)||state.bannedActors.includes(s.actorId??'')?{...s,text:null,status:'deleted' as const}:s);
+  state.sources=retainRecentSources(structuredClone(input.sources).filter(s=>s.sessionId===state.session.id).map(s=>sourceTombstoned(state,s)||state.bannedActors.includes(s.actorId??'')?{...s,text:null,status:'deleted' as const}:s));
   state.nodes=Object.fromEntries(input.entities.map(n=>[n.id,structuredClone(n)]));
   for(const n of input.entities){
     state.ownerRevisions[n.id]=n.ownerRevision;if(n.ownerLocked)state.ownerLocks.push(n.id);

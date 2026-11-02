@@ -7,6 +7,7 @@ import { advanceWindows, observeChat, observePhrase, saveMoment } from './moment
 import { compileRecap, canDispatch, recapLineage } from './recap.js';
 import { reconcilePrivacyEpoch } from './epoch.js';
 import { publishedLore, loreLanguageReady, recordLorePresentation, retireLorePresentations } from './lore-presentations.js';
+import { retainRecentSources } from './source-retention.js';
 
 const iso=(ms:number)=>new Date(ms).toISOString();
 const offset=(s:DomainState,c:Clock)=>Math.max(0,c.now()-Date.parse(s.session.startedAt));
@@ -99,7 +100,7 @@ function requestGeneration(s:DomainState,effects:DomainEffect[],clock:Clock){
   const inputRefs=packetRefs(s,packet),range=dependencyRange(s,inputRefs),chapter=s.chapters.find(c=>c.id===entityId);
   const ticket={channelId:s.session.channelId,runId:s.session.runId,jobId:`generation:${s.session.id}:${++s.sequence}`,sessionId:s.session.id,privacyEpoch:s.session.privacyEpoch,baseEntityRevision:chapter?.revision??0,inputRefs,inputHash:stateHash(packet),schemaVersion:1,promptVersion:'grounded-v1',recapLanguage:s.settings.recapLanguage,eligibleAt:iso(Date.parse(s.session.startedAt)+range.endMs+s.settings.publicationDelaySeconds*1000),ownerEditRevision:s.ownerRevisions[entityId]??0};
   const reason=final?'final':s.boundary??(chapterDue?'chapter':'current');
-  const request={ticket,entityId,reason,packet,requestedAtMs:clock.now(),sourceRevision:s.sourceRevision} as const;
+  const request={ticket,entityId,reason,packet,requestedAtMs:clock.now(),sourceRevision:s.sourceRevision,boundaryRevision:s.boundaryRevision} as const;
   s.pendingGeneration=request;s.lastCurrentAtMs=clock.now();if(reason!=='current')s.lastChapterAtMs=clock.now();effects.push({type:'generation.request',request:structuredClone(request)});
 }
 function acceptSource(s:DomainState,source:Source,effects:DomainEffect[],clock:Clock,captureEpoch?:number,scheduleStory=true):boolean {
@@ -126,7 +127,10 @@ function commitStory(s:DomainState,event:Extract<DomainEvent,{type:'generation.r
   if(!result.valid){effects.push({type:'held',reason:result.reason??'invalid_story'});if(s.pendingGeneration?.ticket.jobId===event.ticket.jobId){s.processedSourceRevision=s.pendingGeneration.sourceRevision;s.pendingGeneration=null;}return;}
   const request=s.pendingGeneration!;s.pendingGeneration=null;s.processedSourceRevision=request.sourceRevision;
   if(s.closing)s.closing.finalProcessedRevision=request.sourceRevision;
-  if(event.patch.action==='hold'){s.boundary=null;return;}
+  // A result consumes only its captured boundary. Later metadata/topic signals must survive,
+  // including changes with the same source timestamp and requests from legacy checkpoints.
+  const consumeBoundary=()=>{if(s.boundaryRevision===request.boundaryRevision){s.boundary=null;delete s.boundaryRevision;}};
+  if(event.patch.action==='hold'){consumeBoundary();return;}
   const refs=event.ticket.inputRefs,range=dependencyRange(s,refs),entityId=request.entityId,previous=s.chapters.find(c=>c.id===entityId),revision=(previous?.revision??0)+1;
   const claimId=(id:string)=>`claim:${stateHash(event.ticket.jobId)}:${id.slice(0,80)}`;
   const candidateId=`candidate:${event.ticket.jobId}:${event.ticket.recapLanguage}`;
@@ -148,7 +152,7 @@ function commitStory(s:DomainState,event:Extract<DomainEvent,{type:'generation.r
   if(s.memory.length>64)s.memory=[s.memory[0]!,...s.memory.slice(-63)];
   upsertNode(s,effects,{id:entityId,revision,kind:'chapter',supports:event.patch.claims.flatMap(c=>c.support),exposedTo:refs,startMs:chapter.startMs,endMs:range.endMs,active:true,body:chapter});
   for(const [i,relation] of event.patch.relations.entries())upsertNode(s,effects,{id:`relation:${event.ticket.jobId}:${i}`,revision:1,kind:'relation',supports:relation.support,exposedTo:refs,startMs:range.startMs,endMs:range.endMs,active:true,body:{...relation,from:claimId(relation.from),to:claimId(relation.to)}});
-  s.chapters=[...s.chapters.filter(c=>c.id!==entityId),chapter].slice(-DOMAIN_LIMITS.chapters);s.activeChapterId=entityId;s.boundary=null;
+  s.chapters=[...s.chapters.filter(c=>c.id!==entityId),chapter].slice(-DOMAIN_LIMITS.chapters);s.activeChapterId=entityId;consumeBoundary();
 }
 function prune(s:DomainState){
   s.candidates=s.candidates.filter(c=>c.status!=='rejected');
@@ -161,7 +165,7 @@ function prune(s:DomainState){
   for(const id of [...roots])visit(id);
   s.nodes=Object.fromEntries(Object.entries(s.nodes).filter(([id,n])=>roots.has(id)&&n.active));
   // Recent raw context is bounded; older grounded excerpts survive only while referenced.
-  const recent=s.sources.slice(-DOMAIN_LIMITS.sources),recentIds=new Set(recent.map(x=>x.id));
+  const recent=retainRecentSources(s.sources),recentIds=new Set(recent.map(x=>x.id));
   // Historical leaf metadata keeps erasure/author fences and time ranges, never an 8-hour transcript.
   for(const x of s.sources)if(!recentIds.has(x.id)&&roots.has(x.id)){const {text:_text,...metadata}=x;s.nodes[x.id]={id:x.id,revision:x.revision,kind:'provider_cache',supports:[],exposedTo:[],startMs:x.startMs,endMs:x.endMs,active:x.status==='active',body:{evidenceMetadata:metadata}};}
   s.sources=recent;
@@ -199,9 +203,9 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
     case 'tick':advanceWindows(s,effects,offset(s,clock),clock);advancePlayback(s,effects,clock);break;
     case 'metadata':if(event.atMs>=s.session.metadataMaxDependencyEndMs&&safetyAllowsPublication(event.safety)&&(!s.metadataReviewed||event.title!==s.session.title||event.category!==s.session.category)){
       const source:Source={channelId:s.session.channelId,runId:s.session.runId,sessionId:s.session.id,id:`metadata:${stateHash(s.session.id)}:${++s.sequence}`,revision:1,kind:'channel_metadata',startMs:event.atMs,endMs:event.atMs,actorId:null,languageCodes:[s.settings.recapLanguage],timePrecision:'event',text:`${event.title.slice(0,200)} — ${event.category.slice(0,100)}`,status:'active',externalMessageId:null,moderation:event.safety.pii==='redacted'?'redacted':'allowed'};
-      if(acceptSource(s,source,effects,clock)){s.metadataReviewed=true;s.session.title=event.title.slice(0,200);s.session.category=event.category.slice(0,100);s.session.metadataMaxDependencyEndMs=event.atMs;s.boundary='metadata';}
+      if(acceptSource(s,source,effects,clock)){s.metadataReviewed=true;s.session.title=event.title.slice(0,200);s.session.category=event.category.slice(0,100);s.session.metadataMaxDependencyEndMs=event.atMs;s.boundary='metadata';s.boundaryRevision=s.sourceRevision;}
     }break;
-    case 'topic':if(event.sourceRefs.length&&event.sourceRefs.every(r=>isRefActive(s,r))){s.boundary='topic';s.sourceRevision++;}break;
+    case 'topic':if(event.sourceRefs.length&&event.sourceRefs.every(r=>isRefActive(s,r))){s.boundary='topic';s.sourceRevision++;s.boundaryRevision=s.sourceRevision;}break;
     case 'generation.result':commitStory(s,event,effects,clock);break;
     case 'generation.failed':if(s.pendingGeneration?.ticket.jobId===event.jobId){s.pendingGeneration=null;s.nextGenerationAfterMs=clock.now()+45000;if(s.closing)s.closing.failed=true;effects.push({type:'held',reason:event.reason});}break;
     case 'privacy':if(event.target.sessionId===s.session.id){invalidateDomain(s,event.target,effects);publish(s,effects,clock,true);}break;

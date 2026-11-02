@@ -68,7 +68,7 @@
         "sha256": "535578A9DCD192336D030B0EBD69A0968448780B2E2CEF2BE7B64D8D9556B1B5"
       }
     ],
-    "subsequentReducerChange": "Owner edit replacement dependencies and owner review exposure preservation; no owner.edit or owner.review.result events occur in this load harness.",
+    "subsequentReducerChange": "Owner edit replacement dependencies and owner review exposure preservation; no owner.edit or owner.review events occur in this load harness.",
     "runningProcessRestarted": false
   },
   "completion": {

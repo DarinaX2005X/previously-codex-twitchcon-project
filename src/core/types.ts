@@ -7,7 +7,7 @@ export type MemoryFact = { id: string; text: string; refs: VersionRef[]; role: G
 export type GroundingReview = { acceptedClaimIds: string[]; acceptedRelationKeys: string[]; issues?: string[] };
 export type StoryCandidate = { id: string; entityId: string; revision: number; ownerRevision: number; privacyEpoch: number; inputRefs: VersionRef[]; eligibleAtMs: number; chapter: Chapter; current: CurrentState|null; currentNodeId?: string; safety: Safety; language: RecapLanguage; status: 'pending'|'published'|'rejected'; };
 export type LorePresentation = { kind:'lore'; id:string; entityId:string; entityRevision:number; language:RecapLanguage; term:string; explanation:string; safety:Safety; inputRefs:VersionRef[]; privacyEpoch:number; eligibleAtMs:number; maxDependencyEndMs:number };
-export type GenerationRequest = { ticket: GenerationTicket; entityId: string; reason: 'current'|'chapter'|'metadata'|'topic'|'final'; packet: EvidencePacket; requestedAtMs: number; sourceRevision: number };
+export type GenerationRequest = { ticket: GenerationTicket; entityId: string; reason: 'current'|'chapter'|'metadata'|'topic'|'final'; packet: EvidencePacket; requestedAtMs: number; sourceRevision: number; boundaryRevision?:number };
 export type ReactionWindow = { startMs: number; actors: Record<string, number>; count: number; emotes: number; laughter: number; clipIt: number; refs: VersionRef[] };
 export type PhraseObservation = { term: string; aliases: string[]; firstMs: number; lastMs: number; actors: string[]; refs: VersionRef[] };
 export type DomainMedia = { id: string; revision: number; momentId: string|null; refs: VersionRef[]; captureStartMs: number; captureEndMs: number; durationMs: number; state: 'pending'|'ready'|'unavailable'|'revoked'; kind: 'video'|'image'|'audio'; previousSession: boolean; ownerApproved: boolean; clipId?: string; manageUrl?: string; clip?:{id:string;url:string;embedUrl:string}; narration?:{language:RecapLanguage;script:string} };
@@ -22,7 +22,7 @@ export type DomainState = {
   tombstones: PrivacyTarget[]; bannedActors: string[]; blockedTerms: string[]; captureEpoch: number;
   chatClearThroughMs: number|null;
   sourceRevision: number; processedSourceRevision: number; lastCurrentAtMs: number|null; lastChapterAtMs: number|null;
-  pendingGeneration: GenerationRequest|null; boundary: 'metadata'|'topic'|null; sequence: number;
+  pendingGeneration: GenerationRequest|null; boundary: 'metadata'|'topic'|null; boundaryRevision?:number; sequence: number;
   windows: ReactionWindow[]; openWindow: ReactionWindow|null; lastAutoMomentAtMs: number|null; pendingClipId: string|null;
   phrases: PhraseObservation[]; playbacks: PlaybackRef[]; seenTriggers: string[]; lastRecapRevision: number|null;
   playbackTiming: Record<string,{prepareAtMs:number|null;startAtMs:number|null}>;

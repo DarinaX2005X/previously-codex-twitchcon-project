@@ -25,5 +25,8 @@
     "cpuSecondsPerWallSecond": 1.0760861718,
     "priority": "BelowNormal",
     "limitation": "One short shared-machine process sample; not an isolated benchmark or attribution of all processing cost."
-  }
+  },
+  "reducerLoadReleasedAtApproxUtc": "2026-11-01T23:39:54Z",
+  "reducerLoadReleaseEvidence": "Core result LastWriteTimeUtc 2026-11-01T23:39:54.3545443Z agrees with start plus 4779.9158264 elapsed seconds. Process exit followed write/cleanup and was confirmed by its monitor; exact sub-second process exit was not independently timestamped.",
+  "knownFreshnessFailure": "Observed at virtual second 7247: current recap source time remained 3000999 ms and all six chapters revision 1. Chat500-tail evicts sparse recent speech in about25s despite90s intended evidence horizon; normal provider retry alignment then repeatedly misses it. Root assigned source_recovery to bounded retention and safety-priority repair. This unchanged process is pre-repair durability/cap evidence with a known product failure, not a complete reliability pass. See engine-story-progress-probe.json."
 }

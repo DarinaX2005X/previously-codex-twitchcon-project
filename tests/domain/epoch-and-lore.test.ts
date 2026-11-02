@@ -35,6 +35,8 @@ describe('privacy epoch reconciliation',()=>{
   it('retains the reviewed metadata erasure pointer after raw evidence eviction',()=>{
     const h=fixture();h.set(1000);h.send({type:'metadata',title:'Private heading',category:'Development',atMs:1000,safety:allowed});const metadataId=h.state.sources.find(s=>s.kind==='channel_metadata')!.id;
     for(let i=0;i<501;i++){h.set(2000+i);h.send({type:'source',source:source(`later-chat-${i}`,'Working',2000+i,{kind:'chat',actorId:'one'})});}
+    expect(h.state.sources.some(s=>s.id===metadataId)).toBe(true);
+    h.set(92000);h.send({type:'source',source:source('beyond-evidence-horizon','Working',92000,{kind:'chat',actorId:'one'})});
     expect(h.state.sources.some(s=>s.id===metadataId)).toBe(false);expect(h.state.nodes[metadataId]?.body).toHaveProperty('evidenceMetadata');h.send({type:'privacy',target:{kind:'source',sessionId:'session',id:metadataId}});expect(h.state.session.title).toBe('');expect(h.state.published?.session.title).toBe('');
   });
   it('commits rejected pending chat safety when that chat already contributed a moment',async()=>{

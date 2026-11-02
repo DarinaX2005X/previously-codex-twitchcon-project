@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DomainState, DerivedNode, StoryCandidate, GenerationRequest } from '../../core/types.js';
+import { DOMAIN_LIMITS } from '../../core/types.js';
+import { EVIDENCE_HORIZON_MS, NON_CHAT_SOURCE_RESERVE, newestSourceFirst } from '../../core/source-retention.js';
 import type { Scope, Source, VersionRef, EventEnvelope, PrivacyTarget, InvalidationReceipt, Lore } from '../../shared/contracts/index.js';
 import { EventEnvelopeSchema, SourceSchema, SessionSchema, SettingsSchema, ChapterSchema, PublicSnapshotSchema, GenerationTicketSchema, safetyAllowsPublication } from '../../shared/contracts/index.js';
 import type { SqliteRepository } from './repository.js';
@@ -29,7 +31,18 @@ export class DomainPersistence {
     // A valid checkpoint already contains these records. Its caller must request
     // the full recovery projection if checkpoint validation fails.
     const recoveryRecords=!options.checkpointOnly || !checkpoint.checkpoint;
-    const sources=recoveryRecords ? this.db.all('SELECT id FROM sources WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY start_ms DESC,id DESC LIMIT 500',...this.scoped(scope),sessionId).reverse().map(row=>this.repository.getSource(scope,String(row.id))!) : [];
+    // Select bounded IDs before reading raw text; mirror the reducer's recent non-chat reserve.
+    const sources=recoveryRecords ? this.db.all(`WITH recent AS (
+      SELECT id,end_ms FROM sources WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY end_ms DESC,id COLLATE BINARY DESC LIMIT ?
+    ), reserved AS (
+      SELECT id,end_ms FROM sources WHERE channel_id=? AND run_id=? AND session_id=?
+        AND kind!='chat' AND text IS NOT NULL AND status NOT IN ('deleted','blocked')
+        AND end_ms >= COALESCE((SELECT MAX(end_ms) FROM recent),0)-?
+      ORDER BY end_ms DESC,id COLLATE BINARY DESC LIMIT ?
+    ), selected AS (SELECT id,end_ms FROM recent UNION SELECT id,end_ms FROM reserved)
+    SELECT id FROM selected ORDER BY CASE WHEN id IN (SELECT id FROM reserved) THEN 0 ELSE 1 END,end_ms DESC,id COLLATE BINARY DESC LIMIT ?`,
+      ...this.scoped(scope),sessionId,DOMAIN_LIMITS.sources,...this.scoped(scope),sessionId,EVIDENCE_HORIZON_MS,NON_CHAT_SOURCE_RESERVE,DOMAIN_LIMITS.sources)
+      .map(row=>this.repository.getSource(scope,String(row.id))!).sort((a,b)=>newestSourceFirst(b,a)) : [];
     const rows=recoveryRecords ? this.db.all(`SELECT * FROM entities WHERE channel_id=? AND run_id=? AND session_id=? ORDER BY
       CASE kind WHEN 'chapter' THEN 0 WHEN 'lore' THEN 1 WHEN 'moment' THEN 2 WHEN 'current_state' THEN 3 WHEN 'media' THEN 4 ELSE 5 END,
       CASE status WHEN 'active' THEN 0 ELSE 1 END,COALESCE(end_ms,0) DESC,id LIMIT 2000`,...this.scoped(scope),sessionId) : [];

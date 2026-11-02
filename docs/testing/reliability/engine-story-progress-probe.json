@@ -1,0 +1,208 @@
+{
+  "scope": "Bounded read-only diagnosis of stopped synthetic story freshness during the unchanged actual-engine stress. Not a new load run or proof of a production-provider defect.",
+  "observedAt": "2026-11-01T23:47:36.374Z",
+  "virtualSecond": 7247.095,
+  "sourceRevision": 151070,
+  "processedSourceRevision": 60042,
+  "lastCurrentAtSecond": 7226.095,
+  "lastChapterAtSecond": 7226.095,
+  "nextGenerationAfterSecond": 7225.999,
+  "boundary": "metadata",
+  "ownerLocks": [],
+  "currentSourceTimeMs": 3000999,
+  "metadataMaxDependencyEndMs": 7200999,
+  "pending": {
+    "requestedAtSecond": 7226.095,
+    "reason": "metadata",
+    "sourceCount": 0,
+    "sourceIds": [],
+    "memoryCount": 3
+  },
+  "chapters": [
+    {
+      "id": "chapter:session:4",
+      "revision": 1,
+      "maxDependencyEndMs": 300900
+    },
+    {
+      "id": "chapter:session:13",
+      "revision": 1,
+      "maxDependencyEndMs": 600999
+    },
+    {
+      "id": "chapter:session:32",
+      "revision": 1,
+      "maxDependencyEndMs": 1200999
+    },
+    {
+      "id": "chapter:session:51",
+      "revision": 1,
+      "maxDependencyEndMs": 1800999
+    },
+    {
+      "id": "chapter:session:70",
+      "revision": 1,
+      "maxDependencyEndMs": 2400999
+    },
+    {
+      "id": "chapter:session:89",
+      "revision": 1,
+      "maxDependencyEndMs": 3000999
+    }
+  ],
+  "tickets": [
+    {
+      "id": "generation:session:104",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 3526.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:106",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 3590.999,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:109",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 3600.999,
+      "sourceIds": [
+        "speech-3600",
+        "metadata:72fdea2f692c76fb:107",
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:111",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 3706.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:113",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 3816.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:116",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 3926.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:118",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 3986.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:120",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 4046.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:122",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 4106.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:124",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 4166.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:127",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 4226.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:129",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 4286.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:131",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 4346.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:133",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 4406.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    },
+    {
+      "id": "generation:session:135",
+      "stateAtProbe": "cancelled",
+      "requestedSecond": 4466.95,
+      "sourceIds": [
+        "speech-300",
+        "speech-600",
+        "speech-1200"
+      ]
+    }
+  ],
+  "interpretation": "After the first hourly synthetic outage, retries became aligned around second 26.95 of each minute. Synthetic speech appears only every 300 seconds and falls out of the 500-source hot window after roughly 25 seconds at 20 chats/s. The local proposer throws synthetic_no_speech for a memory-only packet, triggering the normal failure backoff. New generation requests continue, but no successful new story is produced. This limits long-run story-progress/history coverage; bounded memory and durable chat success do not establish continuous recap freshness. The stored metadata boundary remains present, so this probe does not establish a lost-boundary or owner-lock cause."
+}
