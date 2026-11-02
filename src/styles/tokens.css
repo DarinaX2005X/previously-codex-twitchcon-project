@@ -6,37 +6,84 @@
   font-display: swap;
 }
 
+/*
+  Previously material world: broadcast title cards and film frames.
+  The page is an ink stage lit from the upper left. Reading happens on matte paper cards.
+  Vermilion marks action and the present. Lime is only for chat energy and the live state.
+*/
 :root {
-  --pv-canvas: #e9ebe6;
-  --pv-paper: #f5f4ec;
-  --pv-plane: #d5dad2;
-  --pv-slate: #252b2c;
-  --pv-raised: #3a4440;
-  --pv-action: #f26844;
-  --pv-action-hover: #fa7d5a;
-  --pv-action-text: #252b2c;
-  --pv-border: #66716e;
-  --pv-edge: #c3c9bf;
-  --pv-success: #286345;
-  --pv-warning: #795214;
-  --pv-danger: #a93130;
-  --pv-surface: var(--pv-paper);
-  --pv-text: var(--pv-slate);
-  --pv-secondary: #4c5754;
-  --pv-control: #e3e7df;
-  --pv-control-hover: #d5dad2;
-  --pv-focus: #aa3e24;
-  --pv-font: Onest, Arial, sans-serif;
-  --pv-text-body: 1.0625rem;
+  /* palette */
+  --pv-ink: #14171B;
+  --pv-ink-raised: #1E232A;
+  --pv-ink-high: #272D35;
+  --pv-ink-edge: #2C333C;
+  --pv-ink-deep: #0C0E11;
+  --pv-paper: #F4EFE6;
+  --pv-paper-shade: #E4DDD0;
+  --pv-paper-side: #CFC5B3;
+  --pv-vermilion: #FF5A36;
+  --pv-vermilion-hover: #FF7552;
+  --pv-vermilion-side: #C93F22;
+  --pv-vermilion-deep: #8F2F1C;
+  --pv-lime: #C8F560;
+  --pv-lime-side: #86A833;
+  --pv-muted-ink: #A9B1BC;   /* muted text on ink */
+  --pv-muted-paper: #4A4F57; /* muted text on paper */
+
+  /* semantic, ink stage (default) */
+  --pv-canvas: var(--pv-ink);
+  --pv-surface: var(--pv-ink-raised);
+  --pv-surface-high: var(--pv-ink-high);
+  --pv-text: var(--pv-paper);
+  --pv-secondary: var(--pv-muted-ink);
+  --pv-edge: var(--pv-ink-edge);
+  --pv-border: #4A5360;
+  --pv-control: var(--pv-ink-high);
+  --pv-control-hover: #313843;
+  --pv-control-side: var(--pv-ink-deep);
+  --pv-focus: #FF9A80;
+  --pv-success: #8FDDA4;
+  --pv-warning: #F2C66D;
+  --pv-danger: #FF9C8C;
+  --pv-action: var(--pv-vermilion);
+  --pv-action-hover: var(--pv-vermilion-hover);
+  --pv-action-side: var(--pv-vermilion-side);
+  --pv-action-text: var(--pv-ink);
+
+  /* legacy names kept for screens not restyled yet */
+  --pv-slate: var(--pv-ink);
+  --pv-raised: var(--pv-ink-raised);
+  --pv-plane: var(--pv-ink-raised);
+
+  /* type: Onest, one family; display is heavy and tight, body is calm */
+  --pv-font: Onest, 'Segoe UI', Arial, sans-serif;
+  --pv-text-small: .9375rem;    /* 15 field labels, timecodes */
   --pv-text-label: .9375rem;
-  --pv-text-control: 1rem;
-  --pv-text-heading: 1.75rem;
-  --pv-text-result: 2.375rem;
-  --pv-radius-stage: 32px;
+  --pv-text-control: 1rem;      /* 16 buttons */
+  --pv-text-body: 1.0625rem;    /* 17 */
+  --pv-text-lead: 1.3125rem;    /* 21 supporting sentence */
+  --pv-text-heading: 1.75rem;   /* 28 card and section titles */
+  --pv-text-result: 2.75rem;    /* 44 the present statement */
+  --pv-text-display: clamp(3.25rem, 6.6vw, 6.75rem);  /* 52..108 */
+  --pv-text-mega: clamp(3.5rem, 9vw, 9.5rem);         /* 56..152 */
+  --pv-display-weight: 800;
+  --pv-display-tracking: -.035em;
+  --pv-display-leading: .96;
+
+  /* radii family: stage / card / control / chip / tag */
+  --pv-radius-stage: 28px;
   --pv-radius-sheet: 24px;
-  --pv-radius-chapter: 18px;
+  --pv-radius-card: 20px;
+  --pv-radius-chapter: 20px;
   --pv-radius-control: 14px;
+  --pv-radius-chip: 10px;
   --pv-radius-plate: 8px;
+  --pv-radius-tag: 6px;
+
+  /* thickness: every card has a darker underside plane */
+  --pv-thick: 5px;
+  --pv-thick-control: 4px;
+
   --pv-space-1: 4px;
   --pv-space-2: 8px;
   --pv-space-3: 12px;
@@ -45,42 +92,59 @@
   --pv-space-8: 32px;
   --pv-space-12: 48px;
   --pv-space-16: 64px;
-  --pv-shadow-rest: 0 1px 1px #252b2c14, 0 6px 16px -8px #252b2c28;
-  --pv-shadow-raised: 0 2px 2px #252b2c18, 0 20px 30px -14px #252b2c38;
-  --pv-shadow-overlay: 0 2px 4px #252b2c22, 0 24px 56px -16px #252b2c55;
+  --pv-space-24: 96px;
+
+  /* light from the upper left: tight contact + wide soft shadow, tinted to ink */
+  --pv-edge-light: inset 0 1px 0 rgb(255 255 255 / .07);
+  --pv-shadow-rest: 0 1px 1px rgb(5 6 8 / .45), 0 8px 18px -10px rgb(5 6 8 / .7);
+  --pv-shadow-raised: 0 2px 2px rgb(5 6 8 / .45), 0 22px 40px -18px rgb(5 6 8 / .85);
+  --pv-shadow-overlay: 0 3px 6px rgb(5 6 8 / .5), 0 40px 90px -24px rgb(5 6 8 / .9);
+
+  /* motion */
   --pv-motion-press: 90ms;
-  --pv-motion-recover: 180ms;
-  --pv-motion-edit: 240ms;
-  --pv-motion-reorder: 260ms;
+  --pv-motion-hover: 180ms;
+  --pv-motion-recover: 220ms;
+  --pv-motion-edit: 260ms;
+  --pv-motion-reorder: 320ms;
   --pv-ease: cubic-bezier(.16, 1, .3, 1);
+  --pv-ease-out: cubic-bezier(.23, 1, .32, 1);
+  --pv-spring: cubic-bezier(.34, 1.56, .64, 1);
 }
 
 [data-theme='dark'] {
   color-scheme: dark;
-  --pv-surface: var(--pv-slate);
-  --pv-text: #f5f4ec;
-  --pv-secondary: #bbc5bd;
-  --pv-control: var(--pv-raised);
-  --pv-control-hover: #46534c;
-  --pv-focus: var(--pv-action);
-  --pv-edge: #56635c;
-  --pv-success: #9ed3af;
-  --pv-warning: #edc47c;
-  --pv-danger: #ffb5aa;
-  --pv-border: #8f9c95;
+  --pv-surface: var(--pv-ink-raised);
+  --pv-surface-high: var(--pv-ink-high);
+  --pv-text: var(--pv-paper);
+  --pv-secondary: var(--pv-muted-ink);
+  --pv-edge: var(--pv-ink-edge);
+  --pv-border: #4A5360;
+  --pv-control: var(--pv-ink-high);
+  --pv-control-hover: #313843;
+  --pv-control-side: var(--pv-ink-deep);
+  --pv-focus: #FF9A80;
+  --pv-success: #8FDDA4;
+  --pv-warning: #F2C66D;
+  --pv-danger: #FF9C8C;
 }
 
+/* paper: reading cards, editors and dialogs that hold text people read closely */
 [data-theme='light'], .pv-dialog {
   color-scheme: light;
   --pv-surface: var(--pv-paper);
-  --pv-text: var(--pv-slate);
-  --pv-secondary: #4c5754;
-  --pv-control: #e3e7df;
-  --pv-control-hover: #d5dad2;
-  --pv-focus: #aa3e24;
-  --pv-edge: #c3c9bf;
-  --pv-success: #286345;
-  --pv-warning: #795214;
-  --pv-danger: #a93130;
-  --pv-border: #66716e;
+  --pv-surface-high: #FBF8F2;
+  --pv-text: var(--pv-ink);
+  --pv-secondary: var(--pv-muted-paper);
+  --pv-edge: #D8D0C1;
+  --pv-border: #8A8578;
+  --pv-control: var(--pv-paper-shade);
+  --pv-control-hover: #DAD2C3;
+  --pv-control-side: var(--pv-paper-side);
+  --pv-focus: #C2381B;
+  --pv-success: #23663F;
+  --pv-warning: #7A5414;
+  --pv-danger: #A3302A;
+  --pv-shadow-rest: 0 1px 1px rgb(20 23 27 / .08), 0 6px 14px -8px rgb(20 23 27 / .22);
+  --pv-shadow-raised: 0 2px 2px rgb(20 23 27 / .1), 0 20px 34px -16px rgb(20 23 27 / .35);
+  --pv-edge-light: inset 0 1px 0 rgb(255 255 255 / .7);
 }

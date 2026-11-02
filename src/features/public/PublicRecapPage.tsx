@@ -1,14 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { PublicChapter, PublicLore, PublicMoment, PublicSnapshot } from '../../shared/contracts';
 import { Brand, Button, ChapterRow, Dialog, Field, QuietButton, ReadingLayout, SourceDisclosure, Timecode, formatTimecode } from '../../ui';
 import { PublicRecapController, sourceAge, twitchClipEmbed, type PublicRecapClient, type PublicViewState } from './controller';
 import { parseReadingTime, ReadingHistory } from './reading-history';
 import './public.css';
 
-export interface PublicRecapPageProps { client: PublicRecapClient; login: string; episodeId?: string }
+export interface PublicRecapPageProps {
+  client: PublicRecapClient; login: string; episodeId?: string;
+  /** Example recordings say once what they are. The channel link is hidden because the channel is not real. */
+  example?: { notice: string; clipUrl?: (momentId: string) => string | undefined };
+}
+/** Clips an example recording serves itself, by public moment id. Real channels use Twitch clips only. */
+const ExampleClips = createContext<((momentId: string) => string | undefined) | undefined>(undefined);
 const initial: PublicViewState = { status: 'loading', snapshot: null, untilMs: undefined };
 function browserHistory() { try { return new ReadingHistory(window.localStorage); } catch { return new ReadingHistory(); } }
-export function PublicRecapPage({ client, login, episodeId }: PublicRecapPageProps) {
+export function PublicRecapPage({ client, login, episodeId, example }: PublicRecapPageProps) {
   const [view, setView] = useState<PublicViewState>(initial);
   const controller = useRef<PublicRecapController | null>(null);
   useEffect(() => {
@@ -20,16 +26,17 @@ export function PublicRecapPage({ client, login, episodeId }: PublicRecapPagePro
     return () => { window.removeEventListener('focus', focus); next.stop(); controller.current = null; };
   }, [client, login, episodeId]);
   const watch = `https://www.twitch.tv/${encodeURIComponent(login)}`;
-  return <main className="public-page">
+  return <ExampleClips.Provider value={example?.clipUrl}><main className="public-page">
     <div className="public-masthead"><a href="/" aria-label="Previously home"><Brand /></a><a href="/replay">Try a recorded stream</a></div>
     <ReadingLayout className="public-recap">
-      <header className="public-header"><div><p className="public-channel">{view.snapshot?.channel.displayName ?? login}</p>{view.snapshot && <p className="public-secondary">{view.snapshot.session.status === 'finalized' ? 'This stream has ended' : 'Live recap'}</p>}</div><a className="pv-button pv-button--quiet" href={watch} target="_blank" rel="noreferrer">Watch live</a></header>
+      <header className="public-header"><div><p className="public-channel">{view.snapshot?.channel.displayName ?? login}</p>{view.snapshot && <p className="public-secondary">{view.snapshot.session.status === 'finalized' ? 'This stream has ended' : 'Live recap'}</p>}</div>{!example && <a className="pv-button pv-button--quiet" href={watch} target="_blank" rel="noreferrer">Watch live</a>}</header>
+      {example && <p className="public-example-notice" role="note">{example.notice}</p>}
       {view.status === 'loading' && <div className="public-empty" role="status"><h1>Opening the recap</h1><p>Checking the latest published context.</p></div>}
       {view.status === 'unavailable' && <div className="public-empty" role="status"><h1>The live recap is temporarily unavailable</h1><p>Watch the channel while the public story reconnects.</p><QuietButton onClick={() => controller.current?.revalidate()}>Check again</QuietButton></div>}
       {view.status === 'ready' && view.snapshot && <RecapContent key={`${login}:${view.snapshot.session.id}:${view.untilMs ?? 'all'}`} snapshot={view.snapshot} untilMs={view.untilMs} onUntil={time => controller.current?.setUntil(time)} onClear={() => controller.current?.clearHistory()} />}
     </ReadingLayout>
     <footer className="public-footer"><a href="/">Previously</a><span>Catch up with the stream while it keeps going</span></footer>
-  </main>;
+  </main></ExampleClips.Provider>;
 }
 
 function RecapContent({ snapshot, untilMs, onUntil, onClear }: { snapshot: PublicSnapshot; untilMs?: number; onUntil: (time?: number) => void; onClear: () => void }) {
@@ -41,6 +48,8 @@ function RecapContent({ snapshot, untilMs, onUntil, onClear }: { snapshot: Publi
   useEffect(() => { setClipId(null); }, [snapshot.privacyEpoch, snapshot.revision]);
   const activeClip = snapshot.moments.find(moment => moment.id === clipId && moment.mediaState === 'ready' && moment.clip);
   const embed = activeClip?.clip ? twitchClipEmbed(activeClip.clip.id, window.location.hostname) : null;
+  const exampleClip = useContext(ExampleClips), exampleSrc = clipId ? exampleClip?.(clipId) : undefined;
+  const exampleMoment = exampleSrc ? snapshot.moments.find(moment => moment.id === clipId && moment.mediaState === 'ready') : undefined;
   const ended = snapshot.session.status === 'finalized';
   const CurrentHeading = ended ? 'h2' : 'h1';
   const current = snapshot.current;
@@ -57,12 +66,14 @@ function RecapContent({ snapshot, untilMs, onUntil, onClear }: { snapshot: Publi
     {snapshot.lore.filter(lore => !chapterForLore(snapshot, lore)).map(lore => <LoreExplanation key={lore.id} lore={lore} moments={snapshot.moments} onOpen={setClipId} />)}
     {snapshot.gaps.length > 0 && <p className="public-gap">Some source intervals are unavailable. The recap only includes context that could be published.</p>}
     <p className="public-sync">{snapshot.lastSyncedAt ? `Last published sync ${new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(snapshot.lastSyncedAt))}` : 'Public sync time is unavailable'}</p>
+    {exampleMoment && exampleSrc && <Dialog open onOpenChange={open => { if (!open) setClipId(null); }} title={exampleMoment.label} description={`Source at ${formatTimecode(exampleMoment.startMs)}`} className="public-clip-dialog"><video src={exampleSrc} controls autoPlay muted playsInline aria-label={exampleMoment.label} /></Dialog>}
     {activeClip && embed && <Dialog open onOpenChange={open => { if (!open) setClipId(null); }} title={activeClip.label} description={`Source at ${formatTimecode(activeClip.startMs)}`} className="public-clip-dialog"><iframe title={activeClip.label} src={embed} allow="autoplay; fullscreen" allowFullScreen /><p><a href={`https://clips.twitch.tv/${encodeURIComponent(activeClip.clip!.id)}`} target="_blank" rel="noreferrer">Open this clip on Twitch</a></p></Dialog>}
   </div>;
 }
 function chapterForLore(snapshot: PublicSnapshot, lore: PublicLore) { return [...snapshot.chapters].filter(chapter => chapter.startMs <= (lore.originMs ?? lore.firstSeenMs)).sort((a, b) => b.startMs - a.startMs)[0]; }
 function PublicMomentLink({ moment, onOpen }: { moment: PublicMoment; onOpen: (id: string) => void }) {
-  const playable = moment.mediaState === 'ready' && moment.clip && twitchClipEmbed(moment.clip.id, 'localhost');
+  const exampleClip = useContext(ExampleClips)?.(moment.id);
+  const playable = moment.mediaState === 'ready' && (!!exampleClip || moment.clip && twitchClipEmbed(moment.clip.id, 'localhost'));
   return <div className="public-moment-link"><Timecode milliseconds={moment.startMs} /><div><p>{moment.label}</p>{playable ? <QuietButton onClick={() => onOpen(moment.id)}>Watch source clip</QuietButton> : <p className="public-secondary">{moment.mediaState === 'pending' ? 'Clip is being prepared' : 'Clip unavailable. The source time is still available.'}</p>}</div></div>;
 }
 function LoreExplanation({ lore, moments, onOpen }: { lore: PublicLore; moments: PublicMoment[]; onOpen: (id: string) => void }) {

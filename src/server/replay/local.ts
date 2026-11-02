@@ -5,7 +5,7 @@ import {type BlobStore,CasConflict} from '../../cloud/blob-store.js';
 import {sha256} from '../../cloud/signing.js';
 import {PublicationService} from '../../cloud/service.js';
 import {createCloudHandler} from '../../cloud/http.js';
-import {bootstrapAuthoredReplay} from './export.js';
+import {bootstrapAuthoredReplay,type AuthoredExportOptions} from './export.js';
 
 /** Single-process local registry. Content-addressed file names prevent URL path traversal. */
 export class LocalReplayStore implements BlobStore {
@@ -15,4 +15,5 @@ export class LocalReplayStore implements BlobStore {
   async put(key:string,bytes:Uint8Array,options:{ifMatch?:string;contentType:string}){const task=this.tail.then(async()=>{if(bytes.length>3_500_000)throw new Error('replay_asset_too_large');await mkdir(this.directory,{recursive:true});const old=await this.get(key);if(options.ifMatch?old?.etag!==options.ifMatch:old!==null)throw new CasConflict();const etag=randomUUID(),path=this.path(key),temp=path+'.'+etag+'.tmp';await writeFile(temp,JSON.stringify({data:Buffer.from(bytes).toString('base64'),etag,uploadedAt:Date.now()}),{flag:'wx'});await rename(temp,path);return {etag};});this.tail=task.then(()=>{},()=>{});return task;}
   async delete(key:string){try{await unlink(this.path(key));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
 }
-export async function createLocalReplayHandler(dataDir:string){const service=new PublicationService({store:new LocalReplayStore(resolve(dataDir,'replay-registry')),channelLogin:'authored_channel'});await bootstrapAuthoredReplay(service,'authored_channel','authored_channel');const handler=createCloudHandler({service,secret:randomUUID(),channelLogin:'authored_channel'});return async(request:Request)=>{const path=new URL(request.url).pathname;if(request.method!=='GET'||path!=='/api/public/replays'&&!path.startsWith('/api/public/replays/authored-notes'))return new Response(null,{status:404});return handler(request);};}
+/** Serves only authored replay exports from a private local registry: listing, manifests and their gated assets. */
+export async function createLocalReplayHandler(dataDir:string,options:AuthoredExportOptions={}){const service=new PublicationService({store:new LocalReplayStore(resolve(dataDir,'replay-registry')),channelLogin:'authored_channel'});await bootstrapAuthoredReplay(service,'authored_channel','authored_channel',options);const handler=createCloudHandler({service,secret:randomUUID(),channelLogin:'authored_channel'});return async(request:Request)=>{const path=new URL(request.url).pathname;if(request.method!=='GET'||path!=='/api/public/replays'&&!path.startsWith('/api/public/replays/'))return new Response(null,{status:404});return handler(request);};}

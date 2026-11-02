@@ -1,37 +1,35 @@
-import {useEffect,useMemo,useRef,useState} from 'react';
-import {Brand,Button,QuietButton,SegmentedControl} from '../../ui/index.js';
+import {useEffect,useMemo,useRef,useState,type ReactNode} from 'react';
+import {Brand,Button,ClipFrame,LorePlate,QuietButton,SegmentedControl,TextButton,TitleCard,formatTimecode} from '../../ui/index.js';
 import {DockPage} from '../dock/index.js';
-import {ScenePreview,renderAt,resolveSceneLayout} from '../overlay/index.js';
-import type {RecapPlan,Source} from '../../shared/contracts/index.js';
-import {useRecording} from './useRecording.js';
+import {ScenePlayer,ScenePreview} from '../overlay/index.js';
+import type {OwnerSnapshot,PublicChapter,RecapPlan,Source} from '../../shared/contracts/index.js';
+import {useRecording,type RecordedChat} from './useRecording.js';
 import {correctionTarget} from './correction.js';
+import {useFootage} from './footage.js';
 import './replay.css';
 
-const time=(ms:number)=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}`;
-const beatLabels={context:'Stream context',attempt:'The goal',change:'What changed',origin:'Where it started',now:'What matters now'};
-const sourceLabels:Record<Source['kind'],string>={speech:'Speech',chat:'Chat',channel_metadata:'Stream details',owner_statement:'Streamer statement',stream_event:'Stream event'};
+const time=formatTimecode;
+const sourceLabels:Record<Source['kind'],string>={speech:'Heard',chat:'Chat',channel_metadata:'Stream details',owner_statement:'Streamer statement',stream_event:'Stream event'};
 function sourceExcerpt(text:string){
-  const characters=[...text];if(characters.length<=160)return {text,truncated:false};
-  const head=characters.slice(0,160).join(''),boundary=head.lastIndexOf(' ');
-  return {text:(boundary>110?head.slice(0,boundary):head).trimEnd(),truncated:true};
+  const characters=[...text];if(characters.length<=150)return {text,truncated:false};
+  const head=characters.slice(0,150).join(''),boundary=head.lastIndexOf(' ');
+  return {text:(boundary>100?head.slice(0,boundary):head).trimEnd(),truncated:true};
 }
+function chatterName(actor:string|null){if(!actor)return 'viewer';const value=actor.replace(/^(user|chatter|actor)[-_:]/,'');return /^[a-z0-9_]{2,25}$/i.test(value)?value:'viewer';}
 
 export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
-  const {client,view,error,origin,resolveMedia}=useRecording(manifestUrl);
+  const {client,view,error,origin,resolveMedia,chat,mediaRanges}=useRecording(manifestUrl);
+  const footage=useFootage();
   const [dock,setDock]=useState(false),[evidence,setEvidence]=useState<Source[]|null>(null),[actionError,setActionError]=useState<string|null>(null),[preview,setPreview]=useState<RecapPlan|null>(null),[busy,setBusy]=useState(false);
   const dockRegion=useRef<HTMLElement|null>(null),dockTrigger=useRef<HTMLButtonElement|null>(null);
-  const closeDock=()=>{setDock(false);dockTrigger.current?.focus({preventScroll:true});dockTrigger.current?.scrollIntoView({block:'nearest',behavior:'instant'});};
-  useEffect(()=>{if(dock){dockRegion.current?.focus({preventScroll:true});dockRegion.current?.scrollIntoView({block:'start',behavior:'instant'});}},[dock]);
-  const [sceneMediaUnavailable,setSceneMediaUnavailable]=useState(false);
-  const [reducedMotion,setReducedMotion]=useState(()=>typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches);
-  useEffect(()=>{const preference=matchMedia('(prefers-reduced-motion: reduce)'),update=()=>setReducedMotion(preference.matches);preference.addEventListener('change',update);return()=>preference.removeEventListener('change',update);},[]);
+  const closeDock=()=>{setDock(false);dockTrigger.current?.focus({preventScroll:true});};
+  useEffect(()=>{if(dock){dockRegion.current?.focus({preventScroll:true});dockRegion.current?.scrollIntoView({block:'start',behavior:'smooth'});}},[dock]);
   const s=view?.snapshot,t=view?.transport,published=s?.published,chapter=published?.chapters.at(-1),active=s?.playback.find(p=>p.status==='playing'&&p.plan);
   const publishMilestone=t?.milestones.find(m=>m.id==='published');
   const raidMilestone=t?.milestones.find(m=>m.id==='raid');
   const availableLanguages=t?.availableLanguages??[];
   const correction=t?.correction;
-  const correctionId=correction?.targetId;
-  const correctionChapter=correctionTarget(s,correctionId);
+  const correctionChapter=correctionTarget(s,correction?.targetId);
   const owner=useMemo(()=>client?{
     listSources:client.listSources.bind(client),
     editLore:async()=>{throw new Error('This recording has no safety check for this edit');},
@@ -42,95 +40,192 @@ export function ReplayPage({manifestUrl}:{manifestUrl?:string}){
   const run=async(action:()=>Promise<unknown>)=>{setBusy(true);setActionError(null);try{await action();}catch(e){setActionError(e instanceof Error?e.message:'The action could not be completed. Try again.');}finally{setBusy(false);}};
   useEffect(()=>{setEvidence(null);setPreview(null);},[s?.published?.privacyEpoch,s?.session?.id,s?.published?.revision]);
   useEffect(()=>{if(!client){setEvidence(null);setPreview(null);setDock(false);}},[client]);
+  // A landing link can ask to start at the raid: /replay?at=raid
+  const startedAtRaid=useRef(false);
+  useEffect(()=>{
+    if(!client||!raidMilestone||startedAtRaid.current)return;
+    if(new URLSearchParams(location.search).get('at')!=='raid')return;
+    startedAtRaid.current=true;
+    void run(async()=>{await client.controlReplay({action:'seek',milestone:raidMilestone.id});await client.controlReplay({action:'play'});});
+  },[client,raidMilestone?.id]);
   const elapsed=active?.startAt&&s?Math.max(0,Date.parse(s.serverNow)-Date.parse(active.startAt)):0;
   const activePlan=useMemo(()=>active?.plan??null,[active?.id,active?.plan?.revision,active?.plan?.privacyEpoch]);
-  const sceneLayout=useMemo(()=>activePlan?resolveSceneLayout(activePlan.layout):null,[activePlan]);
-  const activeFrame=activePlan&&sceneLayout?renderAt(elapsed,activePlan,sceneLayout,{reducedMotion}):null;
-  const visibleCaption=activeFrame?.openingExit&&activeFrame.openingExit>.9?(activeFrame.nextCaption&&activeFrame.nextCaption.reveal>.5?activeFrame.nextCaption:activeFrame.caption):null;
-  useEffect(()=>setSceneMediaUnavailable(false),[activePlan?.id]);
   const current=published?.current;
-  const currentText=current?.now??chapter?.summary??current?.goal??current?.change;
-  const hasContext=!!currentText;
+  const hasContext=!!(current?.now??chapter?.summary);
   const publicationSeen=useRef<{sessionId:string|null;atMs:number;seen:boolean}>({sessionId:null,atMs:0,seen:false});
   const sameTimeline=publicationSeen.current.sessionId===(s?.session?.id??null)&&(t?.atMs??0)>=publicationSeen.current.atMs;
   const removedContext=sameTimeline&&publicationSeen.current.seen&&!hasContext;
   useEffect(()=>{publicationSeen.current={sessionId:s?.session?.id??null,atMs:t?.atMs??0,seen:hasContext||sameTimeline&&publicationSeen.current.seen};},[s?.session?.id,t?.atMs,hasContext,sameTimeline]);
   const held=!!s?.held.length;
-  const incomingSource=!hasContext&&!held&&!removedContext?t?.latestSource:null;
-  const incomingExcerpt=incomingSource?sourceExcerpt(incomingSource.text):null;
-  const sourceIsExcerpt=!!incomingSource&&(incomingSource.truncated||!!incomingExcerpt?.truncated);
-  const untilPublication=publishMilestone&&t?Math.max(0,Math.ceil((publishMilestone.atMs-t.atMs)/1000)):null;
-  return <main className="replay-page">
-    <nav className="replay-nav" aria-label="Replay navigation">
-      <a href="/" aria-label="Previously home"><Brand/></a>
-      <a href="/setup">Set up my channel</a>
+  const incoming=!activePlan?t?.latestSource:null;
+  const visibleChat=useVisibleChat(client,s,chat,t?.atMs??0);
+  const seek=(milestone:string,play=true)=>void run(async()=>{await client!.controlReplay({action:'seek',milestone});if(play)await client!.controlReplay({action:'play'});});
+
+  return <main className="rp">
+    <nav className="rp-nav" aria-label="Replay navigation">
+      <a href="/" className="rp-nav__home" aria-label="Previously home"><Brand/></a>
+      <a href="/setup/local">Set up my channel</a>
     </nav>
-    <header className="replay-heading">
-      <h1>Recorded stream</h1>
-      <p>{origin==='own-stream'?'Play the recorded stream context. Changes stay in this tab.':'Explore an authored text example with no recorded video. Changes stay in this tab.'}</p>
-    </header>
-    {error?<section className="replay-unavailable" role="alert"><h2>Recording unavailable</h2><p>{error}</p><Button onClick={()=>location.reload()}>Reload recording</Button></section>:!client||!view?<section className="replay-unavailable" role="status">Loading the recording…</section>:<>
-      <div className="replay-player">
-        <section className={`replay-stage ${active?.plan?'replay-stage--scene':''}`} data-theme="dark" aria-label="Stream recap">
-          {activePlan?<>
-            <ScenePreview plan={activePlan} timeMs={elapsed} playing={t!.playing} channel={s!.channel.displayName} title={published?.session.title} soundEnabled={false} resolveMedia={resolveMedia} onStatus={status=>{if(status==='media_unavailable')setSceneMediaUnavailable(true);}}/>
-            {visibleCaption&&visibleCaption.reveal>.05&&<div className={`replay-mobile-context ${activePlan.media.length&&!sceneMediaUnavailable?'replay-mobile-context--assistive':''}`}>
-              <p className="replay-mobile-context-label"><span>{beatLabels[visibleCaption.kind]}</span><span>Source {time(visibleCaption.sourceMs)}</span></p>
-              <p>{visibleCaption.text}</p>
-            </div>}
-          </>:<div className={`replay-story ${hasContext?'':incomingSource?'replay-story--source':'replay-story--empty'}`}>
-            {hasContext?<>
-              <p className="replay-current">{currentText}</p>
-              {(current?.goal&&current.goal!==currentText||current?.change&&current.change!==currentText)&&<dl className="replay-story-details">
-                {current?.goal&&current.goal!==currentText&&<div><dt>The goal</dt><dd>{current.goal}</dd></div>}
-                {current?.change&&current.change!==currentText&&<div><dt>What changed</dt><dd>{current.change}</dd></div>}
-              </dl>}
-              {current&&<p className="replay-source-time">Context from {time(current.sourceTimeMs)}</p>}
-            </>:incomingSource&&incomingExcerpt?<>
-              <figure className="replay-incoming-source">
-                <blockquote>{incomingExcerpt.text}{sourceIsExcerpt?'…':''}</blockquote>
-                <figcaption>{sourceLabels[incomingSource.kind]}{sourceIsExcerpt?' excerpt':''} at {time(incomingSource.startMs)}</figcaption>
-              </figure>
-              {publishMilestone&&untilPublication!==null&&untilPublication>0&&<p className="replay-source-hold">Recap publication at {time(publishMilestone.atMs)}. {untilPublication} s of recording remaining.</p>}
-            </>:<>
-              <h2>{held?'The edit is waiting for review':removedContext?'The published recap has been cleared':s!.session?.title||'Waiting for the first recap'}</h2>
-              <p>{held?`The recording does not include a safety check for this wording. ${correction&&correctionChapter?'Apply the suggested correction below, or restart to restore the original.':'Restart to restore the original.'}`:removedContext?'Restart to restore the original recording in this tab.':publishMilestone?`The first recap appears at ${time(publishMilestone.atMs)}. Play from the start${raidMilestone?' or jump to the incoming raid':''}.`:'Play the recording to follow its published recap.'}</p>
-            </>}
-          </div>}
-        </section>
-        <section className="replay-transport" aria-label="Playback controls">
-          <div className="replay-transport-row replay-primary-controls">
-            <Button disabled={busy} onClick={()=>void run(()=>client.controlReplay({action:t!.playing?'pause':'play'}))}>{t!.playing?'Pause':'Play recording'}</Button>
-            <QuietButton disabled={busy} onClick={()=>void run(()=>client.controlReplay({action:'reset'}))}>Restart</QuietButton>
-            {raidMilestone&&<QuietButton disabled={busy} onClick={()=>void run(async()=>{await client.controlReplay({action:'seek',milestone:raidMilestone.id});await client.controlReplay({action:'play'});})}>Jump to raid</QuietButton>}
-            <output aria-label="Recording position">{time(t!.atMs)} <span>/ {time(t!.durationMs)}</span></output>
+    {error?<section className="rp-unavailable" role="alert"><h1>The recording could not open</h1><p>{error}</p><Button onClick={()=>location.reload()}>Reload the recording</Button></section>
+    :!client||!view||!s||!t?<section className="rp-unavailable" role="status"><p>Opening the recording…</p></section>:<>
+      <header className="rp-head">
+        <h1>{s.session?.title??s.channel.displayName}</h1>
+        <p><b>{s.channel.displayName}</b> {origin==='own-stream'?'Recorded stream. What you change here stays in this tab.':'This is an example recording of a game development stream. What you change here stays in this tab.'}</p>
+      </header>
+      <div className="rp-watch">
+        <section className="rp-player" aria-label="Stream">
+          <Screen footage={footage} atMs={t.atMs} durationMs={t.durationMs} playing={t.playing} speed={t.speed}>
+            {activePlan&&<ScenePlayer className="rp-scene" plan={activePlan} timeMs={elapsed} playing={t.playing} channel={s.channel.displayName} title={published?.session.title} soundEnabled={false} resolveMedia={resolveMedia}/>}
+            {incoming&&!held&&<Caption source={incoming}/>}
+            {!t.playing&&t.atMs===0&&<button type="button" className="rp-screen__start" disabled={busy} onClick={()=>void run(()=>client.controlReplay({action:'play'}))}><span aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg></span>Play the recording</button>}
+          </Screen>
+          <div className="rp-transport">
+            <button type="button" className="rp-play" disabled={busy} aria-label={t.playing?'Pause':'Play'} onClick={()=>void run(()=>client.controlReplay({action:t.playing?'pause':'play'}))}>
+              {t.playing?<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13"/></svg>:<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>}
+            </button>
+            <output className="rp-clock" aria-label="Recording position">{time(t.atMs)}<span> / {time(t.durationMs)}</span></output>
+            <Timeline atMs={t.atMs} durationMs={t.durationMs} chapters={published?.chapters??[]} milestones={t.milestones} chat={chat} busy={busy} onSeek={id=>seek(id)}/>
           </div>
-          <div className="replay-progress" role="progressbar" aria-label="Recording position" aria-valuemin={0} aria-valuemax={t!.durationMs} aria-valuenow={Math.round(t!.atMs)}><span style={{width:`${t!.durationMs?t!.atMs/t!.durationMs*100:0}%`}}/></div>
-          <div className="replay-secondary-controls">
-            <div className="replay-control-group"><span>Playback speed</span><SegmentedControl label="Recording speed" disabled={busy} value={String(t!.speed)} options={[{value:'1',label:'1×'},{value:'2',label:'2×'},{value:'4',label:'4×'}]} onChange={speed=>void run(()=>client.controlReplay({action:t!.playing?'play':'pause',speed:Number(speed) as 1|2|4}))}/>{t!.speed!==1&&<span className="replay-speed-note">Accelerated recording</span>}</div>
-            {availableLanguages.length>0&&<div className="replay-control-group"><span>Recap language</span>{availableLanguages.length>1?<SegmentedControl label="Recap language" disabled={busy} value={s!.settings.recapLanguage} options={availableLanguages.map(language=>({value:language,label:language==='en'?'English':'Русский'}))} onChange={language=>void run(()=>client.setSettings({baseRevision:s!.settings.revision,recapLanguage:language as 'en'|'ru'}))}/>:<span>{availableLanguages[0]==='en'?'English':'Русский'}</span>}</div>}
-            <QuietButton aria-expanded={dock} aria-controls="replay-demo-dock" onClick={event=>{dockTrigger.current=event.currentTarget;if(dock)closeDock();else setDock(true);}}>{dock?'Close demo dock':'Open demo dock'}</QuietButton>
+          <div className="rp-controls">
+            <SegmentedControl className="rp-speed" label="Playback speed" disabled={busy} value={String(t.speed)} options={[{value:'1',label:'1×'},{value:'2',label:'2×'},{value:'4',label:'4×'}]} onChange={speed=>void run(()=>client.controlReplay({action:t.playing?'play':'pause',speed:Number(speed) as 1|2|4}))}/>
+            {availableLanguages.length>1&&<SegmentedControl className="rp-language" label="Recap language" disabled={busy} value={s.settings.recapLanguage} options={availableLanguages.map(language=>({value:language,label:language==='en'?'EN':'RU'}))} onChange={language=>void run(()=>client.setSettings({baseRevision:s.settings.revision,recapLanguage:language as 'en'|'ru'}))}/>}
+            {raidMilestone&&<Button disabled={busy} onClick={()=>seek(raidMilestone.id)}>Jump to the raid</Button>}
+            <TextButton disabled={busy} onClick={()=>void run(()=>client.controlReplay({action:'reset'}))}>Restart</TextButton>
           </div>
         </section>
+        <ChatColumn messages={visibleChat} atMs={t.atMs}/>
       </div>
-      {(actionError||t!.error==='fixture_missing')&&<p role="status" className="replay-action-error">{actionError??'This recording has no safety check for this edit. The edit remains held.'}</p>}
-      <div className="replay-after">
-        <section className="replay-evidence" aria-labelledby="replay-source-title">
-          <h2 id="replay-source-title">Published chapter</h2>
-          {chapter?<><h3>{chapter.title}</h3><p>{chapter.summary}</p><QuietButton disabled={busy} aria-expanded={!!evidence} aria-controls="replay-source-drawer" onClick={()=>void run(async()=>setEvidence(evidence?null:await client.getEvidence(chapter.id)))}>{evidence?'Hide source':'Show source'}</QuietButton></>:<p>The chapter will appear here when its context is published.</p>}
-          {evidence&&<div className="replay-source-drawer" id="replay-source-drawer">{evidence.map(source=><figure key={source.id}><figcaption>{time(source.startMs)} {source.kind==='owner_statement'?'Owner correction':source.kind==='speech'?'Speech':'Source'}</figcaption><blockquote>{source.text}</blockquote></figure>)}</div>}
-        </section>
-        <section className="replay-correction" aria-labelledby="replay-correction-title">
-          <h2 id="replay-correction-title">{correction?'Change the recap':'Preview the recap'}</h2>
-          {correction&&<><p className="replay-field-label">Suggested correction</p><blockquote>{correction.summary}</blockquote></>}
-          <div className="replay-transport-row">{correction&&<Button disabled={!correctionChapter||busy||t!.correctionApplied} onClick={()=>void run(()=>client.editChapter(correctionChapter!.id,{title:correction.title,summary:correction.summary,baseRevision:correctionChapter!.revision}))}>{t!.correctionApplied?'Correction applied':'Apply correction'}</Button>}<QuietButton disabled={!chapter||busy} onClick={()=>void run(async()=>setPreview(await client.previewRecap(s!.session!.id)))}>Preview next recap</QuietButton></div>
-          {!chapter&&<p className="replay-help">{held?'Preview becomes available after checked wording is published.':removedContext?'Restart to restore the original recording.':'Play the recording to publish a chapter first.'}</p>}
-          {correction&&chapter&&!correctionChapter&&<p className="replay-help">Open the demo dock to choose a chapter to edit.</p>}
-          {correction&&<p className="replay-help">New wording stays held unless this recording includes its safety check.</p>}
-        </section>
-      </div>
-      {dock&&<section ref={dockRegion} tabIndex={-1} className="replay-dock" id="replay-demo-dock" aria-label="Demo dock"><div style={{padding:'16px 20px 0'}}><QuietButton onClick={closeDock}>Close demo dock</QuietButton></div><DockPage client={client} owner={owner} clockMode="snapshot" recording availableLanguages={availableLanguages} label="Recorded stream" renderPreview={(plan,close)=><div><ScenePreview plan={plan} playing soundEnabled={false} resolveMedia={resolveMedia}/><QuietButton onClick={close}>Close preview</QuietButton></div>}/></section>}
-      {preview&&<section className="replay-preview" aria-label="Local scene preview"><div className="replay-transport-row"><h2>Next recap preview</h2><QuietButton onClick={()=>setPreview(null)}>Close preview</QuietButton></div><ScenePreview plan={preview} playing soundEnabled={false} resolveMedia={resolveMedia}/></section>}
+      {(actionError||t.error==='fixture_missing')&&<p role="status" className="rp-error">{actionError??'This recording has no safety check for this edit. The edit stays held.'}</p>}
+
+      <section className="rp-story" aria-labelledby="rp-story-title">
+        <div className="rp-story__head"><h2 id="rp-story-title">The recap so far</h2>{t.speed!==1&&<p className="rp-story__speed">Playing at {t.speed}×</p>}</div>
+        <div className="rp-story__grid">
+          <NowCard snapshot={s} held={held} removed={removedContext} publishAtMs={publishMilestone?.atMs} atMs={t.atMs} canCorrect={!!correction&&!!correctionChapter}/>
+          <div className="rp-chapters">
+            {(published?.chapters.length??0)>0?[...published!.chapters].reverse().map(c=><ChapterCard key={c.id} chapter={c} snapshot={s} mediaUrl={chapterMedia(c,s,mediaRanges,resolveMedia)}/>)
+              :<div className="rp-chapters__empty"><span className="pv-tab">{publishMilestone?time(publishMilestone.atMs):'0:00'}</span><p>{publishMilestone?`The first chapter is published at ${time(publishMilestone.atMs)}, after the hold that gives the streamer time to fix it.`:'Chapters appear here as the recording plays.'}</p></div>}
+            {published?.lore.map(l=><LorePlate key={l.id} className="rp-lore" term={l.term} explanation={l.explanation} originMs={l.originMs??l.firstSeenMs}/>)}
+          </div>
+        </div>
+        {chapter&&<div className="rp-sources"><TextButton disabled={busy} aria-expanded={!!evidence} aria-controls="rp-source-list" onClick={()=>void run(async()=>setEvidence(evidence?null:await client.getEvidence(chapter.id)))}>{evidence?'Hide what the latest chapter is built from':'Show what the latest chapter is built from'}</TextButton>
+          {evidence&&<div className="rp-source-list" id="rp-source-list">{evidence.map(source=><figure key={source.id}><figcaption>{source.kind==='owner_statement'?'Streamer correction':sourceLabels[source.kind]} at {time(source.startMs)}</figcaption><blockquote>{source.text}</blockquote></figure>)}</div>}
+        </div>}
+      </section>
+
+      <section className="rp-owner" aria-labelledby="rp-owner-title">
+        <div className="rp-owner__copy">
+          <h2 id="rp-owner-title">Change the recap</h2>
+          <p>Here you are the streamer. Your wording replaces the chapter for viewers once it passes the safety check.</p>
+          <div className="rp-owner__actions">
+            <QuietButton disabled={!chapter||busy} onClick={()=>void run(async()=>setPreview(await client.previewRecap(s.session!.id)))}>Preview the next raid scene</QuietButton>
+            <QuietButton aria-expanded={dock} aria-controls="replay-demo-dock" onClick={event=>{dockTrigger.current=event.currentTarget;if(dock)closeDock();else setDock(true);}}>{dock?'Close the streamer dock':'Open the streamer dock'}</QuietButton>
+          </div>
+        </div>
+        {correction?<div className="rp-diff">
+          {correctionChapter?<TitleCard tone="ink" title={correctionChapter.title} atMs={correctionChapter.startMs} ground="var(--pv-ink)" className="rp-diff__before" meta="Published now"><p>{correctionChapter.summary}</p></TitleCard>
+            :<div className="rp-diff__waiting"><p>{chapter?'Open the streamer dock to choose the chapter to edit.':held?'The edit is waiting for its safety check.':removedContext?'Restart to restore the original recording.':'The chapter to correct is published later in the recording. Play or jump to the raid first.'}</p></div>}
+          <TitleCard title={correction.title} atMs={correctionChapter?.startMs} ground="var(--pv-ink)" className="rp-diff__after" meta={t.correctionApplied?'Applied':'Your wording'}><p>{correction.summary}</p></TitleCard>
+          <Button size="large" disabled={!correctionChapter||busy||t.correctionApplied} onClick={()=>void run(()=>client.editChapter(correctionChapter!.id,{title:correction.title,summary:correction.summary,baseRevision:correctionChapter!.revision}))}>{t.correctionApplied?'Wording applied':'Apply my wording'}</Button>
+        </div>:<p className="rp-owner__none">This recording has no suggested correction.</p>}
+      </section>
+
+      {preview&&<section className="rp-preview" aria-label="Next raid scene preview"><div className="rp-preview__head"><h2>Next raid scene</h2><QuietButton onClick={()=>setPreview(null)}>Close the preview</QuietButton></div><ScenePreview plan={preview} playing soundEnabled={false} resolveMedia={resolveMedia}/></section>}
+      {dock&&<section ref={dockRegion} tabIndex={-1} className="rp-dock" id="replay-demo-dock" aria-label="Streamer dock"><div className="rp-dock__bar"><p>Streamer dock, as it appears inside OBS</p><QuietButton onClick={closeDock}>Close the dock</QuietButton></div><DockPage client={client} owner={owner} clockMode="snapshot" recording availableLanguages={availableLanguages} label="Recorded stream" renderPreview={(plan,close)=><div><ScenePreview plan={plan} playing soundEnabled={false} resolveMedia={resolveMedia}/><QuietButton onClick={close}>Close preview</QuietButton></div>}/></section>}
     </>}
   </main>;
 }
+
+/** The stream screen: example footage kept in step with recording time, with the overlay on top. */
+function Screen({footage,atMs,durationMs,playing,speed,children}:{footage:ReturnType<typeof useFootage>;atMs:number;durationMs:number;playing:boolean;speed:number;children:ReactNode}){
+  const video=useRef<HTMLVideoElement>(null);
+  useEffect(()=>{
+    const v=video.current;if(!v||!Number.isFinite(v.duration)||!v.duration)return;
+    const target=(atMs/1000)%v.duration;if(Math.abs(v.currentTime-target)>1.2&&Math.abs(v.currentTime-target)<v.duration-1.2)v.currentTime=target;
+    v.playbackRate=speed;if(playing&&v.paused)void v.play().catch(()=>undefined);if(!playing&&!v.paused)v.pause();
+  },[atMs,playing,speed]);
+  void durationMs;
+  return <div className="rp-screen">
+    {footage.src?<video ref={video} className="rp-screen__footage" src={footage.src} poster={footage.poster} muted loop playsInline preload="auto" aria-hidden="true"/>:footage.poster?<img className="rp-screen__footage" src={footage.poster} alt=""/>:<div className="rp-screen__footage"/>}
+    {children}
+  </div>;
+}
+
+function Caption({source}:{source:NonNullable<NonNullable<ReturnType<typeof useRecording>['view']>['transport']['latestSource']>}){
+  const excerpt=sourceExcerpt(source.text);
+  return <p className="rp-caption" key={source.id}><span>{sourceLabels[source.kind]} at {time(source.startMs)}</span>{excerpt.text}{excerpt.truncated||source.truncated?'…':''}</p>;
+}
+
+function Timeline({atMs,durationMs,chapters,milestones,chat,busy,onSeek}:{atMs:number;durationMs:number;chapters:PublicChapter[];milestones:{id:string;label:string;atMs:number}[];chat:RecordedChat[];busy:boolean;onSeek:(id:string)=>void}){
+  const bins=useMemo(()=>{const n=96,counts=new Array(n).fill(0);for(const c of chat){const i=Math.min(n-1,Math.floor(c.atMs/Math.max(1,durationMs)*n));counts[i]++;}const max=Math.max(1,...counts);return counts.map(c=>c/max);},[chat,durationMs]);
+  const at=(ms:number)=>`${Math.min(100,Math.max(0,ms/Math.max(1,durationMs)*100))}%`;
+  return <div className="rp-timeline">
+    <div className="rp-timeline__chat" aria-hidden="true">{bins.map((v,i)=><span key={i} style={{height:`${Math.round(v*100)}%`}} className={i/bins.length*durationMs<=atMs?'is-past':undefined}/>)}</div>
+    <div className="rp-timeline__track" role="progressbar" aria-label="Recording position" aria-valuemin={0} aria-valuemax={durationMs} aria-valuenow={Math.round(atMs)} aria-valuetext={time(atMs)}>
+      <span className="rp-timeline__fill" style={{width:at(atMs)}}/>
+      <span className="rp-timeline__head" style={{left:at(atMs)}}/>
+    </div>
+    <div className="rp-timeline__marks">
+      {chapters.map(c=><span key={c.id} className="rp-mark rp-mark--chapter" style={{left:at(c.startMs)}} title={`${time(c.startMs)} ${c.title}`}><span className="pv-sr-only">Chapter at {time(c.startMs)}: {c.title}</span></span>)}
+      {milestones.map(m=><button key={m.id} type="button" disabled={busy} className={`rp-mark rp-mark--milestone ${m.id==='raid'?'rp-mark--raid':''}`} style={{left:at(m.atMs)}} onClick={()=>onSeek(m.id)}>{m.id==='raid'?'Raid':m.id==='published'?'First recap':m.label}<span className="pv-sr-only"> at {time(m.atMs)}</span></button>)}
+    </div>
+  </div>;
+}
+
+function ChatColumn({messages,atMs}:{messages:RecordedChat[];atMs:number}){
+  const list=useRef<HTMLOListElement>(null);
+  const shown=messages.slice(-60);
+  const recent=messages.filter(m=>m.atMs>atMs-10000).length;
+  useEffect(()=>{const el=list.current;if(el)el.scrollTop=el.scrollHeight;},[shown.length,shown.at(-1)?.id]);
+  return <aside className="rp-chat" aria-label="Stream chat">
+    <div className="rp-chat__head"><h2>Stream chat</h2><span className={recent>=12?'rp-chat__rate is-busy':'rp-chat__rate'}>{recent} in the last 10 s</span></div>
+    {shown.length?<ol ref={list} className="rp-chat__list" aria-live="off">{shown.map(m=><li key={m.id}><b>{chatterName(m.actor)}</b> {m.text}</li>)}</ol>
+      :<p className="rp-chat__empty">Chat messages from the recording appear here as it plays.</p>}
+  </aside>;
+}
+
+function NowCard({snapshot,held,removed,publishAtMs,atMs,canCorrect}:{snapshot:OwnerSnapshot;held:boolean;removed:boolean;publishAtMs?:number;atMs:number;canCorrect:boolean}){
+  const current=snapshot.published?.current,latest=snapshot.published?.chapters.at(-1);
+  const now=current?.now??latest?.summary;
+  if(now)return <article className="pv-card pv-card--now rp-now">
+    <p className="rp-now__label">Right now</p>
+    <p className="rp-now__text">{now}</p>
+    {(current?.goal||current?.change)&&<dl>{current?.goal&&current.goal!==now&&<div><dt>The goal</dt><dd>{current.goal}</dd></div>}{current?.change&&current.change!==now&&<div><dt>What changed</dt><dd>{current.change}</dd></div>}</dl>}
+    {current&&<p className="rp-now__from">From {time(current.sourceTimeMs)} in the stream</p>}
+  </article>;
+  return <article className="rp-now rp-now--empty">
+    <p className="rp-now__label">Right now</p>
+    <p className="rp-now__text">{held?'The edit is waiting for its safety check':removed?'The published recap was cleared':'Nothing is published yet'}</p>
+    <p className="rp-now__from">{held?`This recording has no safety check for that wording. ${canCorrect?'Apply the suggested wording below, or restart.':'Restart to restore the original.'}`:removed?'Restart to restore the original recording in this tab.':publishAtMs!==undefined&&atMs<publishAtMs?`The first recap is published at ${time(publishAtMs)}.`:'Play the recording to publish the first recap.'}</p>
+  </article>;
+}
+
+function ChapterCard({chapter,snapshot,mediaUrl}:{chapter:PublicChapter;snapshot:OwnerSnapshot;mediaUrl?:string}){
+  const moment=snapshot.moments.find(m=>chapter.momentIds.includes(m.id));
+  const meta=[chapter.pinned&&'Pinned',chapter.edited&&'Edited by the streamer',moment&&`${moment.count} chat messages at ${time(moment.startMs)}`].filter(Boolean).join('. ');
+  return <TitleCard className="rp-chapter" title={chapter.title} atMs={chapter.startMs} ground="var(--pv-ink)" meta={meta||undefined}>
+    <p>{chapter.summary}</p>
+    {mediaUrl&&<ClipFrame className="rp-chapter__clip" src={mediaUrl} label={`Clip from ${chapter.title}`}/>}
+  </TitleCard>;
+}
+function chapterMedia(chapter:PublicChapter,snapshot:OwnerSnapshot,ranges:{id:string;startMs:number;endMs:number}[],resolve:(id:string)=>string|undefined){
+  const moment=snapshot.moments.find(m=>chapter.momentIds.includes(m.id));
+  if(moment?.mediaId){const url=resolve(moment.mediaId);if(url)return url;}
+  const range=ranges.find(r=>r.startMs>=chapter.startMs&&r.startMs<=chapter.endMs);
+  return range?resolve(range.id):undefined;
+}
+
+/** Chat shown in recording time, without messages the streamer has forgotten. */
+function useVisibleChat(client:ReturnType<typeof useRecording>['client'],snapshot:OwnerSnapshot|undefined,chat:RecordedChat[],atMs:number){
+  const [allowed,setAllowed]=useState<{epoch:number;ids:Set<string>;asOfMs:number}|null>(null);
+  const epoch=snapshot?.session?.privacyEpoch??0,sessionId=snapshot?.session?.id;
+  useEffect(()=>{
+    if(!client||!sessionId||epoch===0){setAllowed(null);return;}
+    let active=true;
+    void (async()=>{const ids=new Set<string>();let cursor:string|undefined;const asOfMs=atMs;
+      do{const page=await client.listSources({sessionId,limit:50,cursor});for(const item of page.items)if(item.kind==='chat')ids.add(item.id);cursor=page.nextCursor??undefined;}while(cursor&&active);
+      if(active)setAllowed({epoch,ids,asOfMs});})().catch(()=>undefined);
+    return()=>{active=false;};
+  },[client,sessionId,epoch]);
+  return useMemo(()=>chat.filter(c=>c.atMs<=atMs&&(!allowed||c.atMs>allowed.asOfMs||allowed.ids.has(c.id))),[chat,atMs,allowed]);
+}
+

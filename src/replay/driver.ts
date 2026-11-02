@@ -11,7 +11,10 @@ export class ReplayDriver {
   private eventIndex=0;private nextTick=0;private queue:{atMs:number;event:DomainEvent}[]=[];private serial=0;
   private bundle:CaptureBundle;private epoch:number;private revoked=false;private replayingRecorded=false;private correctedOwners=new Map<string,number>();
   readonly clock:Clock;
-  constructor(bundle:CaptureBundle,readonly runId:string){
+  /** Runtime scope of this run. Every run uses the same length, so byte-bounded evidence packets select the same sources. */
+  readonly runId:string;
+  constructor(bundle:CaptureBundle,run:string){
+    const runId=this.runId=stateHash(`replay-run:${run}`);
     this.bundle=validateBundle(bundle);this.epoch=Date.parse(bundle.initial.session.startedAt);
     const identities=[bundle.initial.session.id,...bundle.media.map(m=>m.id),...bundle.events.flatMap(({event})=>'source' in event&&typeof event.source==='object'?[event.source.id,...event.source.actorId?[event.source.actorId]:[]]:[])];
     this.ids=new LogicalIds(runId,identities);this.providers=new RecordedProviders(bundle.providers);
@@ -21,18 +24,26 @@ export class ReplayDriver {
     this.state=createDomainState(initial);this.clock={now:()=>this.epoch+this.atMs,iso:()=>new Date(this.epoch+this.atMs).toISOString()};
   }
   get durationMs(){return this.bundle.durationMs;}
-  get correction(){return this.ids.map(this.bundle.correction,'runtime');}
+  /** A correction is offered once the recording has no later story outcome that its owner lock would redirect. */
+  get correction(){const correction=this.bundle.correction;if(!correction||correction.availableAtMs!==undefined&&this.atMs<correction.availableAtMs&&!this.correctedOwners.size)return null;const {availableAtMs:_available,...value}=correction;return this.ids.map(value,'runtime');}
   get milestones(){return this.bundle.milestones;}
   get correctionApplied(){const correction=this.correction;if(!correction)return false;const target=correction.targetId;return this.state.published?.chapters.some(c=>(!target||c.id===target)&&c.edited&&this.correctedOwners.get(c.id)===this.state.ownerRevisions[c.id])??false;}
   get availableLanguages():RecapLanguage[]{
     if(this.revoked)return [];
     const chapters=this.state.chapters.filter(chapter=>chapter.publicationState!=='deleted');
     if(!chapters.length){const initial=this.bundle.initial.settings.recapLanguage;return this.bundle.providers.some(record=>record.operation==='story'&&!record.error&&(record.input as {packet?:{recapLanguage?:string}}).packet?.recapLanguage===initial&&safetyAllowsPublication((record.output as StoryOutcome).safety))?[initial]:[];}
-    return (['en','ru'] as const).filter(language=>chapters.every(chapter=>{
+    return (['en','ru'] as const).filter(language=>[...this.laggingPublished(),...chapters].every(chapter=>{
       if(!chapter.dependencyRefs.every(ref=>isRefActive(this.state,ref)))return false;
       if(this.state.candidates.some(candidate=>candidate.entityId===chapter.id&&candidate.revision===chapter.revision&&candidate.ownerRevision===chapter.ownerEditRevision&&candidate.language===language&&candidate.status!=='rejected'&&safetyAllowsPublication(candidate.safety)&&candidate.inputRefs.every(ref=>isRefActive(this.state,ref))))return true;
       try{const recorded=this.providers.lookup('translation',{title:chapter.title,summary:chapter.summary,language});return !recorded.error&&safetyAllowsPublication((recorded.output as WordingOutcome).safety);}catch{return false;}
     }));
+  }
+  /** Published revisions that a newer draft has not replaced yet, with the wording that is public now. */
+  private laggingPublished():Chapter[]{
+    return (this.state.published?.chapters??[]).flatMap(p=>{
+      const c=this.state.chapters.find(x=>x.id===p.id),published=this.state.candidates.find(x=>x.entityId===p.id&&x.revision===p.revision&&x.status==='published'&&x.language===this.state.settings.recapLanguage);
+      return c&&published&&c.revision!==p.revision?[{...published.chapter,revision:p.revision,ownerEditRevision:c.ownerEditRevision}]:[];
+    });
   }
   get latestSource(){const source=[...this.state.sources].reverse().find(s=>s.status==='active'&&['allowed','redacted'].includes(s.moderation)&&!!s.text);return source?{id:source.id,text:source.text!.slice(0,500),truncated:source.text!.length>500,kind:source.kind,startMs:source.startMs,endMs:source.endMs}:null;}
   send(event:DomainEvent){
@@ -92,7 +103,7 @@ export class ReplayDriver {
       if(next>target)break;this.atMs=next;
       if(input&&input.atMs===next){this.eventIndex++;const event=this.ids.map(input.event,'runtime');if('source' in event&&typeof event.source==='object')event.source.runId=this.runId;this.recorded(event);}
       else if(this.queue[0]?.atMs===next)this.send(this.queue.shift()!.event);
-      else {this.nextTick+=100;this.send({type:'tick'});}
+      else {this.nextTick+=this.bundle.tickIntervalMs??100;this.send({type:'tick'});}
     }
     this.atMs=target;if(target>=this.durationMs&&!this.state.playbacks.some(p=>['queued','preparing','playing'].includes(p.status)))this.playing=false;
   }
@@ -115,7 +126,9 @@ export class ReplayDriver {
     if(patch.baseRevision!==this.state.settings.revision)throw new Error('revision_conflict');
     if(patch.recapLanguage&&patch.recapLanguage!==this.state.settings.recapLanguage&&!this.availableLanguages.includes(patch.recapLanguage))throw new FixtureMissing();
     if(patch.recapLanguage&&patch.recapLanguage!==this.state.settings.recapLanguage){
-      for(const c of this.state.chapters.filter(x=>x.publicationState!=='deleted')){
+      // A published revision that lags its newer draft needs its own presentation for the switch to complete.
+      // It is added last: candidate capacity then retires the superseded intermediate draft instead.
+      for(const c of [...this.state.chapters.filter(x=>x.publicationState!=='deleted'),...this.laggingPublished()]){
         if(this.state.candidates.some(candidate=>candidate.entityId===c.id&&candidate.revision===c.revision&&candidate.language===patch.recapLanguage&&safetyAllowsPublication(candidate.safety)))continue;
         try{const record=this.providers.lookup('translation',{title:c.title,summary:c.summary,language:patch.recapLanguage});if(record.error)throw new FixtureMissing();const out=record.output as WordingOutcome;
           this.send({type:'presentation',entityId:c.id,baseRevision:c.revision,ownerRevision:c.ownerEditRevision,language:patch.recapLanguage,inputRefs:c.dependencyRefs,...out});

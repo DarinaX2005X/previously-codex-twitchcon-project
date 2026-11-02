@@ -45,11 +45,11 @@ try {
     const url=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url,'https://localhost:4317');
     return get(url.pathname+url.search);
   };
-  gate=new ReplayGate('/api/public/replays/authored-notes',()=>{},fetcher);
-  const bundle=await gate.load();assert.equal(bundle.origin,'authored');assert.equal(bundle.media.length,0);
-  const driver=new ReplayDriver(bundle,'documentation-smoke');driver.advanceTo(76000);
+  gate=new ReplayGate('/api/public/replays/foxlight',()=>{},fetcher);
+  const bundle=await gate.load();assert.equal(bundle.origin,'authored');assert.equal(bundle.media.length,4);
+  const driver=new ReplayDriver(bundle,'documentation-smoke');driver.control({action:'seek',milestone:'published'});
   assert.equal(driver.snapshot().published?.chapters.length,1);
-  driver.advanceTo(82300);assert(driver.snapshot().playback.some(item=>item.plan));
+  driver.control({action:'seek',milestone:'raid'});assert.equal(driver.snapshot().published?.chapters.length,4);assert(driver.snapshot().playback.some(item=>item.plan));
   assert.equal(externalFetches,0);
   console.log('Keyless check passed: isolated SQLite, trusted HTTPS, replay manifest integrity, published chapter and raid plan; no external fetches.');
 } finally {

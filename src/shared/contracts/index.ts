@@ -215,6 +215,21 @@ export type Presentation = z.infer<typeof PresentationSchema>;
 export const PublicationCandidateSchema = z.object({ id: IdSchema, entityId: IdSchema, revision: RevisionSchema, ownerEditRevision: RevisionSchema, privacyEpoch: RevisionSchema, inputRefs: z.array(VersionRefSchema).max(100), eligibleAt: IsoTimeSchema, status: z.enum(['pending', 'eligible', 'published', 'rejected']), presentation: PresentationSchema }).strict();
 export type PublicationCandidate = z.infer<typeof PublicationCandidateSchema>;
 
+/** What the broadcast scene shows, selected only from the published snapshot and its approved lineage. */
+export const RecapSceneSchema = z.object({
+  channelName: z.string().max(64),
+  streamTitle: z.string().max(200).nullable(),
+  chapters: z.array(z.object({ id: IdSchema, title: z.string().min(1).max(120), startMs: OffsetSchema, mediaId: IdSchema.nullable() }).strict()).max(3),
+  moment: z.object({
+    id: IdSchema, chapterId: IdSchema.nullable(), startMs: OffsetSchema, windowSeconds: z.number().int().min(1).max(600),
+    count: z.number().int().min(0), mediaId: IdSchema.nullable(), messages: z.array(z.string().min(1).max(40)).max(14),
+  }).strict().nullable(),
+  lore: z.object({ term: z.string().min(1).max(120), explanation: z.string().max(300), originMs: OffsetSchema }).strict().nullable(),
+  now: z.object({ text: z.string().min(1).max(300), mediaId: IdSchema.nullable() }).strict().nullable(),
+  command: z.literal('!previously').nullable(),
+}).strict();
+export type RecapScene = z.infer<typeof RecapSceneSchema>;
+
 export const RecapPlanSchema = z.object({
   id: IdSchema, sessionId: IdSchema, revision: RevisionSchema, privacyEpoch: RevisionSchema,
   language: LanguageSchema, variant: z.enum(['full', 'compact', 'welcome']),
@@ -227,6 +242,7 @@ export const RecapPlanSchema = z.object({
   audio: z.object({ id: IdSchema, startMs: OffsetSchema, durationMs: OffsetSchema }).strict().nullable(),
   soundEvents: z.array(z.object({ id: IdSchema, kind: z.string().max(40), atMs: OffsetSchema, gain: z.number().min(0).max(1) }).strict()).max(32),
   generatedAt: IsoTimeSchema,
+  scene: RecapSceneSchema.optional(),
 }).strict();
 export type RecapPlan = z.infer<typeof RecapPlanSchema>;
 export type RecapTrigger = { id: string; sessionId: string; reason: 'raid' | 'manual' | 'hotkey'; occurredAt: string; fromLogin?: string; viewers?: number };

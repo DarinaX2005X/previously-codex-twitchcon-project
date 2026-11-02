@@ -51,7 +51,7 @@ describe('public recording discovery',()=>{
   });
   it('exposes the same discovery route from the isolated local authored registry',async()=>{
     const directory=await mkdtemp(join(tmpdir(),'previously-local-selection-'));
-    try{const handler=await createLocalReplayHandler(directory),response=await handler(new Request('https://localhost/api/public/replays'));expect(response.status).toBe(200);expect(await response.json()).toEqual({id:'authored-notes'});expect((await handler(new Request('https://localhost/api/public/replays/authored-notes'))).status).toBe(200);}finally{await rm(directory,{recursive:true,force:true});}
+    try{const handler=await createLocalReplayHandler(directory),response=await handler(new Request('https://localhost/api/public/replays'));expect(response.status).toBe(200);expect(await response.json()).toEqual({id:'foxlight'});expect((await handler(new Request('https://localhost/api/public/replays/foxlight'))).status).toBe(200);}finally{await rm(directory,{recursive:true,force:true});}
   });
   it('forwards the local discovery route and falls back only for absent cloud indexes',async()=>{
     const h=harness();await h.publish('cloud-own','own-stream');let failure=0;

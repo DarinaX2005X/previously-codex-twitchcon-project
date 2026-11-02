@@ -121,3 +121,62 @@ describe('prepared narration selection', () => {
     ]) expect(compile(snapshot(), { narrationEnabled: true, media: [media] }).audio).toBeNull();
   });
 });
+
+describe('broadcast scene material', () => {
+  function story(): PublicSnapshot {
+    const s = snapshot();
+    s.channel.displayName = 'Foxlight Dev'; s.session.title = 'Building a tiny cave platformer';
+    const chapter = s.chapters[0]!;
+    s.chapters = [
+      { ...chapter, id: 'jump', title: 'Fox learns to jump', startMs: 5000, endMs: 90000, momentIds: [], maxDependencyEndMs: 90000 },
+      { ...chapter, id: 'moon', title: 'The moon jump', startMs: 100000, endMs: 200000, momentIds: ['moment'], maxDependencyEndMs: 200000 },
+      { ...chapter, id: 'spring', title: 'Spring gets a speed limit', startMs: 210000, endMs: 300000, momentIds: [], maxDependencyEndMs: 300000 },
+      { ...chapter, id: 'lanterns', title: 'Lanterns light the cave', startMs: 320000, endMs: 400000, momentIds: ['lantern-moment'], maxDependencyEndMs: 400000 },
+    ];
+    s.current = { goal: 'Make the lanterns light up the cave', change: null, now: 'Making the lantern behind the waterfall reachable', sourceTimeMs: 400000, maxDependencyEndMs: 400000 };
+    s.moments = [{ ...s.moments[0]!, id: 'moment', startMs: 101000, endMs: 111000, maxDependencyEndMs: 200000 }, { ...s.moments[0]!, id: 'lantern-moment', startMs: 320000, endMs: 330000, maxDependencyEndMs: 400000 }];
+    s.lore = [{ id: 'moon-jump', term: 'moon jump', explanation: 'The spring launched the fox through the ceiling.', firstSeenMs: 101000, originMs: 125000, originKind: 'spoken', momentId: 'moment', maxDependencyEndMs: 125000 }];
+    return s;
+  }
+  const messages = ['MOON JUMP', 'he is gone', 'fox to the moon'].map((text, i) => ({ ref: { id: `chat:${i}`, revision: 1 }, text }));
+  const lineage = {
+    currentRefs: [{ id: 'approved-current', revision: 2 }],
+    loreRefs: { 'moon-jump': [{ id: 'moon-jump', revision: 3 }] },
+    moments: { moment: { count: 45, messages } },
+  };
+  const media = [visual('clip-moon', 'moment'), visual('clip-lanterns', 'lantern-moment')];
+
+  it('carries earlier chapters, the chat moment, its lore and the current statement with their lineage', () => {
+    const plan = compile(story(), { ...lineage, media });
+    expect(RecapPlanSchema.safeParse(plan).success).toBe(true);
+    const scene = plan.scene!;
+    expect(scene.channelName).toBe('Foxlight Dev');
+    expect(scene.chapters.map(chapter => [chapter.title, chapter.startMs, chapter.mediaId])).toEqual([
+      ['Fox learns to jump', 5000, null], ['The moon jump', 100000, 'clip-moon'], ['Spring gets a speed limit', 210000, null]]);
+    expect(scene.moment).toEqual({ id: 'moment', chapterId: 'moon', startMs: 101000, windowSeconds: 10, count: 45, mediaId: 'clip-moon', messages: ['MOON JUMP', 'he is gone', 'fox to the moon'] });
+    expect(scene.lore).toEqual({ term: 'moon jump', explanation: 'The spring launched the fox through the ceiling.', originMs: 125000 });
+    expect(scene.now).toEqual({ text: 'Making the lantern behind the waterfall reachable', mediaId: 'clip-lanterns' });
+    expect(plan.media.map(item => item.id).sort()).toEqual(['clip-lanterns', 'clip-moon']);
+    expect(plan.dependencyRefs).toEqual(expect.arrayContaining([
+      { id: 'jump', revision: 2 }, { id: 'spring', revision: 2 }, { id: 'chat:0', revision: 1 }, { id: 'chat:2', revision: 1 },
+      { id: 'moon-jump', revision: 3 }, { id: 'approved-current', revision: 2 }]));
+  });
+
+  it('omits chat, lore and the current statement when their lineage is missing', () => {
+    const scene = compile(story(), { media }).scene!;
+    expect(scene.moment).toBeNull(); expect(scene.lore).toBeNull(); expect(scene.now).toBeNull();
+    expect(compile(story(), { ...lineage, moments: { moment: { count: 2, messages: messages.slice(0, 2) } } }).scene!.moment).toBeNull();
+  });
+
+  it('keeps a welcome-only cut free of chapters and chat', () => {
+    const scene = compile(story(), { ...lineage, media, welcomeOnly: true }).scene!;
+    expect(scene).toEqual({ channelName: 'Foxlight Dev', streamTitle: 'Building a tiny cave platformer', chapters: [], moment: null, lore: null, now: null, command: '!previously' });
+  });
+
+  it('starts a moment clip just before the reaction, within its capture', () => {
+    const plan = compile(story(), { ...lineage, media: [{ ...visual('clip-moon', 'moment'), captureStartMs: 100000, captureEndMs: 112000, durationMs: 12000 }] });
+    expect(plan.media[0]).toEqual(expect.objectContaining({ id: 'clip-moon', inMs: 0, outMs: 12000 }));
+    const later = compile(story(), { ...lineage, media: [{ ...visual('clip-moon', 'moment'), captureStartMs: 97000, captureEndMs: 109000, durationMs: 12000 }] });
+    expect(later.media[0]).toEqual(expect.objectContaining({ inMs: 3000, outMs: 12000 }));
+  });
+});

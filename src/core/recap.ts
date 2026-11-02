@@ -1,13 +1,14 @@
 import { safetyAllowsPublication } from '../shared/contracts/index.js';
-import type { OverlayLayout, PublicChapter, PublicLore, PublicSnapshot, RecapPlan, RecapTrigger, VersionRef } from '../shared/contracts/index.js';
+import type { OverlayLayout, PublicChapter, PublicLore, PublicSnapshot, RecapPlan, RecapScene, RecapTrigger, VersionRef } from '../shared/contracts/index.js';
 import type { DomainMedia, DomainState } from './types.js';
-import { canonical, isRefActive, normalizeTerm, uniqueRefs } from './evidence.js';
+import { canonical, isRefActive, normalizeTerm, sourceAllowed, uniqueRefs } from './evidence.js';
 import { safeLorePresentation } from './lore-presentations.js';
 
 /** Every public consumer uses this projection; this selector never falls back to drafts. */
 export const selectPublicSnapshot = (state: DomainState): PublicSnapshot | null => state.published;
 
-export type RecapLineage = { currentRefs?: VersionRef[]; loreRefs?: Record<string, VersionRef[]> };
+export type MomentLineage = { count: number; messages: { ref: VersionRef; text: string }[] };
+export type RecapLineage = { currentRefs?: VersionRef[]; loreRefs?: Record<string, VersionRef[]>; moments?: Record<string, MomentLineage> };
 export type RecapCompileOptions = RecapLineage & {
   media?: DomainMedia[];
   durationMs?: 10000 | 12000 | 15000;
@@ -36,7 +37,41 @@ export function recapLineage(state: DomainState): RecapLineage {
     const node = state.nodes[presentation.id];
     if (node) loreRefs[item.id] = [{ id: lore.id, revision: lore.revision }, { id: node.id, revision: node.revision }];
   }
-  return { currentRefs, loreRefs };
+  return { currentRefs, loreRefs, moments: momentLineage(state) };
+}
+
+const SCENE_MESSAGE_LIMIT = 14;
+const SCENE_MESSAGE_LENGTH = 32;
+/** Short chat lines from a published moment's window. Only active, moderation-allowed, untombstoned
+ * messages from unbanned chatters qualify; redacted text, mentions and links never reach the broadcast. */
+export function sceneChatMessages(state: DomainState, moment: { startMs: number; endMs: number }): MomentLineage['messages'] {
+  const blocked = state.blockedTerms.filter(Boolean);
+  const repeats = new Map<string, number>();
+  const result: MomentLineage['messages'] = [];
+  const candidates = state.sources.filter(source => source.kind === 'chat' && source.moderation === 'allowed' && sourceAllowed(state, source)
+    && source.startMs >= moment.startMs && source.startMs <= moment.endMs)
+    .sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id));
+  for (const source of candidates) {
+    const text = (source.text ?? '').replace(/\s+/g, ' ').trim();
+    if (!text || Array.from(text).length > SCENE_MESSAGE_LENGTH || /@|https?:|www\.|\.(com|net|org|tv|gg)\b/i.test(text)) continue;
+    const key = normalizeTerm(text);
+    if (blocked.some(term => key.includes(term))) continue;
+    const seen = repeats.get(key) ?? 0;
+    if (seen >= 2) continue;
+    repeats.set(key, seen + 1);
+    result.push({ ref: { id: source.id, revision: source.revision }, text });
+    if (result.length >= SCENE_MESSAGE_LIMIT) break;
+  }
+  return result;
+}
+function momentLineage(state: DomainState): Record<string, MomentLineage> {
+  const result: Record<string, MomentLineage> = {};
+  for (const item of state.published?.moments ?? []) {
+    const moment = state.moments.find(moment => moment.id === item.id);
+    if (!moment || !moment.dependencyRefs.every(ref => isRefActive(state, ref))) continue;
+    result[item.id] = { count: moment.count, messages: sceneChatMessages(state, item) };
+  }
+  return result;
 }
 
 type BeatKind = RecapPlan['beats'][number]['kind'];
@@ -160,6 +195,66 @@ function chooseStory(snapshot: PublicSnapshot, options: RecapCompileOptions, lim
   return selected.sort((a, b) => order[a.kind] - order[b.kind]).slice(0, 4);
 }
 
+function currentChapterOf(snapshot: PublicSnapshot): PublicChapter | undefined {
+  const current = snapshot.current;
+  if (!current?.now) return undefined;
+  const byStart = [...snapshot.chapters].sort((a, b) => b.startMs - a.startMs || b.revision - a.revision);
+  return byStart.find(chapter => chapter.maxDependencyEndMs === current.maxDependencyEndMs) ?? byStart[0];
+}
+
+/** Scene material: earlier chapters (newest last), the loudest published chat moment with its own short
+ * messages, the lore born there and the approved current statement. Every item adds its own lineage. */
+function buildScene(snapshot: PublicSnapshot, options: RecapCompileOptions, welcome: boolean, visual: DomainMedia[],
+  baseRefs: VersionRef[]): { value: RecapScene; refs: VersionRef[]; media: DomainMedia[] } {
+  let refs = baseRefs;
+  const take = (extra: VersionRef[]): boolean => {
+    const next = uniqueRefs([...refs, ...extra]);
+    if (next.length > 100) return false;
+    refs = next; return true;
+  };
+  const mediaFor = (momentIds: string[]) => visual.find(media => !media.previousSession && !!media.momentId && momentIds.includes(media.momentId));
+  const title = snapshot.session.title.trim();
+  const value: RecapScene = { channelName: snapshot.channel.displayName, streamTitle: title || null, chapters: [], moment: null, lore: null, now: null, command: '!previously' };
+  const media: DomainMedia[] = [];
+  if (welcome) return { value, refs, media };
+  const currentChapter = currentChapterOf(snapshot);
+  const earlier = [...snapshot.chapters].filter(chapter => chapter.id !== currentChapter?.id && chapter.title.trim())
+    .sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id));
+  const chapters = earlier.slice(-3);
+  for (const chapter of chapters) {
+    if (!take([chapterRef(chapter)])) break;
+    const clip = mediaFor(chapter.momentIds);
+    if (clip) media.push(clip);
+    value.chapters.push({ id: chapter.id, title: chapter.title.trim(), startMs: chapter.startMs, mediaId: clip?.id ?? null });
+  }
+  const current = snapshot.current;
+  if (current?.now?.trim() && options.currentRefs?.length && take(options.currentRefs)) {
+    const clip = currentChapter ? mediaFor(currentChapter.momentIds) : undefined;
+    if (clip) media.push(clip);
+    value.now = { text: current.now.trim(), mediaId: clip?.id ?? null };
+  }
+  const shown = chapters.filter(chapter => value.chapters.some(item => item.id === chapter.id));
+  const moment = snapshot.moments.filter(item => options.moments?.[item.id] && shown.some(chapter => chapter.momentIds.includes(item.id)))
+    .sort((a, b) => options.moments![b.id]!.count - options.moments![a.id]!.count || a.startMs - b.startMs)[0];
+  if (moment) {
+    const lineage = options.moments![moment.id]!;
+    const messages: string[] = [];
+    for (const message of lineage.messages) if (take([message.ref])) messages.push(message.text);
+    const chapter = shown.find(item => item.momentIds.includes(moment.id));
+    if (messages.length >= 3 || lineage.count >= 5) value.moment = {
+      id: moment.id, chapterId: chapter?.id ?? null, startMs: moment.startMs,
+      windowSeconds: Math.max(1, Math.min(600, Math.round((moment.endMs - moment.startMs) / 1000))),
+      count: Math.max(lineage.count, messages.length), mediaId: mediaFor([moment.id])?.id ?? null, messages: messages.length >= 3 ? messages : [],
+    };
+  }
+  const lore = snapshot.lore.filter(item => item.originKind !== 'unknown' && item.originMs !== null && item.term.trim()
+    && options.loreRefs?.[item.id]?.length && item.explanation.trim().length <= 300
+    && (!!moment && item.momentId === moment.id || shown.some(chapter => containsTerm(`${chapter.title} ${chapter.summary}`, item.term))))
+    .sort((a, b) => Number(!!moment && b.momentId === moment.id) - Number(!!moment && a.momentId === moment.id) || (a.originMs ?? 0) - (b.originMs ?? 0))[0];
+  if (lore && take(options.loreRefs![lore.id]!)) value.lore = { term: lore.term.trim(), explanation: lore.explanation.trim(), originMs: lore.originMs! };
+  return { value, refs, media };
+}
+
 /** Exact approved captions, used both to prepare narration and to match a prepared asset. */
 export function narrationScript(input: Pick<RecapPlan, 'beats'> | RecapPlan['beats']): string {
   return (Array.isArray(input) ? input : input.beats).map(beat => beat.text).join(' ');
@@ -193,6 +288,21 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
     if (nextRefs.length > 100) continue;
     refs = nextRefs; permitted.push(media);
   }
+  const scene = buildScene(snapshot, options, welcome, visual, refs);
+  refs = scene.refs;
+  for (const media of scene.media) if (!permitted.some(item => item.id === media.id) && permitted.length < 4) {
+    const nextRefs = uniqueRefs([...refs, { id: media.id, revision: media.revision }, ...media.refs]);
+    if (nextRefs.length > 100) continue;
+    refs = nextRefs; permitted.push(media);
+  }
+  const permittedIds = new Set(permitted.map(media => media.id));
+  const keep = (id: string | null) => id && permittedIds.has(id) ? id : null;
+  const sceneValue: RecapScene = {
+    ...scene.value,
+    chapters: scene.value.chapters.map(chapter => ({ ...chapter, mediaId: keep(chapter.mediaId) })),
+    moment: scene.value.moment ? { ...scene.value.moment, mediaId: keep(scene.value.moment.mediaId) } : null,
+    now: scene.value.now ? { ...scene.value.now, mediaId: keep(scene.value.now.mediaId) } : null,
+  };
   const plan: RecapPlan = {
     id: `recap:${trigger.id}`, sessionId: snapshot.session.id, revision: snapshot.revision, privacyEpoch: snapshot.privacyEpoch,
     language: snapshot.language, variant: welcome ? 'welcome' : permitted.length ? 'full' : 'compact', durationMs: total,
@@ -206,10 +316,17 @@ export function compileRecap(snapshot: PublicSnapshot, layout: OverlayLayout, tr
       sourceRange: beat.sourceRange, sourceIds: distinct(beat.sourceIds).slice(0, 20),
       mediaId: welcome ? permitted[0]?.id ?? null : permitted.find(media => !!media.momentId && beat.momentIds.includes(media.momentId))?.id ?? null,
     })),
-    media: permitted.map(media => ({ id: media.id, kind: media.kind === 'image' ? 'image' : 'video',
-      inMs: 0, outMs: Math.min(media.durationMs, total), captureStartMs: media.captureStartMs,
-      captureEndMs: media.captureEndMs, previousSession: media.previousSession })),
+    media: permitted.map(media => {
+      // A moment clip starts just before the reaction it documents, never outside its canonical capture.
+      const moment = snapshot.moments.find(item => item.id === media.momentId);
+      const lead = moment && !media.previousSession ? moment.startMs - media.captureStartMs - 1000 : 0;
+      const inMs = Math.max(0, Math.min(Math.round(lead), Math.max(0, media.durationMs - 1000)));
+      return { id: media.id, kind: media.kind === 'image' ? 'image' as const : 'video' as const,
+        inMs, outMs: Math.min(media.durationMs, inMs + total), captureStartMs: media.captureStartMs,
+        captureEndMs: media.captureEndMs, previousSession: media.previousSession };
+    }),
     audio: null, soundEvents: [], generatedAt: options.generatedAt ?? trigger.occurredAt,
+    scene: sceneValue,
   };
   if (options.narrationEnabled) {
     const script = narrationScript(plan);

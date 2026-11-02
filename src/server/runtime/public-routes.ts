@@ -1,5 +1,6 @@
 import {Router} from 'express';
 import {ApiError} from './errors.js';
+import {AUTHORED_REPLAY_IDS} from '../replay/export.js';
 
 /** The local reading surface forwards only bounded public GETs to its configured cloud. */
 export function createPublicReadRouter(options: {
@@ -24,7 +25,8 @@ export function createPublicReadRouter(options: {
       const suffix = query.size ? `?${query}` : '';
       const headers = new Headers();
       if (req.headers.range) headers.set('Range', req.headers.range);
-      const authored = options.authored && (path === '/replays/authored-notes' || path.startsWith('/replays/authored-notes/assets/') || path === '/replays' && !options.cloudOrigin);
+      const authoredId = /^\/replays\/([A-Za-z0-9_-]{1,120})(?:\/|$)/.exec(path)?.[1];
+      const authored = options.authored && (!!authoredId && AUTHORED_REPLAY_IDS.includes(authoredId) || path === '/replays' && !options.cloudOrigin);
       let response: Response;
       if (authored) response = await options.authored!(new Request(`https://local-replay.invalid/api/public${path}${suffix}`, {headers}));
       else {

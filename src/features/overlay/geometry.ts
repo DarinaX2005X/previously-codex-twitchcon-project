@@ -1,7 +1,7 @@
 import type { OverlayLayout, Rect } from '../../shared/contracts/index.js';
 
 export const FRAME = { width: 1920, height: 1080, margin: 64, protection: 24 } as const;
-export type SceneLayout = { bounds: Rect; mode: 'full' | 'compact'; captionSize: 80 | 88 | 96; openingSize: 136 | 152; };
+export type SceneLayout = { bounds: Rect; mode: 'full' | 'compact'; captionSize: 80 | 88 | 96; openingSize: 136 | 152; protected: Rect[] };
 export function intersects(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
@@ -24,7 +24,7 @@ export function resolveSceneLayout(input: OverlayLayout): SceneLayout | null {
   const full = free.width >= 1450 && free.height >= 420;
   const height = Math.min(free.height, full ? 490 : 400);
   const y = input.preset === 'upper' ? free.y : free.y+free.height-height;
-  return {bounds:{...free,y,height},mode:full?'full':'compact',captionSize:free.width>=1650?96:free.width>=1450?88:80,openingSize:full?152:136};
+  return {bounds:{...free,y,height},mode:full?'full':'compact',captionSize:free.width>=1650?96:free.width>=1450?88:80,openingSize:full?152:136,protected:blocked};
 }
 
 export type MeasureText = (text: string, size: number, weight?: number) => number;

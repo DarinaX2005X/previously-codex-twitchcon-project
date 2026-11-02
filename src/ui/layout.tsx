@@ -9,7 +9,12 @@ export function ReadingLayout({ children, className, ...props }: ReadingLayoutPr
 export interface ActionGroupProps { children: ReactNode; className?: string; }
 export function ActionGroup({ children, className }: ActionGroupProps) { return <div className={['pv-actions', className].filter(Boolean).join(' ')}>{children}</div>; }
 export interface BrandProps { variant?: 'wordmark' | 'mark' | 'small-mark'; tone?: 'light' | 'dark'; className?: string; }
-export function Brand({ variant = 'wordmark', tone = 'light', className }: BrandProps) {
-  const asset = variant === 'wordmark' ? `wordmark${tone === 'dark' ? '-dark' : ''}` : variant === 'small-mark' ? `mark-small${tone === 'dark' ? '-dark' : ''}` : 'mark';
-  return <img className={['pv-brand', `pv-brand--${variant}`, className].filter(Boolean).join(' ')} src={`/brand/${asset}.svg`} alt="Previously" width={variant === 'wordmark' ? 480 : 96} height="96" />;
+/** The mark plus the outlined word. The word takes the surrounding text colour; `tone` forces ink (light ground) or paper (dark ground). */
+export function Brand({ variant = 'wordmark', tone, className }: BrandProps) {
+  const style = tone ? { color: tone === 'dark' ? 'var(--pv-paper)' : 'var(--pv-ink)' } : undefined;
+  const mark = variant === 'small-mark' ? 'mark-small' : 'mark';
+  return <span role="img" aria-label="Previously" style={style} className={['pv-brand', `pv-brand--${variant}`, className].filter(Boolean).join(' ')}>
+    <img className="pv-brand__mark" src={`/brand/${mark}.svg`} alt="" width="96" height="96" />
+    {variant === 'wordmark' && <span className="pv-brand__word" aria-hidden="true" />}
+  </span>;
 }

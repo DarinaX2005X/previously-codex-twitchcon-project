@@ -4,17 +4,21 @@ Replay makes the source-to-story behavior inspectable without a Twitch or OpenAI
 
 ## The included example
 
-The bundled [`authored-notes`](../../fixtures/authored-notes.ts) example is a 100-second text scenario about a saved note with an empty preview. It has no real streamer, chat participants, video, microphone recording, or model responses. Its provider version is labelled `authored-no-model`.
+The bundled [`foxlight`](../../fixtures/foxlight.ts) example is an 8-minute recording of a small game development stream: the channel `foxlight_dev` builds a cave platformer about a fox with a lantern. The speech, chat, raid and provider outcomes are authored for this example; the clips are real footage of that small game (`public/demo/foxlight`). There is no real streamer, chat participant or model response. Its provider version is labelled `authored-no-model`.
+
+The bundle is built from its timeline by running the production reducer through `ReplayDriver` and recording an outcome for every request the reducer makes, in English and in Russian. It contains 7 speech passages, 68 chat messages (45 of them from 23 example chatters inside one 10-second window at 1:40), 3 topic boundaries, 3 owner-saved moments, 4 clip attachments, the lore term `moon jump` with its spoken origin at 2:05, and a raid from `pixelmoth` with 37 viewers at 7:10.
 
 Run the [local keyless path](../setup/local.md#install-and-try-replay), then open `/replay`:
 
-1. **Play recording** introduces the source at recorded time 0:01. The first published context appears at 1:16 after its 75-second hold.
+1. **Play recording** follows the stream. The first chapter publishes at 1:54 after its 75-second hold; four chapters are public by the raid.
 2. **Jump to raid** executes the preceding events and advances to the raid scene. It does not replace the state with a finished screenshot or snapshot.
-3. **Apply correction** uses the exact checked owner wording included in the bundle. **Preview next recap** displays that correction in the next plan.
-4. English and Russian select separately checked recorded presentations. An arbitrary edit from the demo dock stays held when the bundle has no matching safety outcome.
+3. **Apply correction** appears after the recording's last story update (6:17). It renames the third chapter with the exact checked owner wording included in the bundle. **Preview next recap** displays that correction in the next plan.
+4. English and Russian select separately checked recorded presentations at any point of the recording. An arbitrary edit from the demo dock stays held when the bundle has no matching safety outcome.
 5. **Restart** creates a fresh run. Changes in one replay tab do not edit the broadcaster's live database or another visitor's run.
 
-Speed settings change virtual time. A 4× run demonstrates the same timing rules sooner; it is not a measurement of live transcription or model latency. The example's video-free scene is intentional, and it must not be presented as recorded Twitch footage.
+`/c/foxlight_dev` opens the real public recap page with the snapshot this recording publishes at the raid, says once that it is an example, and plays the example clips from the same gated recording. `scripts/export-foxlight-raid.mts` writes the exact raid plan and snapshot as JSON for scene and video work.
+
+Speed settings change virtual time. A 4× run demonstrates the same timing rules sooner; it is not a measurement of live transcription or model latency. The older text-only [`authored-notes`](../../fixtures/authored-notes.ts) example remains for tests.
 
 ## What a replay contains
 

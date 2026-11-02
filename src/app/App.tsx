@@ -6,6 +6,9 @@ const Landing = lazy(() => import('../features/landing/index.js').then(module =>
 const Instructions = lazy(() => import('../features/landing/index.js').then(module => ({default: module.LocalSetupInstructions})));
 const PublicRecap = lazy(() => import('../features/public/index.js').then(module => ({default: module.PublicRecapPage})));
 const Replay = lazy(() => import('../features/replay/index.js').then(module => ({default: module.ReplayPage})));
+const ExampleRecap = lazy(() => import('../features/replay/index.js').then(module => ({default: module.ExampleRecapPage})));
+/** The example recording's channel. Its public recap is read from the replay instead of the cloud. */
+const EXAMPLE_LOGIN = 'foxlight_dev';
 const LocalExperience = import.meta.env.MODE === 'public' ? null : lazy(() => import('./LocalExperience.js'));
 const Foundation = import.meta.env.DEV ? lazy(() => import('../ui/FoundationShowcase.js').then(module => ({default: module.FoundationShowcase}))) : null;
 const publicClient = new PublicHttpClient();
@@ -27,6 +30,7 @@ export function App({local}: {local: boolean}) {
   else if (path === '/setup/local' || !local && ['/setup', '/dock', '/overlay'].includes(path)) page = <Instructions/>;
   else if (local && LocalExperience && ['/setup', '/dock', '/overlay'].includes(path)) page = <LocalExperience page={path.slice(1) as 'setup'|'dock'|'overlay'}/>;
   else if (local && Foundation && path === '/foundation') page = <Foundation/>;
+  else if (match?.[1] === EXAMPLE_LOGIN) page = <ExampleRecap login={EXAMPLE_LOGIN}/>;
   else if (match) page = <PublicRecap client={publicClient} login={match[1]} episodeId={match[2] ? decodeURIComponent(match[2]) : undefined}/>;
   else page = <ReadingLayout><div className="app-message"><Brand/><h1>This page is not here</h1><a className="pv-button pv-button--primary" href="/replay">Open the recorded stream</a></div></ReadingLayout>;
   return <PageBoundary><Suspense fallback={<div className="app-loading" role="status"><Brand/><p>Opening Previously…</p></div>}>{page}</Suspense></PageBoundary>;

@@ -100,7 +100,7 @@ function requestGeneration(s:DomainState,effects:DomainEffect[],clock:Clock){
   const inputRefs=packetRefs(s,packet),range=dependencyRange(s,inputRefs),chapter=s.chapters.find(c=>c.id===entityId);
   const ticket={channelId:s.session.channelId,runId:s.session.runId,jobId:`generation:${s.session.id}:${++s.sequence}`,sessionId:s.session.id,privacyEpoch:s.session.privacyEpoch,baseEntityRevision:chapter?.revision??0,inputRefs,inputHash:stateHash(packet),schemaVersion:1,promptVersion:'grounded-v1',recapLanguage:s.settings.recapLanguage,eligibleAt:iso(Date.parse(s.session.startedAt)+range.endMs+s.settings.publicationDelaySeconds*1000),ownerEditRevision:s.ownerRevisions[entityId]??0};
   const reason=final?'final':s.boundary??(chapterDue?'chapter':'current');
-  const request={ticket,entityId,reason,packet,requestedAtMs:clock.now(),sourceRevision:s.sourceRevision,boundaryRevision:s.boundaryRevision} as const;
+  const request={ticket,entityId,reason,packet,requestedAtMs:clock.now(),sourceRevision:s.sourceRevision,boundaryRevision:s.boundaryRevision,...reason==='topic'&&s.topicStartMs!==undefined?{boundaryStartMs:s.topicStartMs}:{}} as const;
   s.pendingGeneration=request;s.lastCurrentAtMs=clock.now();if(reason!=='current')s.lastChapterAtMs=clock.now();effects.push({type:'generation.request',request:structuredClone(request)});
 }
 function acceptSource(s:DomainState,source:Source,effects:DomainEffect[],clock:Clock,captureEpoch?:number,scheduleStory=true):boolean {
@@ -129,7 +129,7 @@ function commitStory(s:DomainState,event:Extract<DomainEvent,{type:'generation.r
   if(s.closing)s.closing.finalProcessedRevision=request.sourceRevision;
   // A result consumes only its captured boundary. Later metadata/topic signals must survive,
   // including changes with the same source timestamp and requests from legacy checkpoints.
-  const consumeBoundary=()=>{if(s.boundaryRevision===request.boundaryRevision){s.boundary=null;delete s.boundaryRevision;}};
+  const consumeBoundary=()=>{if(s.boundaryRevision===request.boundaryRevision){s.boundary=null;delete s.boundaryRevision;delete s.topicStartMs;}};
   if(event.patch.action==='hold'){consumeBoundary();return;}
   const refs=event.ticket.inputRefs,range=dependencyRange(s,refs),entityId=request.entityId,previous=s.chapters.find(c=>c.id===entityId),revision=(previous?.revision??0)+1;
   const claimId=(id:string)=>`claim:${stateHash(event.ticket.jobId)}:${id.slice(0,80)}`;
@@ -140,7 +140,10 @@ function commitStory(s:DomainState,event:Extract<DomainEvent,{type:'generation.r
     const next=text?`${text} ${claim.text}`:claim.text;return next.length<=700?next:text;
   },'');
   const current:CurrentState={goal:role('goal'),change:role('change'),now:role('state')??role('attempt')??role('outcome'),sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs};
-  const chapter:Chapter={id:entityId,sessionId:s.session.id,revision,title:event.patch.title??'',summary,startMs:previous?.startMs??range.startMs,endMs:range.endMs,mood:'',claimIds:event.patch.claims.map(c=>claimId(c.id)),momentIds:s.moments.filter(m=>m.startMs>=range.startMs&&m.endMs<=range.endMs).slice(-12).map(m=>m.id),pinned:previous?.pinned??false,edited:false,sourceLabels:leafRefs(s,refs).slice(-12).flatMap(r=>{const source=s.sources.find(x=>x.id===r.id)??(s.nodes[r.id]?.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata;if(!source)return [];const labels:Record<Source['kind'],string>={chat:'Chat report',speech:'Spoken context',owner_statement:'Owner statement',channel_metadata:'Channel information',stream_event:'Stream event'};return [{id:r.id,type:source.kind,atMs:source.startMs,label:labels[source.kind]}];}),maxDependencyEndMs:range.endMs,ownerEditRevision:s.ownerRevisions[entityId]??0,publicationState:'draft',eligibleAt:event.ticket.eligibleAt,safety:event.safety,dependencyRefs:refs};
+  // A new chapter starts at its topic boundary, otherwise at the earliest evidence it cites.
+  // Packet inputs also carry older memory and context, which must not move the chapter start back.
+  const cited=leafRefs(s,event.patch.claims.flatMap(c=>c.support)),startMs=previous?.startMs??request.boundaryStartMs??(cited.length?dependencyRange(s,cited).startMs:range.startMs);
+  const chapter:Chapter={id:entityId,sessionId:s.session.id,revision,title:event.patch.title??'',summary,startMs,endMs:range.endMs,mood:'',claimIds:event.patch.claims.map(c=>claimId(c.id)),momentIds:s.moments.filter(m=>m.startMs>=startMs&&m.endMs<=range.endMs).slice(-12).map(m=>m.id),pinned:previous?.pinned??false,edited:false,sourceLabels:leafRefs(s,refs).slice(-12).flatMap(r=>{const source=s.sources.find(x=>x.id===r.id)??(s.nodes[r.id]?.body as {evidenceMetadata?:Source}|null)?.evidenceMetadata;if(!source)return [];const labels:Record<Source['kind'],string>={chat:'Chat report',speech:'Spoken context',owner_statement:'Owner statement',channel_metadata:'Channel information',stream_event:'Stream event'};return [{id:r.id,type:source.kind,atMs:source.startMs,label:labels[source.kind]}];}),maxDependencyEndMs:range.endMs,ownerEditRevision:s.ownerRevisions[entityId]??0,publicationState:'draft',eligibleAt:event.ticket.eligibleAt,safety:event.safety,dependencyRefs:refs};
   const candidate:StoryCandidate={id:candidateId,entityId,revision,ownerRevision:chapter.ownerEditRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:refs,eligibleAtMs:Date.parse(event.ticket.eligibleAt),chapter,current,safety:event.safety,language:event.ticket.recapLanguage,status:'pending'};
   if(!addCandidate(s,effects,candidate))return;
   for(const proposed of event.patch.claims){
@@ -203,9 +206,9 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
     case 'tick':advanceWindows(s,effects,offset(s,clock),clock);advancePlayback(s,effects,clock);break;
     case 'metadata':if(event.atMs>=s.session.metadataMaxDependencyEndMs&&safetyAllowsPublication(event.safety)&&(!s.metadataReviewed||event.title!==s.session.title||event.category!==s.session.category)){
       const source:Source={channelId:s.session.channelId,runId:s.session.runId,sessionId:s.session.id,id:`metadata:${stateHash(s.session.id)}:${++s.sequence}`,revision:1,kind:'channel_metadata',startMs:event.atMs,endMs:event.atMs,actorId:null,languageCodes:[s.settings.recapLanguage],timePrecision:'event',text:`${event.title.slice(0,200)} — ${event.category.slice(0,100)}`,status:'active',externalMessageId:null,moderation:event.safety.pii==='redacted'?'redacted':'allowed'};
-      if(acceptSource(s,source,effects,clock)){s.metadataReviewed=true;s.session.title=event.title.slice(0,200);s.session.category=event.category.slice(0,100);s.session.metadataMaxDependencyEndMs=event.atMs;s.boundary='metadata';s.boundaryRevision=s.sourceRevision;}
+      if(acceptSource(s,source,effects,clock)){s.metadataReviewed=true;s.session.title=event.title.slice(0,200);s.session.category=event.category.slice(0,100);s.session.metadataMaxDependencyEndMs=event.atMs;s.boundary='metadata';s.boundaryRevision=s.sourceRevision;delete s.topicStartMs;}
     }break;
-    case 'topic':if(event.sourceRefs.length&&event.sourceRefs.every(r=>isRefActive(s,r))){s.boundary='topic';s.sourceRevision++;s.boundaryRevision=s.sourceRevision;}break;
+    case 'topic':if(event.sourceRefs.length&&event.sourceRefs.every(r=>isRefActive(s,r))){s.boundary='topic';s.sourceRevision++;s.boundaryRevision=s.sourceRevision;s.topicStartMs=dependencyRange(s,event.sourceRefs).startMs;}break;
     case 'generation.result':commitStory(s,event,effects,clock);break;
     case 'generation.failed':if(s.pendingGeneration?.ticket.jobId===event.jobId){s.pendingGeneration=null;s.nextGenerationAfterMs=clock.now()+45000;if(s.closing)s.closing.failed=true;effects.push({type:'held',reason:event.reason});}break;
     case 'privacy':if(event.target.sessionId===s.session.id){invalidateDomain(s,event.target,effects);publish(s,effects,clock,true);}break;
@@ -276,7 +279,12 @@ export function reduceDomain(previous:DomainState,event:DomainEvent,clock:Clock)
     }
     case 'candidate.safety':{const c=s.candidates.find(c=>c.id===event.candidateId);if(c&&c.privacyEpoch===s.session.privacyEpoch&&c.inputRefs.every(r=>isRefActive(s,r))){c.safety=event.safety;c.chapter.safety=event.safety;effects.push({type:'candidate.save',candidate:structuredClone(c)});}break;}
     case 'presentation':{
-      const c=s.chapters.find(x=>x.id===event.entityId);if(!c||c.revision!==event.baseRevision||c.ownerEditRevision!==event.ownerRevision||!event.inputRefs.every(r=>isRefActive(s,r)))break;
+      const canonicalChapter=s.chapters.find(x=>x.id===event.entityId);if(!canonicalChapter||canonicalChapter.ownerEditRevision!==event.ownerRevision)break;
+      // The published revision can lag a newer draft during its hold. Its own checked wording may be presented too,
+      // so a language switch does not have to wait for the draft.
+      const publishedBase=canonicalChapter.revision===event.baseRevision?undefined:s.candidates.find(x=>x.entityId===canonicalChapter.id&&x.revision===event.baseRevision&&x.status==='published'&&x.ownerRevision===event.ownerRevision&&!!s.published?.chapters.some(p=>p.id===x.entityId&&p.revision===x.revision));
+      const c=publishedBase?{...publishedBase.chapter,revision:event.baseRevision}:canonicalChapter.revision===event.baseRevision?canonicalChapter:undefined;
+      if(!c||!event.inputRefs.every(r=>isRefActive(s,r)))break;
       const existing=s.candidates.find(x=>x.entityId===c.id&&x.revision===c.revision);
       const range=dependencyRange(s,uniqueRefs([...c.dependencyRefs,...event.inputRefs]));
       addCandidate(s,effects,{id:`presentation:${c.id}:${c.revision}:${event.language}`,entityId:c.id,revision:c.revision,ownerRevision:event.ownerRevision,privacyEpoch:s.session.privacyEpoch,inputRefs:uniqueRefs([...c.dependencyRefs,...event.inputRefs]),eligibleAtMs:existing?.eligibleAtMs??Date.parse(c.eligibleAt),chapter:{...c,title:event.title.slice(0,120),summary:event.summary.slice(0,700),safety:event.safety},current:event.current?{...event.current,sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs}:{goal:null,change:null,now:event.summary.length<=300?event.summary:null,sourceTimeMs:range.endMs,maxDependencyEndMs:range.endMs},safety:event.safety,language:event.language,status:'pending'});break;

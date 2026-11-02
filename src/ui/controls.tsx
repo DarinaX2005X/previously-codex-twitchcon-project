@@ -4,17 +4,24 @@ const cx = (...names: (string | false | undefined)[]) => names.filter(Boolean).j
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   pending?: boolean;
-  tone?: 'primary' | 'quiet' | 'danger';
+  tone?: 'primary' | 'quiet' | 'danger' | 'text';
+  size?: 'regular' | 'large';
 }
 
-export function Button({ children, pending = false, disabled, tone = 'primary', className, type = 'button', ...props }: ButtonProps) {
-  return <button {...props} type={type} disabled={disabled || pending} aria-busy={pending || undefined} className={cx('pv-button', `pv-button--${tone}`, className)}>
+export function Button({ children, pending = false, disabled, tone = 'primary', size = 'regular', className, type = 'button', ...props }: ButtonProps) {
+  return <button {...props} type={type} disabled={disabled || pending} aria-busy={pending || undefined} className={cx('pv-button', `pv-button--${tone}`, size === 'large' && 'pv-button--large', className)}>
     <span className="pv-button__label">{children}</span>
     {pending && <span className="pv-spinner" aria-hidden="true" />}
   </button>;
 }
 
 export function QuietButton(props: ButtonProps) { return <Button {...props} tone={props.tone ?? 'quiet'} />; }
+export function TextButton(props: ButtonProps) { return <Button {...props} tone={props.tone ?? 'text'} />; }
+
+/** Class names for a link that looks like a button: `<a className={buttonClass('primary')}>`. */
+export function buttonClass(tone: NonNullable<ButtonProps['tone']> = 'primary', size: NonNullable<ButtonProps['size']> = 'regular', className?: string) {
+  return cx('pv-button', `pv-button--${tone}`, size === 'large' && 'pv-button--large', className);
+}
 
 export interface IconButtonProps extends Omit<ButtonProps, 'children' | 'aria-label'> {
   label: string;
